@@ -29,5 +29,11 @@ module.exports = {
     "quotes": ["error", "double"],
     "import/no-unresolved": 0,
     "indent": ["error", 2],
+    // Relax overly strict defaults for this small proxy service
+    "require-jsdoc": "off",
+    "object-curly-spacing": "off",
+    "brace-style": "off",
+    "block-spacing": "off",
+    "max-len": ["error", { "code": 120, "ignoreUrls": true, "ignoreStrings": true, "ignoreTemplateLiterals": true }],
   },
 };

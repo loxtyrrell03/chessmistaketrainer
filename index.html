@@ -334,6 +334,10 @@
     // Initialize Firebase
     const app = initializeApp(firebaseConfig);
     window.firebaseApp = app;
+    // Derive Functions base for proxies (region must match functions config)
+    const REGION = 'europe-west2';
+    const PROJECT_ID = firebaseConfig.projectId || (app && app.options && app.options.projectId) || 'chessmistaketrainer';
+    window.FN_BASE = `https://${REGION}-${PROJECT_ID}.cloudfunctions.net`;
 
     // Initialize Analytics only where supported (e.g., not in Node/SSR)
     isSupported().then(supported => {
@@ -1347,15 +1351,15 @@ window.addEventListener('unhandledrejection', (e) => {
       }catch(e){ console.warn('renderImportedGames failed', e); }
     }
     async function fetchLichess(user, maxN){
-      // Lichess: streamed PGN text, include evals, take last N games
+      // Call Firebase proxy to avoid CORS and parse NDJSON server-side
       const n = Math.max(1, Math.min(50, parseInt(maxN,10) || 5));
-      const url = `https://lichess.org/api/games/user/${encodeURIComponent(user)}?max=${n}&evals=true&accuracy=true`;
-      const res = await fetch(url, { headers:{ 'Accept':'application/x-chess-pgn' }});
-      if(!res.ok) throw new Error('Lichess request failed');
-      const text = await res.text();
-      // Split into games (handle both LF and CRLF newlines)
-      const chunks = text.split(/\r?\n\r?\n(?=\[Event\s)/g).filter(s => s.trim());
-      const out = chunks.slice(-n);
+      const base = window.FN_BASE || '';
+      const url = `${base}/fetchLichess?username=${encodeURIComponent(user)}&max=${n}`;
+      const res = await fetch(url, { headers:{ 'Accept':'application/json' } });
+      if(!res.ok) throw new Error(`Lichess proxy failed (${res.status})`);
+      const json = await res.json();
+      const games = (json.games || []).filter(g => g && g.pgn);
+      const out = games.map(g => g.pgn);
       renderImportedGames(out, 'Lichess');
       return out;
     }
@@ -1364,30 +1368,15 @@ window.addEventListener('unhandledrejection', (e) => {
     function fetchLichessLast5(user){ return fetchLichess(user, 5); }
 
     async function fetchChesscom(user, maxN){
-      // Chess.com: discover latest archives, then pull most recent 5 PGNs overall
+      // Use Firebase proxy to aggregate months server-side
       const n = Math.max(1, Math.min(50, parseInt(maxN,10) || 5));
-      const arcUrl = `https://api.chess.com/pub/player/${encodeURIComponent(user)}/games/archives`;
-      const arcRes = await fetch(arcUrl);
-      if(!arcRes.ok) throw new Error('Chess.com archives request failed');
-      const arcJson = await arcRes.json();
-      const archives = (arcJson.archives || []).slice();
-      if(!archives.length) return [];
-      // Fetch archives from newest backwards until we gather N PGNs or run out
-      const reversed = archives.slice().reverse();
-      const allGames = [];
-      for(const url of reversed){
-        try{
-          const r = await fetch(url);
-          if(!r.ok) continue;
-          const m = await r.json();
-          const batch = (m.games||[]).filter(g => g && g.pgn);
-          allGames.push(...batch);
-          if(allGames.length >= n) break;
-        }catch{}
-      }
-      // Sort by end_time if present, else keep order
-      allGames.sort((a,b) => (b.end_time||0) - (a.end_time||0));
-      const out = allGames.slice(0,n).map(g => g.pgn);
+      const base = window.FN_BASE || '';
+      const url = `${base}/fetchChessCom?username=${encodeURIComponent(user)}&limit=${n}`;
+      const res = await fetch(url, { headers:{ 'Accept':'application/json' } });
+      if(!res.ok) throw new Error(`Chess.com proxy failed (${res.status})`);
+      const json = await res.json();
+      const games = (json.games || []).filter(g => g && g.pgn);
+      const out = games.map(g => g.pgn);
       renderImportedGames(out, 'Chess.com');
       return out;
     }
@@ -1756,8 +1745,9 @@ window.addEventListener('unhandledrejection', (e) => {
       const u = $('#lichessUser').value.trim();
       if(!u) return alert('Enter a Lichess username');
       try{
-        setStatus('Fetching Lichess games…');
-        const games = await fetchLichessLast5(u);
+        const n = parseInt($('#lichessCount')?.value,10) || 5;
+        setStatus(`Fetching Lichess games (N=${n})…`);
+        const games = await fetchLichess(u, n);
         try{
           const pgnText = games.join('\n\n');
           const fname = `lichess-${u}-${new Date().toISOString().slice(0,10)}.pgn`;
@@ -1790,8 +1780,9 @@ window.addEventListener('unhandledrejection', (e) => {
       const u = $('#chesscomUser').value.trim();
       if(!u) return alert('Enter a Chess.com username');
       try{
-        setStatus('Fetching Chess.com games…');
-        const games = await fetchChesscomLast5(u);
+        const n = parseInt($('#chesscomCount')?.value,10) || 5;
+        setStatus(`Fetching Chess.com games (N=${n})…`);
+        const games = await fetchChesscom(u, n);
         try{
           const pgnText = games.join('\n\n');
           const fname = `chesscom-${u}-${new Date().toISOString().slice(0,10)}.pgn`;

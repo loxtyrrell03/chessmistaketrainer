@@ -318,7 +318,6 @@
   <!-- Firebase (App + Analytics) -->
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js';
-    import { getAnalytics, isSupported } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-analytics.js';
 
     // Your web app's Firebase configuration
     const firebaseConfig = {
@@ -343,20 +342,27 @@
     window.FN_LICHESS_URL = window.FN_LICHESS_URL || `${window.FN_BASE}/fetchLichess`;
     window.FN_CHESSCOM_URL = window.FN_CHESSCOM_URL || `${window.FN_BASE}/fetchChessCom`;
 
-    // Initialize Analytics only where supported (e.g., not in Node/SSR)
-    isSupported().then(supported => {
-      if (supported) {
-        try {
-          const analytics = getAnalytics(app);
-          window.firebaseAnalytics = analytics;
-          console.log('Firebase Analytics initialized');
-        } catch (err) {
-          console.warn('Analytics init failed:', err);
+    // Initialize Analytics only where supported; dynamically import to avoid
+    // executing analytics code in environments that lack globals like `process`.
+    (async () => {
+      try {
+        const mod = await import('https://www.gstatic.com/firebasejs/10.12.4/firebase-analytics.js');
+        const supported = await mod.isSupported();
+        if (supported) {
+          try {
+            const analytics = mod.getAnalytics(app);
+            window.firebaseAnalytics = analytics;
+            console.log('Firebase Analytics initialized');
+          } catch (err) {
+            console.warn('Analytics init failed:', err);
+          }
+        } else {
+          console.log('Firebase Analytics not supported in this environment');
         }
-      } else {
-        console.log('Firebase Analytics not supported in this environment');
+      } catch (err) {
+        console.warn('Analytics dynamic import failed:', err);
       }
-    }).catch(err => console.warn('Analytics support check failed:', err));
+    })();
   </script>
 
   <!-- Firebase Auth + Firestore sync (module) -->
@@ -1017,8 +1023,9 @@ window.addEventListener('unhandledrejection', (e) => {
           const from = (side==='w') ? 'e1' : 'e8';
           return from+target;
         }
-        // strip check/mate and NAGs
-        san = san.replace(/[+#]|\!\!|\?\?|!\?|?!/g,'');
+        // strip check/mate and NAGs (remove !, ?, !!, ??, !?, ?!)
+        // Note: '?' must be escaped when used literally in a regex.
+        san = san.replace(/[+#]|!!|\?\?|!\?|\?!/g, '');
         // promotion (e.g. e8=Q or exd8=Q)
         let promo = null;
         const pm = san.match(/=([NBRQ])/);

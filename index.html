@@ -1342,6 +1342,8 @@ window.addEventListener('unhandledrejection', (e) => {
         }
         const help = document.querySelector('#importHelp');
         if(help) help.textContent = `${pgns.length} game(s) listed below.`;
+        // Also stash last fetched PGNs for manual download fallback
+        window.lastFetchedPGNs = { source, pgns };
       }catch(e){ console.warn('renderImportedGames failed', e); }
     }
     async function fetchLichess(user, maxN){
@@ -1759,7 +1761,14 @@ window.addEventListener('unhandledrejection', (e) => {
         try{
           const pgnText = games.join('\n\n');
           const fname = `lichess-${u}-${new Date().toISOString().slice(0,10)}.pgn`;
+          // Attempt automatic download
           downloadText(fname, pgnText);
+          // Provide manual link fallback (in case browser blocks auto download)
+          const help = document.querySelector('#importHelp');
+          if(help){
+            const dataUrl = 'data:application/x-chess-pgn;charset=utf-8,' + encodeURIComponent(pgnText);
+            help.innerHTML = `${games.length} game(s) listed. If no file downloaded, click <a href="${dataUrl}" download="${fname}">here to download PGNs</a>.`;
+          }
         }catch(e){ console.warn('PGN download failed', e); }
         setStatus(`Analyzing ${games.length} games (Lichess)…`);
         const all = [];
@@ -1783,6 +1792,16 @@ window.addEventListener('unhandledrejection', (e) => {
       try{
         setStatus('Fetching Chess.com games…');
         const games = await fetchChesscomLast5(u);
+        try{
+          const pgnText = games.join('\n\n');
+          const fname = `chesscom-${u}-${new Date().toISOString().slice(0,10)}.pgn`;
+          downloadText(fname, pgnText);
+          const help = document.querySelector('#importHelp');
+          if(help){
+            const dataUrl = 'data:application/x-chess-pgn;charset=utf-8,' + encodeURIComponent(pgnText);
+            help.innerHTML = `${games.length} game(s) listed. If no file downloaded, click <a href="${dataUrl}" download="${fname}">here to download PGNs</a>.`;
+          }
+        }catch(e){ console.warn('PGN download failed', e); }
         setStatus(`Analyzing ${games.length} games (depth 12)…`);
         const all = [];
         let k=0;

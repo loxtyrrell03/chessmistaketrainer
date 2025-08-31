@@ -194,6 +194,26 @@
           <span class="right"><b>Engine:</b> <span id="engineState">loading…</span></span>
         </div>
 
+        <div class="stroke tiny" id="importedBox" style="margin-top:10px">
+          <div><b>Imported Games (last fetch)</b></div>
+          <div class="tiny muted" id="importHelp">Fetched games will appear here.</div>
+          <div style="max-height:180px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:6px">
+            <table id="importTable" style="width:100%">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>White</th>
+                  <th>Black</th>
+                  <th>Res</th>
+                  <th>Date</th>
+                  <th>Source</th>
+                </tr>
+              </thead>
+              <tbody id="importTBody"></tbody>
+            </table>
+          </div>
+        </div>
+
         <hr style="border:none;border-top:1px solid #242a39;margin:16px 0">
 
         <h2>2) Trainer</h2>
@@ -1271,6 +1291,37 @@ window.addEventListener('unhandledrejection', (e) => {
     /********************************************************************
      * Fetchers (Lichess & Chess.com)
      ********************************************************************/
+    function parsePGNHeaders(pgn){
+      const h = {};
+      const re = /\[(\w+)\s+"([^"]*)"\]/g;
+      let m;
+      while((m = re.exec(pgn))){ h[m[1]] = m[2]; }
+      return h;
+    }
+
+    function renderImportedGames(pgns, source){
+      try{
+        const tb = document.querySelector('#importTBody');
+        if(!tb) return;
+        tb.innerHTML = '';
+        let i=0;
+        for(const pgn of pgns){
+          const h = parsePGNHeaders(pgn);
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${++i}</td>
+            <td>${(h.White||'-')}</td>
+            <td>${(h.Black||'-')}</td>
+            <td>${(h.Result||'-')}</td>
+            <td>${(h.Date||h.UTCDate||'-')}</td>
+            <td>${source}</td>
+          `;
+          tb.appendChild(tr);
+        }
+        const help = document.querySelector('#importHelp');
+        if(help) help.textContent = `${pgns.length} game(s) listed below.`;
+      }catch(e){ console.warn('renderImportedGames failed', e); }
+    }
     async function fetchLichessLast5(user){
       // Lichess: streamed PGN text, include evals, take last 5 games
       const url = `https://lichess.org/api/games/user/${encodeURIComponent(user)}?max=5&evals=true&accuracy=true`;
@@ -1279,7 +1330,9 @@ window.addEventListener('unhandledrejection', (e) => {
       const text = await res.text();
       // Split into games (naive but works well for lichess exports)
       const chunks = text.split(/\n\n(?=\[Event\s)/g).filter(s => s.trim());
-      return chunks.slice(-5);
+      const out = chunks.slice(-5);
+      renderImportedGames(out, 'Lichess');
+      return out;
     }
 
     async function fetchChesscomLast5(user){
@@ -1289,7 +1342,9 @@ window.addEventListener('unhandledrejection', (e) => {
       if(!res.ok) throw new Error('Chess.com request failed');
       const json = await res.json();
       const games = (json.games || []).filter(g => g.pgn).slice(-5);
-      return games.map(g => g.pgn);
+      const out = games.map(g => g.pgn);
+      renderImportedGames(out, 'Chess.com');
+      return out;
     }
 
     /********************************************************************

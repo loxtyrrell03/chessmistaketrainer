@@ -492,11 +492,25 @@ window.addEventListener('unhandledrejection', (e) => {
       return sign + Math.abs(Math.round(cp)).toString();
     }
     function tsToDate(ts){
-      if(!ts) return '—';
+      if(!ts) return '-';
       try{
         const d = new Date(ts);
         return d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
-      }catch{ return '—' }
+      }catch{ return '-' }
+    }
+
+    // Trigger a client-side download of text content
+    function downloadText(filename, text){
+      try{
+        const blob = new Blob([text==null?'':String(text)], { type: 'application/x-chess-pgn' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || 'games.pgn';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
+      }catch(e){ console.warn('downloadText failed', e); }
     }
 
     /********************************************************************
@@ -1742,6 +1756,11 @@ window.addEventListener('unhandledrejection', (e) => {
       try{
         setStatus('Fetching Lichess games…');
         const games = await fetchLichessLast5(u);
+        try{
+          const pgnText = games.join('\n\n');
+          const fname = `lichess-${u}-${new Date().toISOString().slice(0,10)}.pgn`;
+          downloadText(fname, pgnText);
+        }catch(e){ console.warn('PGN download failed', e); }
         setStatus(`Analyzing ${games.length} games (Lichess)…`);
         const all = [];
         let k=0;

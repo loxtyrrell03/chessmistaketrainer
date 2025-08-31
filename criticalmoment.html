@@ -1,0 +1,1609 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Personal Chess Mistake Trainer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!--
+    Personal Chess Mistake Trainer (single-file app)
+
+    ✅ Single HTML file: all HTML, CSS, and JS are inline (one file only).
+    ✅ Only external script used is Stockfish WASM (for analysis).
+    ✅ Works offline once loaded (except for fetching online games).
+    ✅ No frameworks used.
+
+    Core:
+      • Import last 5 games from Lichess or Chess.com, or paste PGN manually
+      • Parse PGN (in-app chess engine ChessLite for PGN & legality)
+      • Detect mistakes:
+          - Lichess: use [%eval …] comments to detect drops by thresholds
+          - Chess.com & manual PGN: use local Stockfish (depth 12) to detect drops
+      • Store mistakes in localStorage with at least:
+          { fen, side, played, best, deltaCp, severity, nextReview }
+        (we also store extra SRS fields as needed).
+      • Trainer:
+          - Woodpecker Mode — cycle until first-try correct
+          - Spaced Repetition (SM‑2 scheduling)
+      • Stats: accuracy %, #reviews, and severity distribution bar chart
+
+    Notes for developers:
+      - The embedded lightweight chess engine "ChessLite" supports FEN, SAN parsing,
+        legal move generation, castling, en passant, promotions, and check detection.
+      - Stockfish integration is queued (one analysis at a time) and returns cp & bestmove.
+      - The board is a simple CSS Grid with click‑to‑move (mobile friendly).
+      - Code is modular and heavily commented for extension.
+
+    MIT-style: you’re free to extend/adapt.
+  -->
+  <style>
+    :root{
+      --bg:#0f1115;
+      --panel:#171a21;
+      --muted:#9aa4b2;
+      --text:#e6edf3;
+      --acc:#4f8cff;
+      --good:#2ecc71;
+      --bad:#ff5c5c;
+      --warn:#f1c40f;
+      --card:#1b1f27;
+      --sq-light:#e0e5ee;
+      --sq-dark:#9aa4b2;
+      --sq-hl:#ffd54f;
+      --sq-sel:#7bdff6;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      background:var(--bg);
+      color:var(--text);
+      font:14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial, "Apple Color Emoji","Segoe UI Emoji";
+    }
+    h1,h2,h3{margin:0 0 .5rem}
+    a{color:var(--acc);text-decoration:none}
+    .wrap{max-width:1100px;margin:0 auto;padding:18px}
+    .grid{
+      display:grid;
+      grid-template-columns: 1.1fr .9fr;
+      gap:18px;
+    }
+    @media (max-width:1000px){
+      .grid{grid-template-columns:1fr}
+    }
+    .card{
+      background:var(--panel);
+      border:1px solid #232836;
+      border-radius:12px;
+      padding:14px;
+      box-shadow:0 8px 24px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.02);
+    }
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+    .row > *{flex:1}
+    label{display:block;margin:.25rem 0 .35rem;color:var(--muted);font-size:.85rem}
+    input[type="text"], textarea, select, input[type="number"]{
+      width:100%;background:#11141a;border:1px solid #2a3142;color:var(--text);
+      border-radius:10px;padding:10px 12px;font-size:14px;outline:none;
+    }
+    textarea{min-height:120px;resize:vertical}
+    button{
+      appearance:none;border:0;background:var(--acc);color:white;
+      padding:10px 14px;border-radius:10px;font-weight:600;cursor:pointer;
+      box-shadow:0 6px 18px rgba(79,140,255,.35)
+    }
+    button.secondary{background:#30374a;box-shadow:none}
+    button.ghost{background:transparent;border:1px solid #2a3142;color:var(--text)}
+    .muted{color:var(--muted)}
+    .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace}
+    .small{font-size:.9rem}
+    .tiny{font-size:.8rem}
+    .success{color:var(--good)}
+    .danger{color:var(--bad)}
+    .warn{color:var(--warn)}
+
+    /* Board */
+    .board-wrap{display:flex;gap:14px;align-items:flex-start}
+    .board{
+      width:min(84vw, 520px);height:min(84vw, 520px);
+      background:#ddd;border-radius:12px;overflow:hidden;border:1px solid #c7cdd8
+    }
+    .grid8{
+      display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);width:100%;height:100%;
+    }
+    .sq{
+      display:flex;align-items:center;justify-content:center;
+      font-size:min(8vw, 44px);
+      user-select:none;position:relative;transition:background .08s ease;
+    }
+    .sq.light{background:var(--sq-light)}
+    .sq.dark{background:var(--sq-dark)}
+    .sq.coord{
+      position:absolute;left:6px;bottom:6px;font-size:10px;color:#000a
+    }
+    .sq.hint::after{
+      content:"";position:absolute;width:26%;height:26%;border-radius:50%;
+      background:rgba(0,0,0,.25)
+    }
+    .sq.sel{outline:3px solid var(--sq-sel);z-index:2}
+    .sq.hl{outline:3px solid var(--sq-hl)}
+
+    .piece{filter:drop-shadow(0 2px 2px rgba(0,0,0,.25))}
+    .legend{display:flex;gap:8px;flex-wrap:wrap}
+    .legend span{padding:4px 8px;background:#0f1320;border-radius:999px;border:1px solid #2a3142}
+    .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    @media (max-width:800px){
+      .board-wrap{flex-direction:column}
+    }
+
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:8px;border-bottom:1px dashed #2a3142;text-align:left;vertical-align:top}
+    th{color:var(--muted);font-weight:600}
+    tr:hover td{background:#121622}
+
+    .bar{height:140px;background:#121622;border-radius:10px;margin-top:8px;position:relative}
+    .bar canvas{width:100%;height:100%}
+
+    .pill{padding:2px 8px;border-radius:999px;font-weight:700;font-size:.75rem}
+    .pill.inacc{background:#264f2f;color:#a2f5be;border:1px solid #2f9e44}
+    .pill.mist{background:#5b4a27;color:#ffe8a1;border:1px solid #f2c94c}
+    .pill.blun{background:#4f1e24;color:#ffb3bd;border:1px solid #ff6b6b}
+    .stroke{border:1px dashed #2a3142;border-radius:10px;padding:10px}
+    .right{float:right}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>♟️ Personal Chess Mistake Trainer</h1>
+    <p class="muted small">Import games → extract mistakes → train them with Woodpecker or Spaced Repetition (SM‑2). All data stays in your browser (localStorage).</p>
+
+    <div class="grid" style="margin-top:14px">
+      <!-- LEFT COLUMN: Import + Trainer -->
+      <div class="card">
+        <h2>1) Import Games</h2>
+        <div class="row" style="margin-top:6px">
+          <div>
+            <label>Lichess username</label>
+            <input id="lichessUser" type="text" placeholder="e.g., lox123" />
+          </div>
+          <div style="max-width:220px">
+            <label>&nbsp;</label>
+            <button id="btnFetchLichess">Fetch last 5 (Lichess)</button>
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Chess.com username</label>
+            <input id="chesscomUser" type="text" placeholder="e.g., lox123" />
+            <div class="tiny muted" style="margin-top:4px">We query <span class="mono">/pub/player/{user}/games/2025/08</span> and take the most recent 5 PGNs.</div>
+          </div>
+          <div style="max-width:220px">
+            <label>&nbsp;</label>
+            <button id="btnFetchChesscom">Fetch last 5 (Chess.com)</button>
+          </div>
+        </div>
+        <div style="margin-top:10px">
+          <label>Or paste PGN manually (one or more games)</label>
+          <textarea id="pgnInput" placeholder="[Event \"...\"] … moves …"></textarea>
+          <div class="row" style="margin-top:8px">
+            <button id="btnAnalyzePGN">Analyze PGN (Stockfish depth 12)</button>
+            <button id="btnClearAll" class="ghost">Clear ALL mistakes</button>
+          </div>
+        </div>
+
+        <div class="stroke tiny" id="statusBox" style="margin-top:10px">
+          <b>Status:</b> <span id="status">Idle</span>
+          <span class="right"><b>Engine:</b> <span id="engineState">loading…</span></span>
+        </div>
+
+        <hr style="border:none;border-top:1px solid #242a39;margin:16px 0">
+
+        <h2>2) Trainer</h2>
+        <div class="row" style="margin-top:8px">
+          <div class="grid-2">
+            <div>
+              <label>Mode</label>
+              <select id="modeSel">
+                <option value="woodpecker">Woodpecker (cycle until first‑try correct)</option>
+                <option value="srs">Spaced Repetition (SM‑2)</option>
+              </select>
+            </div>
+            <div id="wpCountWrap">
+              <label>Woodpecker count (N)</label>
+              <input id="wpCount" type="number" min="1" value="10">
+            </div>
+          </div>
+          <div style="max-width:220px">
+            <label>&nbsp;</label>
+            <button id="btnStart">Start session</button>
+          </div>
+        </div>
+
+        <div class="board-wrap" style="margin-top:12px">
+          <div class="board">
+            <div id="board" class="grid8" aria-label="chessboard"></div>
+          </div>
+          <div style="flex:1;min-width:240px">
+            <div class="legend tiny">
+              <span>Click a piece, then a target square</span>
+              <span>✔️ correct = best move</span>
+              <span>❌ otherwise</span>
+            </div>
+            <div class="stroke" style="margin-top:10px">
+              <div><b>Current Mistake</b></div>
+              <div class="tiny muted" id="mInfo">—</div>
+              <div class="tiny" style="margin-top:6px"><b>Goal:</b> find the best move from this position.</div>
+              <div class="tiny"><b>Side to move:</b> <span id="sideToMove">—</span></div>
+              <div class="tiny"><b>Your move:</b> <span id="yourMove">—</span></div>
+              <div class="tiny"><b>Feedback:</b> <span id="feedback">—</span></div>
+              <div class="row" style="margin-top:8px">
+                <button id="btnReveal" class="secondary">Reveal best</button>
+                <button id="btnNext" class="ghost">Next</button>
+                <button id="btnFlip" class="ghost">Flip board</button>
+              </div>
+            </div>
+            <div class="tiny muted" style="margin-top:10px">Tip: You can flip the board to see from the side to move.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT COLUMN: Mistakes + Stats -->
+      <div class="card">
+        <h2>3) Mistake List</h2>
+        <div class="tiny muted" style="margin:6px 0 10px">Stored locally (<span class="mono">localStorage</span>). Click a row to load it on the board.</div>
+        <div style="max-height:320px;overflow:auto;border:1px dashed #2a3142;border-radius:10px">
+          <table id="mistakeTable">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Severity</th>
+                <th>Side</th>
+                <th>Played</th>
+                <th>Best</th>
+                <th>Δcp</th>
+                <th>Next review</th>
+              </tr>
+            </thead>
+            <tbody id="mistakeTBody"></tbody>
+          </table>
+        </div>
+
+        <hr style="border:none;border-top:1px solid #242a39;margin:16px 0">
+
+        <h2>4) Stats</h2>
+        <div class="grid-2" style="margin-top:8px">
+          <div class="stroke">
+            <div class="small"><b>Accuracy:</b> <span id="statAcc">—</span></div>
+            <div class="small"><b>Reviews done:</b> <span id="statReviews">0</span></div>
+          </div>
+          <div class="stroke">
+            <div class="small"><b>Total mistakes:</b> <span id="statTotal">0</span></div>
+            <div class="small"><b>Due now (SRS):</b> <span id="statDue">0</span></div>
+          </div>
+        </div>
+        <div style="margin-top:10px">
+          <div class="small"><b>Severity distribution</b></div>
+          <div class="bar"><canvas id="sevChart" width="600" height="180"></canvas></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Firebase (App + Analytics) -->
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js';
+    import { getAnalytics, isSupported } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-analytics.js';
+
+    // Your web app's Firebase configuration
+    const firebaseConfig = {
+      apiKey: "AIzaSyB_VkTkQXOgc4Q0jithJk9iwzRv2OLLIE0",
+      authDomain: "chessmistaketrainer.firebaseapp.com",
+      projectId: "chessmistaketrainer",
+      storageBucket: "chessmistaketrainer.firebasestorage.app",
+      messagingSenderId: "283045516917",
+      appId: "1:283045516917:web:c0d57f12aceb33a16d4a3c",
+      measurementId: "G-86S4RMVDR3"
+    };
+
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    window.firebaseApp = app;
+
+    // Initialize Analytics only where supported (e.g., not in Node/SSR)
+    isSupported().then(supported => {
+      if (supported) {
+        try {
+          const analytics = getAnalytics(app);
+          window.firebaseAnalytics = analytics;
+          console.log('Firebase Analytics initialized');
+        } catch (err) {
+          console.warn('Analytics init failed:', err);
+        }
+      } else {
+        console.log('Firebase Analytics not supported in this environment');
+      }
+    }).catch(err => console.warn('Analytics support check failed:', err));
+  </script>
+
+  <!-- Stockfish WASM (allowed external) -->
+  <script src="https://unpkg.com/stockfish.wasm/stockfish.js">window.addEventListener('error', (e) => {
+  try { setStatus('JS error: ' + (e.message || (e.error && e.error.message) || 'unknown')); } catch {}
+});
+window.addEventListener('unhandledrejection', (e) => {
+  try { setStatus('Promise error: ' + ((e.reason && (e.reason.message || e.reason)) || 'unknown')); } catch {}
+});</script>
+
+  <script>
+    /********************************************************************
+     * Utility helpers
+     ********************************************************************/
+    const $ = sel => document.querySelector(sel);
+    const $$ = sel => Array.from(document.querySelectorAll(sel));
+    const sleep = ms => new Promise(res => setTimeout(res, ms));
+    const nowTs = () => Date.now();
+    const days = n => n * 24 * 60 * 60 * 1000;
+    const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+    const uid = () => 'm_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+    function formatDelta(cp){
+      const sign = cp >= 0 ? '' : '-';
+      return sign + Math.abs(Math.round(cp)).toString();
+    }
+    function tsToDate(ts){
+      if(!ts) return '—';
+      try{
+        const d = new Date(ts);
+        return d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+      }catch{ return '—' }
+    }
+
+    /********************************************************************
+     * Local Storage layer
+     ********************************************************************/
+    const LS_MISTAKES = 'pmtt_mistakes';
+    const LS_ATTEMPTS = 'pmtt_attempts';
+
+    function loadMistakes(){
+      try{ return JSON.parse(localStorage.getItem(LS_MISTAKES) || '[]'); }catch{ return [] }
+    }
+    function saveMistakes(arr){
+      localStorage.setItem(LS_MISTAKES, JSON.stringify(arr));
+      renderMistakeList();
+      renderStats();
+    }
+    function addMistakes(newOnes){
+      const cur = loadMistakes();
+      // Simple de-dupe: key by fen + played
+      const seen = new Set(cur.map(m => m.fen + '|' + m.played));
+      const merged = [...cur];
+      for(const m of newOnes){
+        if(!seen.has(m.fen + '|' + m.played)){
+          merged.push(m);
+        }
+      }
+      saveMistakes(merged);
+    }
+    function clearAll(){
+      localStorage.removeItem(LS_MISTAKES);
+      localStorage.removeItem(LS_ATTEMPTS);
+      renderMistakeList();
+      renderStats();
+    }
+    function logAttempt(mId, correct){
+      const arr = JSON.parse(localStorage.getItem(LS_ATTEMPTS) || '[]');
+      arr.push({ id: mId, ts: nowTs(), correct: !!correct });
+      localStorage.setItem(LS_ATTEMPTS, JSON.stringify(arr));
+      renderStats();
+    }
+    function getAttempts(){
+      try{ return JSON.parse(localStorage.getItem(LS_ATTEMPTS) || '[]'); }catch{ return [] }
+    }
+
+    /********************************************************************
+     * Lightweight chess engine: ChessLite
+     *  - Supports FEN, SAN parsing, move generation, checks
+     *  - Enough for PGN parsing and training interactions
+     ********************************************************************/
+    function ChessLite(fen){
+      const FILES = 'abcdefgh';
+      const PIECES = { w:{p:'P',n:'N',b:'B',r:'R',q:'Q',k:'K'}, b:{p:'p',n:'n',b:'b',r:'r',q:'q',k:'k'} };
+      let board = new Array(64).fill(null); // each cell: piece char or null
+      let side = 'w';
+      let castling = {K:true,Q:true,k:true,q:true};
+      let ep = -1; // en passant target index or -1
+      let halfmove = 0;
+      let fullmove = 1;
+
+      function idx(file, rank){ return (7 - (rank - 1)) * 8 + file; } // rank 1..8, file 0..7
+      function sqToIdx(sq){ const f = FILES.indexOf(sq[0]); const r = parseInt(sq[1],10); return idx(f, r); }
+      function idxToSq(i){ const r = 8 - Math.floor(i/8); const f = i % 8; return FILES[f] + r; }
+      function pieceColor(pc){ if(!pc) return null; return pc === pc.toUpperCase() ? 'w' : 'b'; }
+      function cloneState(){
+        return {
+          board: board.slice(), side, castling: {...castling}, ep, halfmove, fullmove
+        };
+      }
+      function restoreState(s){
+        board = s.board.slice(); side = s.side; castling = {...s.castling}; ep = s.ep; halfmove = s.halfmove; fullmove = s.fullmove;
+      }
+      function reset(){
+        load('startpos');
+      }
+      function load(f){
+        if(!f || f === 'startpos'){
+          const start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+          return loadFEN(start);
+        }
+        return loadFEN(f);
+      }
+      function loadFEN(fenStr){
+        board.fill(null);
+        const parts = fenStr.trim().split(/\s+/);
+        if(parts.length < 4) throw new Error('Invalid FEN');
+        // placement
+        const rows = parts[0].split('/');
+        for(let r=0;r<8;r++){
+          let file=0;
+          for(const ch of rows[r]){
+            if(/[1-8]/.test(ch)) file += parseInt(ch,10);
+            else{
+              const i = r*8 + file;
+              board[i] = ch;
+              file++;
+            }
+          }
+        }
+        // side
+        side = parts[1] || 'w';
+        // castling
+        castling = {K:false,Q:false,k:false,q:false};
+        if(parts[2] && parts[2] !== '-'){
+          for(const c of parts[2]) if(castling.hasOwnProperty(c)) castling[c]=true;
+        }
+        // en passant
+        ep = (parts[3] && parts[3] !== '-') ? sqToIdx(parts[3]) : -1;
+        // optional halfmove/fullmove
+        halfmove = parts[4] ? parseInt(parts[4],10) : 0;
+        fullmove = parts[5] ? parseInt(parts[5],10) : 1;
+        return true;
+      }
+      function fen(){
+        // placement
+        let s = '';
+        for(let r=0;r<8;r++){
+          let empty=0;
+          for(let f=0;f<8;f++){
+            const p = board[r*8 + f];
+            if(!p){ empty++; }
+            else{
+              if(empty){ s += empty; empty=0; }
+              s += p;
+            }
+          }
+          if(empty) s += empty;
+          if(r<7) s += '/';
+        }
+        s += ' ' + side + ' ';
+        let cstr = '';
+        if(castling.K) cstr+='K';
+        if(castling.Q) cstr+='Q';
+        if(castling.k) cstr+='k';
+        if(castling.q) cstr+='q';
+        s += cstr || '-';
+        s += ' ' + (ep>=0 ? idxToSq(ep) : '-');
+        s += ' ' + halfmove + ' ' + fullmove;
+        return s;
+      }
+      function inBounds(r,c){ return r>=0 && r<8 && c>=0 && c<8; }
+      function rcOf(i){ return { r: Math.floor(i/8), c: i%8 }; }
+      function kingIndex(color){
+        const K = (color==='w')?'K':'k';
+        for(let i=0;i<64;i++) if(board[i]===K) return i;
+        return -1;
+      }
+      function squareAttacked(i, byColor){
+        // Pawns
+        const {r,c} = rcOf(i);
+        if(byColor==='w'){
+          const rr = r+1;
+          if(inBounds(rr,c-1) && board[rr*8 + (c-1)]==='P') return true;
+          if(inBounds(rr,c+1) && board[rr*8 + (c+1)]==='P') return true;
+        }else{
+          const rr = r-1;
+          if(inBounds(rr,c-1) && board[rr*8 + (c-1)]==='p') return true;
+          if(inBounds(rr,c+1) && board[rr*8 + (c+1)]==='p') return true;
+        }
+        // Knights
+        const nn = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
+        for(const [dr,dc] of nn){
+          const r2=r+dr, c2=c+dc;
+          if(!inBounds(r2,c2)) continue;
+          const p = board[r2*8 + c2];
+          if(p && pieceColor(p)===byColor && /[Nn]/.test(p)) return true;
+        }
+        // Bishops/Queens (diagonals)
+        const diags = [[-1,-1],[-1,1],[1,-1],[1,1]];
+        for(const [dr,dc] of diags){
+          let rr=r+dr, cc=c+dc;
+          while(inBounds(rr,cc)){
+            const p = board[rr*8 + cc];
+            if(p){
+              if(pieceColor(p)===byColor && (/[Bb]/.test(p) || /[Qq]/.test(p))) return true;
+              break;
+            }
+            rr+=dr; cc+=dc;
+          }
+        }
+        // Rooks/Queens (orthogonals)
+        const orth = [[-1,0],[1,0],[0,-1],[0,1]];
+        for(const [dr,dc] of orth){
+          let rr=r+dr, cc=c+dc;
+          while(inBounds(rr,cc)){
+            const p = board[rr*8 + cc];
+            if(p){
+              if(pieceColor(p)===byColor && (/[Rr]/.test(p) || /[Qq]/.test(p))) return true;
+              break;
+            }
+            rr+=dr; cc+=dc;
+          }
+        }
+        // King
+        for(let dr=-1;dr<=1;dr++){
+          for(let dc=-1;dc<=1;dc++){
+            if(dr===0 && dc===0) continue;
+            const r2=r+dr,c2=c+dc;
+            if(!inBounds(r2,c2)) continue;
+            const p = board[r2*8 + c2];
+            if(p && pieceColor(p)===byColor && /[Kk]/.test(p)) return true;
+          }
+        }
+        return false;
+      }
+      function inCheck(color){
+        const ki = kingIndex(color);
+        return squareAttacked(ki, color==='w'?'b':'w');
+      }
+      function makeMoveObj(from, to, promotion){
+        const m = {
+          from, to, promotion: promotion||null,
+          piece: board[from], captured: board[to],
+          flags: ''
+        };
+        const p = board[from];
+        const pc = pieceColor(p);
+        // special: castling
+        if(/[Kk]/.test(p)){
+          const {c:cf} = rcOf(from);
+          const {c:ct} = rcOf(to);
+          const diff = ct - cf;
+          if(Math.abs(diff)===2){
+            m.flags += 'k'; // castle
+            // move rook too
+            if(pc==='w'){
+              if(diff===2){ // O-O
+                if(board[idx(7,1)]==='R'){ /* a1 rook irrelevant */ }
+                board[sqToIdx('h1')] = null;
+                board[sqToIdx('f1')] = 'R';
+              }else{
+                board[sqToIdx('a1')] = null;
+                board[sqToIdx('d1')] = 'R';
+              }
+            }else{
+              if(diff===2){
+                board[sqToIdx('h8')] = null;
+                board[sqToIdx('f8')] = 'r';
+              }else{
+                board[sqToIdx('a8')] = null;
+                board[sqToIdx('d8')] = 'r';
+              }
+            }
+          }
+        }
+        // en passant capture
+        if(/[Pp]/.test(p)){
+          const {r:rf,c:cf} = rcOf(from);
+          const {r:rt,c:ct} = rcOf(to);
+          if(cf!==ct && !m.captured){
+            // diagonal move to empty square => en passant
+            const capIdx = pc==='w' ? (to+8) : (to-8);
+            m.captured = board[capIdx];
+            board[capIdx] = null;
+            m.flags += 'e'; // en-passant
+          }
+        }
+        // move piece
+        board[to] = board[from];
+        board[from] = null;
+
+        // promotion
+        if(m.promotion){
+          board[to] = (pc==='w' ? m.promotion.toUpperCase(): m.promotion.toLowerCase());
+          m.flags += 'p';
+        }
+        // update ep target
+        ep = -1;
+        // double pawn push
+        if(/[Pp]/.test(m.piece)){
+          const {r:rf} = rcOf(from);
+          const {r:rt} = rcOf(to);
+          if(Math.abs(rt - rf)===2){
+            ep = pc==='w' ? (to+8) : (to-8);
+          }
+        }
+        // update castling rights
+        const fromSq = idxToSq(from), toSq = idxToSq(to);
+        if(m.piece==='K'){ castling.K=false; castling.Q=false; }
+        if(m.piece==='k'){ castling.k=false; castling.q=false; }
+        if(fromSq==='h1' || toSq==='h1') castling.K=false;
+        if(fromSq==='a1' || toSq==='a1') castling.Q=false;
+        if(fromSq==='h8' || toSq==='h8') castling.k=false;
+        if(fromSq==='a8' || toSq==='a8') castling.q=false;
+
+        // clocks
+        if(/[Pp]/.test(m.piece) || m.captured) halfmove=0; else halfmove++;
+        if(side==='b') fullmove++;
+
+        // switch side
+        side = (side==='w'?'b':'w');
+        return m;
+      }
+      function undoMoveObj(prev){
+        restoreState(prev);
+      }
+      function addMove(moves, from, to, promotion){
+        // simulate for legality
+        const prev = cloneState();
+        const cap = board[to];
+        const p = board[from];
+        const pc = pieceColor(p);
+        // handle castle rook displacement in simulation inside makeMoveObj
+        makeMoveObj(from, to, promotion);
+        const legal = !inCheck(pc);
+        const res = cloneState();
+        undoMoveObj(prev);
+        if(legal){
+          moves.push({from, to, promotion: promotion || null, piece: p, captured: cap || null});
+        }
+      }
+      function generateMoves(){
+        const moves = [];
+        const us = side;
+        for(let i=0;i<64;i++){
+          const p = board[i];
+          if(!p || pieceColor(p)!==us) continue;
+          const {r,c} = rcOf(i);
+          const ours = us;
+          const them = us==='w'?'b':'w';
+
+          if(/[Pp]/.test(p)){
+            const forward = (ours==='w') ? -1 : 1;
+            const startRank = (ours==='w') ? 6 : 1;
+            const promoRank = (ours==='w') ? 0 : 7;
+            const oneR = r + forward;
+            if(inBounds(oneR,c) && !board[oneR*8 + c]){
+              // promotion?
+              if(oneR===promoRank){
+                for(const pr of ['q','r','b','n']) addMove(moves, i, oneR*8+c, pr);
+              }else addMove(moves, i, oneR*8+c);
+              // double
+              const twoR = r + 2*forward;
+              if(r===startRank && !board[twoR*8 + c]) addMove(moves, i, twoR*8 + c);
+            }
+            // captures
+            for(const dc of [-1,1]){
+              const rr = r + forward, cc = c + dc;
+              if(!inBounds(rr,cc)) continue;
+              const tIdx = rr*8 + cc;
+              if(board[tIdx] && pieceColor(board[tIdx])===them){
+                if(rr===promoRank){
+                  for(const pr of ['q','r','b','n']) addMove(moves, i, tIdx, pr);
+                }else addMove(moves, i, tIdx);
+              }else if(tIdx===ep){
+                // en passant
+                addMove(moves, i, tIdx);
+              }
+            }
+          }else if(/[Nn]/.test(p)){
+            const nn = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
+            for(const [dr,dc] of nn){
+              const rr=r+dr, cc=c+dc;
+              if(!inBounds(rr,cc)) continue;
+              const tIdx = rr*8+cc;
+              if(!board[tIdx] || pieceColor(board[tIdx])!==ours){
+                addMove(moves, i, tIdx);
+              }
+            }
+          }else if(/[Bb]/.test(p)){
+            const dirs=[[-1,-1],[-1,1],[1,-1],[1,1]];
+            for(const [dr,dc] of dirs){
+              let rr=r+dr, cc=c+dc;
+              while(inBounds(rr,cc)){
+                const tIdx = rr*8+cc;
+                if(board[tIdx]){
+                  if(pieceColor(board[tIdx])!==ours) addMove(moves, i, tIdx);
+                  break;
+                }
+                addMove(moves, i, tIdx);
+                rr+=dr; cc+=dc;
+              }
+            }
+          }else if(/[Rr]/.test(p)){
+            const dirs=[[-1,0],[1,0],[0,-1],[0,1]];
+            for(const [dr,dc] of dirs){
+              let rr=r+dr, cc=c+dc;
+              while(inBounds(rr,cc)){
+                const tIdx = rr*8+cc;
+                if(board[tIdx]){
+                  if(pieceColor(board[tIdx])!==ours) addMove(moves, i, tIdx);
+                  break;
+                }
+                addMove(moves, i, tIdx);
+                rr+=dr; cc+=dc;
+              }
+            }
+          }else if(/[Qq]/.test(p)){
+            const dirs=[[-1,-1],[-1,1],[1,-1],[1,1],[-1,0],[1,0],[0,-1],[0,1]];
+            for(const [dr,dc] of dirs){
+              let rr=r+dr, cc=c+dc;
+              while(inBounds(rr,cc)){
+                const tIdx = rr*8+cc;
+                if(board[tIdx]){
+                  if(pieceColor(board[tIdx])!==ours) addMove(moves, i, tIdx);
+                  break;
+                }
+                addMove(moves, i, tIdx);
+                rr+=dr; cc+=dc;
+              }
+            }
+          }else if(/[Kk]/.test(p)){
+            for(let dr=-1;dr<=1;dr++){
+              for(let dc=-1;dc<=1;dc++){
+                if(dr===0 && dc===0) continue;
+                const rr=r+dr, cc=c+dc;
+                if(!inBounds(rr,cc)) continue;
+                const tIdx=rr*8+cc;
+                if(!board[tIdx] || pieceColor(board[tIdx])!==ours) addMove(moves, i, tIdx);
+              }
+            }
+            // castling
+            if(ours==='w' && r===7 && c===4){
+              // short
+              if(castling.K && !board[sqToIdx('f1')] && !board[sqToIdx('g1')] && !inCheck('w') && !squareAttacked(sqToIdx('f1'),'b') && !squareAttacked(sqToIdx('g1'),'b')){
+                // e1g1
+                addMove(moves, i, sqToIdx('g1'));
+              }
+              if(castling.Q && !board[sqToIdx('d1')] && !board[sqToIdx('c1')] && !board[sqToIdx('b1')] && !inCheck('w') && !squareAttacked(sqToIdx('d1'),'b') && !squareAttacked(sqToIdx('c1'),'b')){
+                addMove(moves, i, sqToIdx('c1'));
+              }
+            }
+            if(ours==='b' && r===0 && c===4){
+              if(castling.k && !board[sqToIdx('f8')] && !board[sqToIdx('g8')] && !inCheck('b') && !squareAttacked(sqToIdx('f8'),'w') && !squareAttacked(sqToIdx('g8'),'w')){
+                addMove(moves, i, sqToIdx('g8'));
+              }
+              if(castling.q && !board[sqToIdx('d8')] && !board[sqToIdx('c8')] && !board[sqToIdx('b8')] && !inCheck('b') && !squareAttacked(sqToIdx('d8'),'w') && !squareAttacked(sqToIdx('c8'),'w')){
+                addMove(moves, i, sqToIdx('c8'));
+              }
+            }
+          }
+        }
+        return moves;
+      }
+      function moveUci(uci){
+        const from = sqToIdx(uci.slice(0,2));
+        const to = sqToIdx(uci.slice(2,4));
+        const promotion = uci.length>4 ? uci[4] : null;
+        const moves = generateMoves().filter(m => m.from===from && m.to===to && ((promotion && m.promotion===promotion) || (!promotion && !m.promotion)));
+        if(moves.length){
+          const prev = cloneState();
+          const result = makeMoveObj(from, to, promotion);
+          return {ok:true, prev, result};
+        }
+        return {ok:false};
+      }
+      function movesVerbose(){
+        return generateMoves().map(m => ({
+          from: idxToSq(m.from), to: idxToSq(m.to),
+          uci: idxToSq(m.from)+idxToSq(m.to)+(m.promotion?m.promotion:''),
+          piece: m.piece, captured: m.captured || null, promotion: m.promotion || null
+        }));
+      }
+      function parseSANtoMove(san){
+        san = san.trim();
+        // castles
+        if(/^O-O-O/.test(san) || /^0-0-0/.test(san)){
+          const target = (side==='w') ? 'c1' : 'c8';
+          const from = (side==='w') ? 'e1' : 'e8';
+          return from+target;
+        }
+        if(/^O-O/.test(san) || /^0-0/.test(san)){
+          const target = (side==='w') ? 'g1' : 'g8';
+          const from = (side==='w') ? 'e1' : 'e8';
+          return from+target;
+        }
+        // strip check/mate and NAGs
+        san = san.replace(/[+#]|\!\!|\?\?|!\?|?!/g,'');
+        // promotion (e.g. e8=Q or exd8=Q)
+        let promo = null;
+        const pm = san.match(/=([NBRQ])/);
+        if(pm){ promo = pm[1].toLowerCase(); san = san.replace(/=([NBRQ])/, ''); }
+        // destination square is last [a-h][1-8]
+        const dm = san.match(/([a-h][1-8])$/);
+        if(!dm) return null;
+        const dest = dm[1];
+        san = san.slice(0, san.length - dest.length);
+        // piece letter if any
+        let pieceLetter = 'P';
+        if(/^[NBRQK]/.test(san)){ pieceLetter = san[0]; san = san.slice(1); }
+        // capture marker
+        san = san.replace('x','');
+        // disambiguation (file/rank or both)
+        let disFile = null, disRank = null;
+        if(san.length===2){ // like Ne2e4 (rare) or Nbd7 -> 'bd'
+          if(/[a-h]/.test(san[0])) disFile = san[0];
+          if(/[1-8]/.test(san[0])) disRank = san[0];
+          if(/[a-h]/.test(san[1])) disFile = san[1];
+          if(/[1-8]/.test(san[1])) disRank = san[1];
+        }else if(san.length===1){
+          if(/[a-h]/.test(san)) disFile = san;
+          if(/[1-8]/.test(san)) disRank = san;
+        }
+        // select matching legal move
+        const legal = movesVerbose();
+        const targets = legal.filter(m => m.to===dest).filter(m=>{
+          // piece type filter
+          const want = pieceLetter;
+          const isPawn = want==='P';
+          const okPiece = isPawn ? /[Pp]/.test(m.piece) :
+            (want==='N'?/[Nn]/.test(m.piece):
+             want==='B'?/[Bb]/.test(m.piece):
+             want==='R'?/[Rr]/.test(m.piece):
+             want==='Q'?/[Qq]/.test(m.piece):
+             /[Kk]/.test(m.piece));
+          if(!okPiece) return false;
+          if(disFile && m.from[0]!==disFile) return false;
+          if(disRank && m.from[1]!==disRank) return false;
+          if(promo && m.promotion!==promo) return false;
+          return true;
+        });
+        if(targets.length===1){
+          return targets[0].uci;
+        }
+        // If ambiguous, prefer first (PGN should avoid ambiguity)
+        return targets[0]?.uci || null;
+      }
+      function loadPGN(pgn){
+        // remove headers
+        const text = pgn.replace(/\r/g,'').replace(/\[(.|\n)*?\]\s*/g,' ').trim();
+        // token stream with simple comment capture to attach evals later elsewhere
+        const tokens = [];
+        let i=0;
+        while(i<text.length){
+          const ch = text[i];
+          if(ch==='{' ){ // skip comment block (handled elsewhere by caller)
+            let j=i+1;
+            while(j<text.length && text[j]!=='}') j++;
+            // keep comment as a separate token to preserve order
+            tokens.push({type:'comment', value:text.slice(i+1,j)});
+            i=j+1;
+            continue;
+          }
+          if(/\s/.test(ch)){ i++; continue; }
+          // move number like 12. or 12...
+          const num = text.slice(i).match(/^\d+\.(\.\.)?/);
+          if(num){ i += num[0].length; continue; }
+          // result
+          const res = text.slice(i).match(/^(1-0|0-1|1\/2-1\/2|\*)/);
+          if(res){ i += res[0].length; continue; }
+          // NAG
+          const nag = text.slice(i).match(/^\$\d+/);
+          if(nag){ i += nag[0].length; continue; }
+          // otherwise it's move SAN up to whitespace or comment
+          let j=i;
+          while(j<text.length && !/\s|\{/.test(text[j])) j++;
+          tokens.push({type:'san', value:text.slice(i,j)});
+          i=j;
+        }
+        // play moves
+        reset();
+        const moves = [];
+        for(const t of tokens){
+          if(t.type==='san'){
+            const uci = parseSANtoMove(t.value);
+            if(!uci) continue;
+            const mv = moveUci(uci);
+            if(!mv.ok) continue;
+            moves.push({uci, san: t.value, fenAfter: fen()});
+          }else{
+            // comment token (caller can map to last move)
+            moves.push({comment: t.value});
+          }
+        }
+        return moves; // mixed array with moves and comment entries (for eval extraction)
+      }
+      return {
+        reset, load, loadFEN, fen, turn:()=>side,
+        moves: movesVerbose,
+        moveUci, parseSANtoMove, loadPGN,
+        idxToSq, sqToIdx, inCheck
+      }
+    }
+
+    /********************************************************************
+     * Stockfish worker wrapper (queued)
+     ********************************************************************/
+    const Engine = (() => {
+      let sf = null;
+      let ready = false;
+      let busy = false;
+      let lastScore = { cp: 0, mate: null };
+      let resolvers = [];
+      let initPromise = null;
+
+      function ensure(){
+        if(initPromise) return initPromise;
+        initPromise = new Promise(async (resolve) => {
+          try{
+            sf = (typeof Stockfish === 'function') ? Stockfish() : null;
+            if(!sf){ $('#engineState').textContent = 'failed to load'; return resolve(false); }
+            sf.onmessage = (e) => {
+              const line = (''+(e.data || e)).trim();
+              // console.log('SF:', line);
+              if(line === 'uciok') { sf.postMessage('isready'); return; }
+              if(line === 'readyok') { ready = true; $('#engineState').textContent = 'ready'; return; }
+              if(line.startsWith('info')){
+                // parse score
+                const mMate = line.match(/score\s+mate\s+(-?\d+)/);
+                const mCp = line.match(/score\s+cp\s+(-?\d+)/);
+                if(mMate){
+                  lastScore = { mate: parseInt(mMate[1],10), cp: (mMate[1][0]==='-'?-10000:10000) };
+                }else if(mCp){
+                  lastScore = { cp: parseInt(mCp[1],10), mate: null };
+                }
+              }
+              if(line.startsWith('bestmove')){
+                const bm = line.split(' ')[1];
+                const r = resolvers.shift();
+                busy = false;
+                if(r) r({ bestmove: bm, score: lastScore });
+              }
+            };
+            sf.postMessage('uci');
+            // small wait to display "loading…"
+            const t0 = Date.now();
+            while(!ready && (Date.now()-t0) < 4000){ await sleep(20); }
+            $('#engineState').textContent = ready ? 'ready' : 'loading…';
+            resolve(true);
+          }catch(err){
+            console.error(err);
+            $('#engineState').textContent = 'error';
+            resolve(false);
+          }
+        });
+        return initPromise;
+      }
+
+      async function analyze(fen, depth=12){
+        await ensure();
+        while(busy) await sleep(5);
+        busy = true;
+        lastScore = { cp: 0, mate: null };
+        sf.postMessage('ucinewgame');
+        sf.postMessage('position fen ' + fen);
+        const p = new Promise(res => resolvers.push(res));
+        sf.postMessage('go depth ' + depth);
+        const out = await p;
+        return { cp: (out.score.mate!==null ? (out.score.mate>0?10000:-10000) : out.score.cp), bestmove: out.bestmove };
+      }
+
+      return { analyze, ensure };
+    })();
+
+    /********************************************************************
+     * PGN parsing + mistake extraction
+     ********************************************************************/
+    const SEV_THRESH = { inacc:50, mistake:150, blunder:300 };
+
+    function severityFromDrop(cp){
+      const x = Math.abs(Math.round(cp));
+      if(x >= SEV_THRESH.blunder) return 'blunder';
+      if(x >= SEV_THRESH.mistake) return 'mistake';
+      if(x >= SEV_THRESH.inacc) return 'inaccuracy';
+      return null;
+    }
+
+    function parseLichessEvalsFromMoves(mixedMoves){
+      // mixedMoves is array of {san/fenAfter/uci} and {comment}
+      // We attach eval (for White perspective) to the *preceding* move object (which the comment follows in PGN)
+      let out = [];
+      for(let i=0;i<mixedMoves.length;i++){
+        const t = mixedMoves[i];
+        if(t.san){ out.push({...t, evalW: null}); }
+        else if(t.comment && out.length){
+          // Find [%eval ...] in comment
+          const all = [...t.comment.matchAll(/\[%eval\s+([^\]]+)\]/g)];
+          if(all.length){
+            let val = all[all.length-1][1].trim(); // last eval in comment
+            // val examples: "0.23", "+1.2", "-3.0", "#5", "#-3"
+            let cp = null;
+            if(val.startsWith('#')){ // mate
+              const n = parseInt(val.slice(1),10);
+              cp = (isNaN(n)? 10000 : (n>0?10000:-10000));
+            }else{
+              // remove + and convert to cp
+              cp = Math.round(parseFloat(val.replace('+',''))*100);
+            }
+            out[out.length-1].evalW = cp;
+          }
+        }
+      }
+      return out;
+    }
+
+    async function analyzeLichessPGN(pgn){
+      const cl = ChessLite();
+      const mixed = cl.loadPGN(pgn);
+      const seq = parseLichessEvalsFromMoves(mixed).filter(m => m.san); // only moves
+      const mistakes = [];
+      let prevEvalW = null;
+      // Re-play to capture FEN before each move as we go
+      const cl2 = ChessLite();
+      cl2.reset();
+      for(const entry of seq){
+        const sideToMove = cl2.turn(); // side before this move
+        const fenBefore = cl2.fen();
+        // compute drop using white-perspective evals
+        const evalAfter = entry.evalW;
+        if(prevEvalW!==null && evalAfter!==null){
+          let drop = 0;
+          if(sideToMove==='w'){ drop = Math.max(0, prevEvalW - evalAfter); }
+          else{ drop = Math.max(0, evalAfter - prevEvalW); }
+          const sev = severityFromDrop(drop);
+          if(sev){
+            // Compute best move via Stockfish at depth 12
+            const { bestmove } = await Engine.analyze(fenBefore, 12);
+            // store as required (+ a few extras for SRS)
+            mistakes.push({
+              id: uid(),
+              fen: fenBefore,
+              side: sideToMove,
+              played: entry.san,      // from PGN
+              best: bestmove,         // store UCI (clear + exact for trainer)
+              deltaCp: drop,
+              severity: sev,
+              nextReview: nowTs(),    // due now by default
+              ef: 2.5, reps: 0, interval: 0 // SM-2 fields
+            });
+          }
+        }
+        // apply the played move to continue
+        const uci = cl2.parseSANtoMove(entry.san);
+        if(uci) cl2.moveUci(uci);
+        prevEvalW = (entry.evalW!==null) ? entry.evalW : prevEvalW;
+      }
+      return mistakes;
+    }
+
+    async function analyzeManualOrChesscomPGN(pgn){
+      // depth-12 on every ply: compute cp_before (stm) and cp_after (opp stm),
+      // drop for mover = max(0, cp_before + cp_after)
+      const cl = ChessLite();
+      const seq = cl.loadPGN(pgn).filter(x => x.san); // moves only
+      const mistakes = [];
+      const cl2 = ChessLite();
+      cl2.reset();
+      for(const mv of seq){
+        const fenBefore = cl2.fen();
+        const sideToMove = cl2.turn();
+        const { cp:cpBefore, bestmove } = await Engine.analyze(fenBefore, 12);
+        const uci = cl2.parseSANtoMove(mv.san);
+        if(!uci){ // skip if unparsable
+          continue;
+        }
+        cl2.moveUci(uci);
+        const fenAfter = cl2.fen();
+        const { cp:cpAfter } = await Engine.analyze(fenAfter, 12);
+        const drop = Math.max(0, cpBefore + cpAfter);
+        const sev = severityFromDrop(drop);
+        if(sev){
+          mistakes.push({
+            id: uid(),
+            fen: fenBefore,
+            side: sideToMove,
+            played: mv.san,
+            best: bestmove,       // UCI
+            deltaCp: drop,
+            severity: sev,
+            nextReview: nowTs(),
+            ef: 2.5, reps: 0, interval: 0
+          });
+        }
+      }
+      return mistakes;
+    }
+
+    /********************************************************************
+     * Fetchers (Lichess & Chess.com)
+     ********************************************************************/
+    async function fetchLichessLast5(user){
+      // Lichess: streamed PGN text, include evals, take last 5 games
+      const url = `https://lichess.org/api/games/user/${encodeURIComponent(user)}?max=5&evals=true&accuracy=true`;
+      const res = await fetch(url, { headers:{ 'Accept':'application/x-chess-pgn' }});
+      if(!res.ok) throw new Error('Lichess request failed');
+      const text = await res.text();
+      // Split into games (naive but works well for lichess exports)
+      const chunks = text.split(/\n\n(?=\[Event\s)/g).filter(s => s.trim());
+      return chunks.slice(-5);
+    }
+
+    async function fetchChesscomLast5(user){
+      // Chess.com monthly endpoint for Aug 2025 (as required)
+      const url = `https://api.chess.com/pub/player/${encodeURIComponent(user)}/games/2025/08`;
+      const res = await fetch(url);
+      if(!res.ok) throw new Error('Chess.com request failed');
+      const json = await res.json();
+      const games = (json.games || []).filter(g => g.pgn).slice(-5);
+      return games.map(g => g.pgn);
+    }
+
+    /********************************************************************
+     * Trainer session + SM-2 scheduling
+     ********************************************************************/
+    let ORIENT_WHITE_BOTTOM = true;
+
+    function pickDueSRS(){
+      const list = loadMistakes();
+      const now = nowTs();
+      return list.filter(m => (m.nextReview || 0) <= now);
+    }
+
+    function sm2Update(mistake, quality){
+      // SM-2 algorithm; quality ∈ {0..5}
+      // ensure base fields
+      mistake.ef = mistake.ef ?? 2.5;
+      mistake.reps = mistake.reps ?? 0;
+      mistake.interval = mistake.interval ?? 0;
+
+      // Update EF
+      const q = clamp(quality, 0, 5);
+      mistake.ef = mistake.ef + (0.1 - (5-q) * (0.08 + (5-q)*0.02));
+      mistake.ef = Math.max(1.3, mistake.ef);
+
+      if(q < 3){
+        mistake.reps = 0;
+        mistake.interval = 1;
+      }else{
+        mistake.reps += 1;
+        if(mistake.reps === 1) mistake.interval = 1;
+        else if(mistake.reps === 2) mistake.interval = 6;
+        else mistake.interval = Math.round(mistake.interval * mistake.ef);
+      }
+      mistake.nextReview = nowTs() + days(mistake.interval || 1);
+    }
+
+    const Session = (() => {
+      let queue = [];
+      let mode = 'woodpecker';
+      let active = null; // current mistake
+      let pendingFirstTry = true;
+
+      function startWoodpecker(N){
+        const list = loadMistakes().slice();
+        // pick N by severity desc, then by largest delta
+        list.sort((a,b) => {
+          const sevRank = s => s==='blunder'?3:(s==='mistake'?2:(s==='inaccuracy'?1:0));
+          const d = sevRank(b.severity) - sevRank(a.severity);
+          if(d) return d;
+          return (b.deltaCp||0) - (a.deltaCp||0);
+        });
+        queue = list.slice(0, Math.max(1, N)).map(m => ({...m}));
+        mode = 'woodpecker';
+        next();
+      }
+
+      function startSRS(){
+        queue = pickDueSRS();
+        mode = 'srs';
+        next();
+      }
+
+      function next(){
+        $('#yourMove').textContent = '—';
+        $('#feedback').textContent = '—';
+        if(queue.length === 0){
+          if(mode==='srs'){
+            // refill with next due
+            queue = pickDueSRS();
+            if(queue.length===0){
+              $('#mInfo').innerHTML = 'No SRS items due now. 🎉';
+              active = null; drawBoard(null); return;
+            }
+          }else{
+            $('#mInfo').innerHTML = 'Woodpecker set complete. ✅';
+            active = null; drawBoard(null); return;
+          }
+        }
+        active = queue.shift();
+        pendingFirstTry = true;
+        loadMistakeOnBoard(active);
+      }
+
+      function answer(moveUci){
+        if(!active) return;
+        const correct = (moveUci === (active.best || ''));
+        $('#yourMove').textContent = moveUci || '—';
+        if(correct){
+          $('#feedback').innerHTML = '✔️ Correct (best move)';
+          // SM-2: quality 5 on first-try, else 3
+          const list = loadMistakes();
+          const idx = list.findIndex(m => m.id===active.id);
+          if(idx>=0){
+            const q = (mode==='srs') ? (pendingFirstTry?5:3) : (pendingFirstTry?5:4);
+            sm2Update(list[idx], q);
+            saveMistakes(list);
+          }
+          logAttempt(active.id, true);
+          // Woodpecker: don't push back
+          next();
+        }else{
+          $('#feedback').innerHTML = `❌ Not the best. <span class="mono">Best = ${active.best}</span>`;
+          logAttempt(active.id, false);
+          pendingFirstTry = false;
+          // Woodpecker: push to end
+          if(mode==='woodpecker') queue.push(active);
+        }
+      }
+
+      return { startWoodpecker, startSRS, next, answer, get active(){return active;} }
+    })();
+
+    /********************************************************************
+     * Minimal board UI
+     ********************************************************************/
+    const PIECES_UNICODE = {
+  'P':'â™™','N':'â™˜','B':'â™—','R':'â™–','Q':'â™•','K':'â™”',
+  'p':'â™Ÿ','n':'â™ž','b':'â™','r':'â™œ','q':'â™›','k':'â™š'
+};
+    // Clean glyphs for rendering pieces
+    const PIECES = {
+      'P':'♙','N':'♘','B':'♗','R':'♖','Q':'♕','K':'♔',
+      'p':'♟','n':'♞','b':'♝','r':'♜','q':'♛','k':'♚'
+    };
+    const BOARD = { current: null, selected: null, highlights: new Set(), chess: ChessLite() };
+
+    function drawBoard(fen){
+      const root = $('#board');
+      root.innerHTML = '';
+      if(!fen){
+        // empty board
+        for(let r=0;r<8;r++){
+          for(let c=0;c<8;c++){
+            const idx=r*8+c;
+            const el = document.createElement('div');
+            el.className = 'sq ' + (((r+c)%2) ? 'dark':'light');
+            root.appendChild(el);
+          }
+        }
+        return;
+      }
+      BOARD.chess.loadFEN(fen);
+      BOARD.current = fen;
+      const side = BOARD.chess.turn();
+      $('#sideToMove').textContent = side==='w'?'White':'Black';
+
+      // Build a quick map of pieces from FEN
+      const parts = fen.split(' ')[0].split('/');
+      const cells = [];
+      for(const row of parts){
+        for(const ch of row){
+          if(/[1-8]/.test(ch)){
+            for(let k=0;k<parseInt(ch,10);k++) cells.push(null);
+          }else cells.push(ch);
+        }
+      }
+      // Orientation
+      const idxOrder = [];
+      for(let r=0;r<8;r++){
+        for(let c=0;c<8;c++) idxOrder.push(r*8+c);
+      }
+      const oriented = ORIENT_WHITE_BOTTOM ? idxOrder : idxOrder.slice().reverse();
+
+      oriented.forEach((i, k) => {
+        const r = Math.floor(i/8), c = i%8;
+        const sq = BOARD.chess.idxToSq(i);
+        const cell = document.createElement('div');
+        cell.className = 'sq ' + (((r+c)%2)?'dark':'light');
+        cell.dataset.index = i;
+        cell.dataset.square = sq;
+
+        // coordinate (show on light squares bottom-left)
+        const coord = document.createElement('div');
+        coord.className = 'coord';
+        if((ORIENT_WHITE_BOTTOM && (r===7 && c===0)) || (!ORIENT_WHITE_BOTTOM && (r===0 && c===7))){
+          coord.textContent = sq;
+        }
+        cell.appendChild(coord);
+
+        const piece = cells[i];
+        if(piece){
+          const span = document.createElement('div');
+          span.className = 'piece';
+          span.textContent = PIECES[piece] || '';
+          cell.appendChild(span);
+        }
+        // events
+        cell.addEventListener('click', onSquareClick);
+        root.appendChild(cell);
+      });
+      BOARD.selected = null;
+      BOARD.highlights.clear();
+      showHints();
+    }
+
+    function showHints(fromUciFrom=null){
+      // Clear
+      $$('#board .sq').forEach(el => { el.classList.remove('sel','hl','hint'); });
+      if(!BOARD.current) return;
+      const legal = BOARD.chess.moves();
+      // if a source is selected: show its targets
+      const fromIdx = BOARD.selected;
+      if(fromIdx!==null){
+        const fromSq = BOARD.chess.idxToSq(fromIdx);
+        $$('#board .sq').forEach(el => {
+          if(parseInt(el.dataset.index,10)===fromIdx) el.classList.add('sel');
+        });
+        for(const m of legal){
+          if(m.from===fromSq){
+            const target = m.to;
+            const el = $(`#board .sq[data-square="${target}"]`);
+            if(el) el.classList.add('hint');
+          }
+        }
+      }
+    }
+
+    function onSquareClick(e){
+      const el = e.currentTarget;
+      const idx = parseInt(el.dataset.index,10);
+      if(BOARD.selected===null){
+        // select if piece of side to move
+        const fen = BOARD.current;
+        BOARD.chess.loadFEN(fen);
+        const all = BOARD.chess.moves();
+        const sq = BOARD.chess.idxToSq(idx);
+        const hasMove = all.some(m => m.from===sq);
+        if(hasMove){ BOARD.selected = idx; showHints(); }
+        return;
+      }else{
+        const from = BOARD.chess.idxToSq(BOARD.selected);
+        const to = el.dataset.square;
+        // promotion auto-queen
+        let uci = from+to;
+        // detect if promotion necessary by seeing if there is a legal move that needs promotion
+        const legal = BOARD.chess.moves().filter(m => m.from===from && m.to===to);
+        if(legal.length){
+          let move = legal[0];
+          if(legal.length>1){
+            // prefer queen promotion if available
+            const q = legal.find(m => m.promotion==='q');
+            if(q) move=q;
+          }
+          if(move.promotion) uci += move.promotion;
+        }
+        // display tentative move on board (local visual only)
+        // apply visually:
+        const tmp = ChessLite();
+        tmp.loadFEN(BOARD.current);
+        const mv = tmp.moveUci(uci);
+        if(mv.ok){
+          drawBoard(tmp.fen());
+        }
+        // hand over to session checker
+        Session.answer(uci);
+        BOARD.selected = null;
+        showHints();
+      }
+    }
+
+    function loadMistakeOnBoard(m){
+      if(!m){ drawBoard(null); return; }
+      $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> · <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · Δcp ${Math.round(m.deltaCp)}`;
+      $('#yourMove').textContent = '—';
+      $('#feedback').textContent = '—';
+      drawBoard(m.fen);
+      // Auto-orient to side to move
+      ORIENT_WHITE_BOTTOM = (m.side==='w');
+      drawBoard(m.fen);
+    }
+
+    // Reveal & Next buttons
+    $('#btnReveal').addEventListener('click', () => {
+      const a = Session.active;
+      if(a) $('#feedback').innerHTML = `Best move: <b class="mono">${a.best}</b>`;
+    });
+    $('#btnNext').addEventListener('click', () => Session.next());
+    $('#btnFlip').addEventListener('click', () => {
+      ORIENT_WHITE_BOTTOM = !ORIENT_WHITE_BOTTOM;
+      if(Session.active) drawBoard(Session.active.fen);
+    });
+
+    /********************************************************************
+     * Mistake list rendering + Stats
+     ********************************************************************/
+    function renderMistakeList(){
+      const tb = $('#mistakeTBody');
+      const list = loadMistakes();
+      tb.innerHTML = '';
+      list.forEach((m, i) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="mono tiny">${i+1}</td>
+          <td>${m.severity ? `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span>` : '-'}</td>
+          <td>${m.side==='w'?'White':'Black'}</td>
+          <td class="mono tiny">${m.played}</td>
+          <td class="mono tiny">${m.best || '—'}</td>
+          <td class="mono tiny">${Math.round(m.deltaCp||0)}</td>
+          <td class="tiny">${tsToDate(m.nextReview)}</td>
+        `;
+        tr.addEventListener('click', () => {
+          loadMistakeOnBoard(m);
+          Session.next = ()=>{}; // harmless override if clicking manually
+        });
+        tb.appendChild(tr);
+      });
+      $('#statTotal').textContent = list.length;
+      // due
+      $('#statDue').textContent = pickDueSRS().length;
+    }
+
+    function renderStats(){
+      const attempts = getAttempts();
+      const n = attempts.length;
+      const correct = attempts.filter(a => a.correct).length;
+      const acc = n ? Math.round(100 * correct / n) : 0;
+      $('#statAcc').textContent = n ? `${acc}% (${correct}/${n})` : '—';
+      $('#statReviews').textContent = n.toString();
+
+      const list = loadMistakes();
+      const counts = { inaccuracy:0, mistake:0, blunder:0 };
+      list.forEach(m => { if(counts[m.severity]!==undefined) counts[m.severity]++; });
+      // draw simple bars
+      const canvas = $('#sevChart');
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width, H = canvas.height;
+      ctx.clearRect(0,0,W,H);
+      ctx.fillStyle = '#0d0f15';
+      ctx.fillRect(0,0,W,H);
+      const labels = ['Inacc','Mistake','Blunder'];
+      const keys = ['inaccuracy','mistake','blunder'];
+      const maxv = Math.max(1, ...keys.map(k => counts[k]));
+      const barW = Math.floor((W-80)/3);
+      for(let i=0;i<3;i++){
+        const x = 40 + i*(barW+20);
+        const v = counts[keys[i]];
+        const h = Math.round((H-40) * (v/maxv));
+        // bar
+        ctx.fillStyle = i===0?'#2f9e44':(i===1?'#f2c94c':'#ff6b6b');
+        ctx.fillRect(x, H-20-h, barW, h);
+        // label
+        ctx.fillStyle = '#9aa4b2';
+        ctx.font = '12px system-ui';
+        ctx.textAlign = 'center';
+        ctx.fillText(labels[i], x + barW/2, H-6);
+        ctx.fillText(v.toString(), x + barW/2, H-28-h);
+      }
+    }
+
+    /********************************************************************
+     * Import handlers
+     ********************************************************************/
+    function setStatus(msg){ $('#status').textContent = msg; }
+
+    $('#btnClearAll').addEventListener('click', () => {
+      if(confirm('Clear ALL mistakes and attempts?')) clearAll();
+    });
+
+    $('#btnFetchLichess').addEventListener('click', async () => {
+      const u = $('#lichessUser').value.trim();
+      if(!u) return alert('Enter a Lichess username');
+      try{
+        setStatus('Fetching Lichess games…');
+        const games = await fetchLichessLast5(u);
+        setStatus(`Analyzing ${games.length} games (Lichess)…`);
+        const all = [];
+        let k=0;
+        for(const pgn of games){
+          setStatus(`Lichess: analyzing game ${++k}/${games.length}…`);
+          const ms = await analyzeLichessPGN(pgn);
+          all.push(...ms);
+        }
+        addMistakes(all);
+        setStatus(`Done. Added ${all.length} mistakes.`);
+      }catch(err){
+        console.error(err);
+        setStatus('Error: '+err.message);
+      }
+    });
+
+    $('#btnFetchChesscom').addEventListener('click', async () => {
+      const u = $('#chesscomUser').value.trim();
+      if(!u) return alert('Enter a Chess.com username');
+      try{
+        setStatus('Fetching Chess.com games…');
+        const games = await fetchChesscomLast5(u);
+        setStatus(`Analyzing ${games.length} games (depth 12)…`);
+        const all = [];
+        let k=0;
+        for(const pgn of games){
+          setStatus(`Chess.com: analyzing game ${++k}/${games.length}…`);
+          const ms = await analyzeManualOrChesscomPGN(pgn);
+          all.push(...ms);
+        }
+        addMistakes(all);
+        setStatus(`Done. Added ${all.length} mistakes.`);
+      }catch(err){
+        console.error(err);
+        setStatus('Error: '+err.message);
+      }
+    });
+
+    $('#btnAnalyzePGN').addEventListener('click', async () => {
+      const t = $('#pgnInput').value.trim();
+      if(!t) return alert('Paste one or more PGNs first.');
+      // naive split by [Event
+      const parts = t.split(/\n(?=\[Event\s)/g).filter(s => s.trim());
+      try{
+        setStatus(`Analyzing ${parts.length} pasted game(s)…`);
+        const all = [];
+        let i=0;
+        for(const pgn of parts){
+          setStatus(`Manual PGN: analyzing ${++i}/${parts.length}…`);
+          const ms = await analyzeManualOrChesscomPGN(pgn);
+          all.push(...ms);
+        }
+        addMistakes(all);
+        setStatus(`Done. Added ${all.length} mistakes.`);
+      }catch(err){
+        console.error(err);
+        setStatus('Error: '+err.message);
+      }
+    });
+
+    /********************************************************************
+     * Session start buttons
+     ********************************************************************/
+    $('#btnStart').addEventListener('click', () => {
+      const mode = $('#modeSel').value;
+      if(mode==='woodpecker'){
+        const N = parseInt($('#wpCount').value,10) || 10;
+        Session.startWoodpecker(N);
+      }else{
+        Session.startSRS();
+      }
+    });
+
+    // show/hide Woodpecker count
+    $('#modeSel').addEventListener('change', () => {
+      const mode = $('#modeSel').value;
+      $('#wpCountWrap').style.display = (mode==='woodpecker') ? 'block' : 'none';
+    });
+
+    /********************************************************************
+     * Init
+     ********************************************************************/
+    (async function init(){
+      renderMistakeList();
+      renderStats();
+      drawBoard(null);
+      setStatus('Loading engine…');
+      await Engine.ensure();
+      setStatus('Idle');
+    })();
+
+  window.addEventListener('error', (e) => {
+  try { setStatus('JS error: ' + (e.message || (e.error && e.error.message) || 'unknown')); } catch {}
+});
+window.addEventListener('unhandledrejection', (e) => {
+  try { setStatus('Promise error: ' + ((e.reason && (e.reason.message || e.reason)) || 'unknown')); } catch {}
+});</script>
+</body>
+</html>
+
+

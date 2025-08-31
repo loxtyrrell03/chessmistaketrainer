@@ -150,9 +150,43 @@
     .stroke{border:1px dashed #2a3142;border-radius:10px;padding:10px}
     .right{float:right}
   </style>
+  <style>
+    .topnav{background:#11141a;border-bottom:1px solid #232836;position:sticky;top:0;z-index:5}
+    .topnav .navwrap{max-width:1100px;margin:0 auto;display:flex;gap:12px;align-items:center;padding:10px 18px}
+    .topnav a{color:#cbd5e1;padding:6px 10px;border-radius:8px}
+    .topnav a.active{background:#1b2130;color:#fff}
+    .section{display:none}
+    .section.active{display:block}
+  </style>
 </head>
 <body>
-  <div class="wrap">
+  <div class="topnav">
+    <div class="navwrap">
+      <div style="font-weight:700;color:#e6edf3">♟️ PMT</div>
+      <a href="#" data-sec="home" id="navHome" class="active">Home</a>
+      <a href="#" data-sec="analyze" id="navAnalyze">Analyze</a>
+      <a href="#" data-sec="sets" id="navSets">Sets</a>
+      <div style="margin-left:auto"></div>
+    </div>
+  </div>
+
+  <!-- Home -->
+  <div class="wrap section active" id="homeSection">
+    <h1>Welcome to Personal Chess Mistake Trainer</h1>
+    <p class="muted small">Import games from Lichess/Chess.com, extract mistakes with Stockfish, and train them using Woodpecker or SM-2 spaced repetition.</p>
+    <div class="card" style="margin-top:12px">
+      <h2>Get Started</h2>
+      <ul>
+        <li>Go to Analyze to fetch your recent games.</li>
+        <li>We analyze moves and create a Set from detected mistakes.</li>
+        <li>Open Sets to rename or start training a set.</li>
+      </ul>
+      <button id="btnGoAnalyze">Go to Analyze</button>
+    </div>
+  </div>
+
+  <!-- Analyze -->
+  <div class="wrap section" id="analyzeSection">
     <h1>♟️ Personal Chess Mistake Trainer</h1>
     <p class="muted small">Import games → extract mistakes → train them with Woodpecker or Spaced Repetition (SM‑2). All data stays in your browser (localStorage).</p>
 
@@ -245,6 +279,30 @@
             <button id="btnStart">Start session</button>
           </div>
         </div>
+        <div class="tiny muted" id="activeSetInfo" style="margin:4px 0">Active set: —</div>
+        <details class="stroke" style="margin-top:8px">
+          <summary class="tiny">Settings (mistake thresholds)</summary>
+          <div class="grid-2" style="margin-top:8px">
+            <div>
+              <label>Inaccuracy ≥ (centipawns)</label>
+              <input id="thrInacc" type="number" min="0" value="50" />
+            </div>
+            <div>
+              <label>Mistake ≥ (centipawns)</label>
+              <input id="thrMist" type="number" min="0" value="150" />
+            </div>
+          </div>
+          <div class="grid-2" style="margin-top:8px">
+            <div>
+              <label>Blunder ≥ (centipawns)</label>
+              <input id="thrBlun" type="number" min="0" value="300" />
+            </div>
+            <div style="display:flex;align-items:flex-end">
+              <button id="btnSaveThr" class="ghost">Save thresholds</button>
+            </div>
+          </div>
+          <div class="tiny muted" style="margin-top:6px">New analyses will use these thresholds.</div>
+        </details>
 
         <div class="board-wrap" style="margin-top:12px">
           <div class="board">
@@ -325,6 +383,33 @@
           <div class="small"><b>Severity distribution</b></div>
           <div class="bar"><canvas id="sevChart" width="600" height="180"></canvas></div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sets Page -->
+  <div class="wrap section" id="setsSection">
+    <h1>Sets</h1>
+    <div class="card" style="margin-top:10px">
+      <div class="row" style="align-items:flex-end">
+        <div>
+          <label>New set name</label>
+          <input id="newSetName" type="text" placeholder="e.g., Blitz mistakes Aug" />
+        </div>
+        <div style="max-width:220px">
+          <label>&nbsp;</label>
+          <button id="btnCreateEmptySet" class="ghost">Create empty set</button>
+        </div>
+      </div>
+      <div style="margin-top:10px;max-height:360px;overflow:auto;border:1px dashed #2a3142;border-radius:10px">
+        <table style="width:100%">
+          <thead>
+            <tr>
+              <th>#</th><th>Name</th><th>Count</th><th>Created</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="setsTBody"></tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -579,6 +664,7 @@ window.addEventListener('unhandledrejection', (e) => {
      ********************************************************************/
     const LS_MISTAKES = 'pmtt_mistakes';
     const LS_ATTEMPTS = 'pmtt_attempts';
+    const LS_SETS = 'pmtt_sets';
 
     const fb = () => (window.firebaseAPI && window.firebaseAPI.ready) ? window.firebaseAPI : null;
 
@@ -648,6 +734,53 @@ window.addEventListener('unhandledrejection', (e) => {
     // Re-render on remote updates
     window.addEventListener('firebase:mMistakesUpdated', () => { try{ renderMistakeList(); renderStats(); }catch{} });
     window.addEventListener('firebase:attemptsUpdated', () => { try{ renderStats(); }catch{} });
+
+    /********************************************************************
+     * Sets (collections of mistake keys)
+     ********************************************************************/
+    const keyOf = (m) => (m.fen + '|' + m.played);
+    function loadSets(){ try{ return JSON.parse(localStorage.getItem(LS_SETS) || '[]'); }catch{ return []; } }
+    function saveSets(arr){ localStorage.setItem(LS_SETS, JSON.stringify(arr)); renderSets(); }
+    function createSetFromMistakes(mistakes, name){
+      const keys = Array.from(new Set(mistakes.map(keyOf)));
+      const set = { id: uid(), name: name || `Set ${new Date().toLocaleString()}`, keys, created: nowTs() };
+      const sets = loadSets(); sets.unshift(set); saveSets(sets); return set;
+    }
+    function renderSets(){
+      const tb = document.getElementById('setsTBody'); if(!tb) return;
+      const sets = loadSets(); tb.innerHTML = '';
+      let i=0; for(const s of sets){
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${++i}</td>
+          <td><input data-setid="${s.id}" class="setNameInput" style="width:100%" value="${s.name}"></td>
+          <td>${s.keys.length}</td>
+          <td class="tiny">${tsToDate(s.created)}</td>
+          <td>
+            <button class="ghost" data-act="train" data-id="${s.id}">Train</button>
+            <button class="ghost" data-act="delete" data-id="${s.id}">Delete</button>
+          </td>`;
+        tb.appendChild(tr);
+      }
+      // hook actions
+      tb.querySelectorAll('button[data-act="delete"]').forEach(btn => btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-id');
+        const sets = loadSets().filter(x => x.id!==id); saveSets(sets);
+      }));
+      tb.querySelectorAll('button[data-act="train"]').forEach(btn => btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-id');
+        const s = loadSets().find(x => x.id===id); if(!s) return;
+        setActiveSet(s);
+        showSection('analyze');
+      }));
+      tb.querySelectorAll('input.setNameInput').forEach(inp => inp.addEventListener('change', () => {
+        const id = inp.getAttribute('data-setid'); const sets = loadSets();
+        const k = sets.findIndex(x => x.id===id); if(k>=0){ sets[k].name = inp.value.trim()||sets[k].name; saveSets(sets); }
+      }));
+    }
+    let ACTIVE_SET = null; let ACTIVE_SET_KEYS = new Set();
+    function setActiveSet(s){ ACTIVE_SET = s; ACTIVE_SET_KEYS = new Set((s&&s.keys)||[]); setStatus(`Active set: ${s?.name||'-'}`); }
+    function renderActiveSetInfo(){ const el = document.getElementById('activeSetInfo'); if(el) el.textContent = `Active set: ${ACTIVE_SET?ACTIVE_SET.name:'—'}`; }
 
     /********************************************************************
      * Lightweight chess engine: ChessLite
@@ -1252,13 +1385,18 @@ window.addEventListener('unhandledrejection', (e) => {
     /********************************************************************
      * PGN parsing + mistake extraction
      ********************************************************************/
-    const SEV_THRESH = { inacc:50, mistake:150, blunder:300 };
+    const DEFAULT_SEV = { inacc:50, mistake:150, blunder:300 };
+    function getSev(){
+      try{ const o = JSON.parse(localStorage.getItem('pmtt_sev')||'{}'); return { ...DEFAULT_SEV, ...o }; }catch{ return DEFAULT_SEV; }
+    }
+    function setSev(o){ try{ localStorage.setItem('pmtt_sev', JSON.stringify(o)); }catch{} }
 
     function severityFromDrop(cp){
+      const T = getSev();
       const x = Math.abs(Math.round(cp));
-      if(x >= SEV_THRESH.blunder) return 'blunder';
-      if(x >= SEV_THRESH.mistake) return 'mistake';
-      if(x >= SEV_THRESH.inacc) return 'inaccuracy';
+      if(x >= T.blunder) return 'blunder';
+      if(x >= T.mistake) return 'mistake';
+      if(x >= T.inacc) return 'inaccuracy';
       return null;
     }
 
@@ -1427,6 +1565,7 @@ window.addEventListener('unhandledrejection', (e) => {
       const games = (json.games || []).filter(g => g && g.pgn);
       const out = games.map(g => g.pgn);
       renderImportedGames(out, 'Lichess');
+      // Create a set from these mistakes once analyzed (see handler)
       return out;
     }
 
@@ -1457,7 +1596,8 @@ window.addEventListener('unhandledrejection', (e) => {
     let ORIENT_WHITE_BOTTOM = true;
 
     function pickDueSRS(){
-      const list = loadMistakes();
+      let list = loadMistakes();
+      if(ACTIVE_SET_KEYS && ACTIVE_SET_KEYS.size){ list = list.filter(m => ACTIVE_SET_KEYS.has(keyOf(m))); }
       const now = nowTs();
       return list.filter(m => (m.nextReview || 0) <= now);
     }
@@ -1493,7 +1633,8 @@ window.addEventListener('unhandledrejection', (e) => {
       let pendingFirstTry = true;
 
       function startWoodpecker(N){
-        const list = loadMistakes().slice();
+        let list = loadMistakes().slice();
+        if(ACTIVE_SET_KEYS && ACTIVE_SET_KEYS.size){ list = list.filter(m => ACTIVE_SET_KEYS.has(keyOf(m))); }
         // pick N by severity desc, then by largest delta
         list.sort((a,b) => {
           const sevRank = s => s==='blunder'?3:(s==='mistake'?2:(s==='inaccuracy'?1:0));
@@ -1827,6 +1968,9 @@ window.addEventListener('unhandledrejection', (e) => {
           all.push(...ms);
         }
         addMistakes(all);
+        // Create a set from these analyzed mistakes
+        const set = createSetFromMistakes(all, `Lichess ${new Date().toLocaleString()}`);
+        setActiveSet(set); renderActiveSetInfo();
         setStatus(`Done. Added ${all.length} mistakes.`);
       }catch(err){
         console.error(err);
@@ -1851,6 +1995,8 @@ window.addEventListener('unhandledrejection', (e) => {
           all.push(...ms);
         }
         addMistakes(all);
+        const set = createSetFromMistakes(all, `Chess.com ${new Date().toLocaleString()}`);
+        setActiveSet(set); renderActiveSetInfo();
         setStatus(`Done. Added ${all.length} mistakes.`);
       }catch(err){
         console.error(err);
@@ -1905,11 +2051,23 @@ window.addEventListener('unhandledrejection', (e) => {
     (async function init(){
       renderMistakeList();
       renderStats();
+      renderSets();
       drawBoard(null);
+      renderActiveSetInfo();
       setStatus('Loading engine…');
       await Engine.ensure();
       setStatus('Idle');
+      // Prime thresholds UI
+      try{ const t = getSev(); $('#thrInacc').value = t.inacc; $('#thrMist').value = t.mistake; $('#thrBlun').value = t.blunder; }catch{}
     })();
+
+    document.getElementById('btnSaveThr')?.addEventListener('click', () => {
+      const tin = parseInt($('#thrInacc')?.value,10) || DEFAULT_SEV.inacc;
+      const tmi = parseInt($('#thrMist')?.value,10) || DEFAULT_SEV.mistake;
+      const tbl = parseInt($('#thrBlun')?.value,10) || DEFAULT_SEV.blunder;
+      setSev({ inacc: tin, mistake: tmi, blunder: tbl });
+      alert('Thresholds saved. New analyses will use them.');
+    });
 
     // Game viewer controls
     document.getElementById('gvPrev')?.addEventListener('click', () => {
@@ -1931,6 +2089,31 @@ window.addEventListener('unhandledrejection', (e) => {
 window.addEventListener('unhandledrejection', (e) => {
   try { setStatus('Promise error: ' + ((e.reason && (e.reason.message || e.reason)) || 'unknown')); } catch {}
 });</script>
+
+<script>
+  // Simple SPA nav
+  function showSection(which){
+    const map = { home:'homeSection', analyze:'analyzeSection', sets:'setsSection' };
+    for(const id of Object.values(map)){
+      const el = document.getElementById(id); if(el) el.classList.remove('active');
+    }
+    const target = document.getElementById(map[which]||'homeSection'); if(target) target.classList.add('active');
+    document.getElementById('navHome')?.classList.toggle('active', which==='home');
+    document.getElementById('navAnalyze')?.classList.toggle('active', which==='analyze');
+    document.getElementById('navSets')?.classList.toggle('active', which==='sets');
+  }
+  document.getElementById('navHome')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('home'); });
+  document.getElementById('navAnalyze')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('analyze'); });
+  document.getElementById('navSets')?.addEventListener('click', (e)=>{ e.preventDefault(); renderSets(); showSection('sets'); });
+  document.getElementById('btnGoAnalyze')?.addEventListener('click', ()=> showSection('analyze'));
+
+  // Sets page actions
+  document.getElementById('btnCreateEmptySet')?.addEventListener('click', ()=>{
+    const el = document.getElementById('newSetName');
+    const name = (el && el.value ? el.value.trim() : '') || `Set ${new Date().toLocaleString()}`;
+    createSetFromMistakes([], name); renderSets();
+  });
+</script>
 </body>
 </html>
 

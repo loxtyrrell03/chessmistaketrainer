@@ -248,7 +248,7 @@
       <!-- RIGHT COLUMN: Mistakes + Stats -->
       <div class="card">
         <h2>3) Mistake List</h2>
-        <div class="tiny muted" style="margin:6px 0 10px">Stored locally (<span class="mono">localStorage</span>). Click a row to load it on the board.</div>
+        <div class="tiny muted" style="margin:6px 0 10px">Synced to Firebase (with offline cache). Click a row to load it on the board.</div>
         <div style="max-height:320px;overflow:auto;border:1px dashed #2a3142;border-radius:10px">
           <table id="mistakeTable">
             <thead>
@@ -323,6 +323,122 @@
     }).catch(err => console.warn('Analytics support check failed:', err));
   </script>
 
+  <!-- Firebase Auth + Firestore sync (module) -->
+  <script type="module">
+    import { getAuth, onAuthStateChanged, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js';
+    import {
+      getFirestore, enableIndexedDbPersistence,
+      collection, doc, getDocs, onSnapshot, writeBatch, setDoc, deleteDoc, addDoc, query, orderBy
+    } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js';
+
+    const fbApp = window.firebaseApp;
+    const auth = getAuth(fbApp);
+    const db = getFirestore(fbApp);
+
+    // Enable offline persistence (best-effort)
+    enableIndexedDbPersistence(db).catch(err => console.warn('Firestore persistence disabled:', err?.code || err));
+
+    // Utility: stable doc id for a mistake (fen|played)
+    const mistakeId = (m) => {
+      const key = `${m.fen}|${m.played}`;
+      try {
+        return btoa(unescape(encodeURIComponent(key))).replace(/=+$/,'');
+      } catch { return key.replace(/[^a-zA-Z0-9_-]/g,'_'); }
+    };
+
+    // Expose a small API to classic script
+    const api = {
+      ready: false,
+      user: null,
+      db,
+      // Write full replacement of mistakes
+      async saveAllMistakes(arr){
+        if(!api.user) return;
+        const col = collection(db, 'users', api.user.uid, 'mistakes');
+        // fetch existing to delete removed ones
+        const snap = await getDocs(col);
+        const curIds = new Set(); snap.forEach(d => curIds.add(d.id));
+        const nextIds = new Set(arr.map(m => mistakeId(m)));
+        const batch = writeBatch(db);
+        // upsert
+        for(const m of arr){
+          batch.set(doc(col, mistakeId(m)), m, { merge: true });
+        }
+        // delete removed
+        for(const id of curIds){
+          if(!nextIds.has(id)) batch.delete(doc(col, id));
+        }
+        await batch.commit();
+      },
+      // Add/merge new mistakes
+      async addMistakesRemote(newOnes){
+        if(!api.user) return;
+        const col = collection(db, 'users', api.user.uid, 'mistakes');
+        const batch = writeBatch(db);
+        for(const m of newOnes){
+          batch.set(doc(col, mistakeId(m)), m, { merge: true });
+        }
+        await batch.commit();
+      },
+      // Clear everything for this user
+      async clearAllRemote(){
+        if(!api.user) return;
+        const mCol = collection(db, 'users', api.user.uid, 'mistakes');
+        const aCol = collection(db, 'users', api.user.uid, 'attempts');
+        const mSnap = await getDocs(mCol);
+        const aSnap = await getDocs(aCol);
+        const batch = writeBatch(db);
+        mSnap.forEach(d => batch.delete(doc(mCol, d.id)));
+        aSnap.forEach(d => batch.delete(doc(aCol, d.id)));
+        await batch.commit();
+      },
+      async logAttemptRemote(mId, correct, ts){
+        if(!api.user) return;
+        const aCol = collection(db, 'users', api.user.uid, 'attempts');
+        await addDoc(aCol, { id: mId, correct: !!correct, ts: ts || Date.now() });
+      },
+      async getAttemptsRemote(){
+        if(!api.user) return [];
+        const aCol = collection(db, 'users', api.user.uid, 'attempts');
+        const q = query(aCol, orderBy('ts','asc'));
+        const snap = await getDocs(q);
+        const arr = [];
+        snap.forEach(d => arr.push(d.data()));
+        return arr;
+      },
+    };
+
+    window.firebaseAPI = api;
+
+    // Sign in anonymously by default
+    signInAnonymously(auth).catch(err => console.warn('Anonymous auth failed:', err));
+    onAuthStateChanged(auth, async (user) => {
+      api.user = user || null;
+      api.ready = !!user;
+      window.firebaseUser = user || null;
+      if(!user) return;
+
+      // Live sync: mistakes snapshot → localStorage + notify
+      const mCol = collection(db, 'users', user.uid, 'mistakes');
+      onSnapshot(mCol, (snap) => {
+        const arr = [];
+        snap.forEach(d => arr.push(d.data()));
+        try { localStorage.setItem('pmtt_mistakes', JSON.stringify(arr)); } catch {}
+        // Notify app to re-render if needed
+        window.dispatchEvent(new CustomEvent('firebase:mMistakesUpdated'));
+      });
+
+      // Prime attempts (on demand in app; no live listener by default)
+      try {
+        const attempts = await api.getAttemptsRemote();
+        localStorage.setItem('pmtt_attempts', JSON.stringify(attempts));
+        window.dispatchEvent(new CustomEvent('firebase:attemptsUpdated'));
+      } catch (e) {
+        console.warn('Attempts preload failed:', e);
+      }
+    });
+  </script>
+
   <!-- Stockfish WASM (allowed external) -->
   <script src="https://unpkg.com/stockfish.wasm/stockfish.js">window.addEventListener('error', (e) => {
   try { setStatus('JS error: ' + (e.message || (e.error && e.error.message) || 'unknown')); } catch {}
@@ -356,16 +472,28 @@ window.addEventListener('unhandledrejection', (e) => {
     }
 
     /********************************************************************
-     * Local Storage layer
+     * Storage layer (Firebase sync + local cache)
      ********************************************************************/
     const LS_MISTAKES = 'pmtt_mistakes';
     const LS_ATTEMPTS = 'pmtt_attempts';
 
+    const fb = () => (window.firebaseAPI && window.firebaseAPI.ready) ? window.firebaseAPI : null;
+
     function loadMistakes(){
-      try{ return JSON.parse(localStorage.getItem(LS_MISTAKES) || '[]'); }catch{ return [] }
+      // Always return cached immediately; Firebase listener will keep it fresh
+      try{
+        const arr = JSON.parse(localStorage.getItem(LS_MISTAKES) || '[]');
+        // Best-effort remote refresh in background (no await)
+        if(fb()){
+          // No-op here; live snapshot already updates local cache
+        }
+        return arr;
+      }catch{ return [] }
     }
     function saveMistakes(arr){
       localStorage.setItem(LS_MISTAKES, JSON.stringify(arr));
+      // Push to Firestore best-effort
+      if(fb()) fb().saveAllMistakes(arr).catch(e => console.warn('saveAllMistakes failed', e));
       renderMistakeList();
       renderStats();
     }
@@ -374,28 +502,49 @@ window.addEventListener('unhandledrejection', (e) => {
       // Simple de-dupe: key by fen + played
       const seen = new Set(cur.map(m => m.fen + '|' + m.played));
       const merged = [...cur];
+      const toUpload = [];
       for(const m of newOnes){
         if(!seen.has(m.fen + '|' + m.played)){
           merged.push(m);
+          toUpload.push(m);
         }
       }
-      saveMistakes(merged);
+      localStorage.setItem(LS_MISTAKES, JSON.stringify(merged));
+      if(fb() && toUpload.length) fb().addMistakesRemote(toUpload).catch(e => console.warn('addMistakes failed', e));
+      renderMistakeList();
+      renderStats();
     }
     function clearAll(){
       localStorage.removeItem(LS_MISTAKES);
       localStorage.removeItem(LS_ATTEMPTS);
+      if(fb()) fb().clearAllRemote().catch(e => console.warn('clearAllRemote failed', e));
       renderMistakeList();
       renderStats();
     }
     function logAttempt(mId, correct){
       const arr = JSON.parse(localStorage.getItem(LS_ATTEMPTS) || '[]');
-      arr.push({ id: mId, ts: nowTs(), correct: !!correct });
+      const rec = { id: mId, ts: nowTs(), correct: !!correct };
+      arr.push(rec);
       localStorage.setItem(LS_ATTEMPTS, JSON.stringify(arr));
+      if(fb()) fb().logAttemptRemote(mId, correct, rec.ts).catch(e => console.warn('logAttemptRemote failed', e));
       renderStats();
     }
     function getAttempts(){
-      try{ return JSON.parse(localStorage.getItem(LS_ATTEMPTS) || '[]'); }catch{ return [] }
+      try{
+        const cached = JSON.parse(localStorage.getItem(LS_ATTEMPTS) || '[]');
+        if(fb()){
+          fb().getAttemptsRemote().then(arr => {
+            localStorage.setItem(LS_ATTEMPTS, JSON.stringify(arr));
+            renderStats();
+          }).catch(()=>{});
+        }
+        return cached;
+      }catch{ return [] }
     }
+
+    // Re-render on remote updates
+    window.addEventListener('firebase:mMistakesUpdated', () => { try{ renderMistakeList(); renderStats(); }catch{} });
+    window.addEventListener('firebase:attemptsUpdated', () => { try{ renderStats(); }catch{} });
 
     /********************************************************************
      * Lightweight chess engine: ChessLite

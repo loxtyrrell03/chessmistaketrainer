@@ -338,6 +338,10 @@
     const REGION = 'europe-west2';
     const PROJECT_ID = firebaseConfig.projectId || (app && app.options && app.options.projectId) || 'chessmistaketrainer';
     window.FN_BASE = `https://${REGION}-${PROJECT_ID}.cloudfunctions.net`;
+    // Allow explicit override with fully-qualified function URLs if needed
+    // (Paste from Firebase Console triggers if you use custom domains.)
+    window.FN_LICHESS_URL = window.FN_LICHESS_URL || `${window.FN_BASE}/fetchLichess`;
+    window.FN_CHESSCOM_URL = window.FN_CHESSCOM_URL || `${window.FN_BASE}/fetchChessCom`;
 
     // Initialize Analytics only where supported (e.g., not in Node/SSR)
     isSupported().then(supported => {
@@ -1353,8 +1357,9 @@ window.addEventListener('unhandledrejection', (e) => {
     async function fetchLichess(user, maxN){
       // Call Firebase proxy to avoid CORS and parse NDJSON server-side
       const n = Math.max(1, Math.min(50, parseInt(maxN,10) || 5));
-      const base = window.FN_BASE || '';
-      const url = `${base}/fetchLichess?username=${encodeURIComponent(user)}&max=${n}`;
+      const baseUrl = (window.FN_LICHESS_URL || `${window.FN_BASE||''}/fetchLichess`).replace(/\/$/, '');
+      const url = `${baseUrl}?username=${encodeURIComponent(user)}&max=${n}`;
+      console.log('[fetchLichess] GET', url);
       const res = await fetch(url, { headers:{ 'Accept':'application/json' } });
       if(!res.ok) throw new Error(`Lichess proxy failed (${res.status})`);
       const json = await res.json();
@@ -1370,8 +1375,9 @@ window.addEventListener('unhandledrejection', (e) => {
     async function fetchChesscom(user, maxN){
       // Use Firebase proxy to aggregate months server-side
       const n = Math.max(1, Math.min(50, parseInt(maxN,10) || 5));
-      const base = window.FN_BASE || '';
-      const url = `${base}/fetchChessCom?username=${encodeURIComponent(user)}&limit=${n}`;
+      const baseUrl = (window.FN_CHESSCOM_URL || `${window.FN_BASE||''}/fetchChessCom`).replace(/\/$/, '');
+      const url = `${baseUrl}?username=${encodeURIComponent(user)}&limit=${n}`;
+      console.log('[fetchChessCom] GET', url);
       const res = await fetch(url, { headers:{ 'Accept':'application/json' } });
       if(!res.ok) throw new Error(`Chess.com proxy failed (${res.status})`);
       const json = await res.json();
@@ -1742,6 +1748,7 @@ window.addEventListener('unhandledrejection', (e) => {
     });
 
     $('#btnFetchLichess').addEventListener('click', async () => {
+      console.log('[UI] Lichess fetch button clicked');
       const u = $('#lichessUser').value.trim();
       if(!u) return alert('Enter a Lichess username');
       try{
@@ -1777,6 +1784,7 @@ window.addEventListener('unhandledrejection', (e) => {
     });
 
     $('#btnFetchChesscom').addEventListener('click', async () => {
+      console.log('[UI] Chess.com fetch button clicked');
       const u = $('#chesscomUser').value.trim();
       if(!u) return alert('Enter a Chess.com username');
       try{

@@ -138,6 +138,7 @@
     th,td{padding:8px;border-bottom:1px dashed #2a3142;text-align:left;vertical-align:top}
     th{color:var(--muted);font-weight:600}
     tr:hover td{background:#121622}
+    tr.selected td{background:#1a2233}
 
     .bar{height:140px;background:#121622;border-radius:10px;margin-top:8px;position:relative}
     .bar canvas{width:100%;height:100%}
@@ -269,6 +270,19 @@
               </div>
             </div>
             <div class="tiny muted" style="margin-top:10px">Tip: You can flip the board to see from the side to move.</div>
+          </div>
+        </div>
+        <!-- Lightweight Game Viewer (appears when you click an imported game) -->
+        <div id="gameViewer" class="stroke tiny" style="margin-top:10px; display:none">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <b>Game Viewer</b>
+            <span id="gvStatus" class="mono">-</span>
+            <div style="margin-left:auto;display:flex;gap:6px">
+              <button id="gvStart" class="ghost" title="Start">⏮ Start</button>
+              <button id="gvPrev" class="ghost" title="Prev">◀ Prev</button>
+              <button id="gvNext" class="ghost" title="Next">Next ▶</button>
+              <button id="gvEnd" class="ghost" title="End">End ⏭</button>
+            </div>
           </div>
         </div>
       </div>
@@ -525,6 +539,39 @@ window.addEventListener('unhandledrejection', (e) => {
         a.click();
         setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
       }catch(e){ console.warn('downloadText failed', e); }
+    }
+
+    /********************************************************************
+     * Simple game viewer (click an imported game row)
+     ********************************************************************/
+    const GAMEVIEW = { fens: [], idx: 0, total: 0, pgn: '' };
+    function gvHide(){ const el = document.getElementById('gameViewer'); if(el) el.style.display = 'none'; }
+    function gvShow(){ const el = document.getElementById('gameViewer'); if(el) el.style.display = 'block'; }
+    function gvUpdate(){
+      const lbl = document.getElementById('gvStatus');
+      if(!lbl) return;
+      const total = GAMEVIEW.total;
+      const idx = GAMEVIEW.idx;
+      lbl.textContent = total ? `Move ${idx}/${total}` : '-';
+    }
+    function gvDraw(){
+      if(!GAMEVIEW.fens.length){ gvHide(); return; }
+      const fen = GAMEVIEW.fens[GAMEVIEW.idx] || GAMEVIEW.fens[0];
+      drawBoard(fen);
+      gvUpdate();
+    }
+    function loadGameOnBoard(pgn){
+      try{
+        // Build fen list: start position + fen after each move
+        const clTmp = ChessLite(); clTmp.reset();
+        const startFen = clTmp.fen();
+        const mixed = clTmp.loadPGN(pgn);
+        const fens = [startFen, ...mixed.filter(x=>x.san).map(x=>x.fenAfter)];
+        GAMEVIEW.fens = fens; GAMEVIEW.idx = 0; GAMEVIEW.total = fens.length-1; GAMEVIEW.pgn = pgn;
+        gvShow();
+        gvDraw();
+        setStatus('Game loaded on board. Use viewer controls below.');
+      }catch(e){ console.warn('loadGameOnBoard failed', e); }
     }
 
     /********************************************************************
@@ -1353,10 +1400,17 @@ window.addEventListener('unhandledrejection', (e) => {
             <td>${(h.Date||h.UTCDate||'-')}</td>
             <td>${source}</td>
           `;
+          tr.style.cursor = 'pointer';
+          tr.addEventListener('click', () => {
+            // highlight selection
+            Array.from(tb.querySelectorAll('tr')).forEach(r => r.classList.remove('selected'));
+            tr.classList.add('selected');
+            loadGameOnBoard(pgn);
+          });
           tb.appendChild(tr);
         }
         const help = document.querySelector('#importHelp');
-        if(help) help.textContent = `${pgns.length} game(s) listed below.`;
+        if(help) help.textContent = `${pgns.length} game(s) listed below. Click a row to preview the game.`;
         // Also stash last fetched PGNs for manual download fallback
         window.lastFetchedPGNs = { source, pgns };
       }catch(e){ console.warn('renderImportedGames failed', e); }
@@ -1658,6 +1712,8 @@ window.addEventListener('unhandledrejection', (e) => {
 
     function loadMistakeOnBoard(m){
       if(!m){ drawBoard(null); return; }
+      // If viewing a game, hide the viewer
+      gvHide();
       $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> · <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · Δcp ${Math.round(m.deltaCp)}`;
       $('#yourMove').textContent = '—';
       $('#feedback').textContent = '—';
@@ -1762,18 +1818,6 @@ window.addEventListener('unhandledrejection', (e) => {
         const n = parseInt($('#lichessCount')?.value,10) || 5;
         setStatus(`Fetching Lichess games (N=${n})…`);
         const games = await fetchLichess(u, n);
-        try{
-          const pgnText = games.join('\n\n');
-          const fname = `lichess-${u}-${new Date().toISOString().slice(0,10)}.pgn`;
-          // Attempt automatic download
-          downloadText(fname, pgnText);
-          // Provide manual link fallback (in case browser blocks auto download)
-          const help = document.querySelector('#importHelp');
-          if(help){
-            const dataUrl = 'data:application/x-chess-pgn;charset=utf-8,' + encodeURIComponent(pgnText);
-            help.innerHTML = `${games.length} game(s) listed. If no file downloaded, click <a href="${dataUrl}" download="${fname}">here to download PGNs</a>.`;
-          }
-        }catch(e){ console.warn('PGN download failed', e); }
         setStatus(`Analyzing ${games.length} games (Lichess)…`);
         const all = [];
         let k=0;
@@ -1798,16 +1842,6 @@ window.addEventListener('unhandledrejection', (e) => {
         const n = parseInt($('#chesscomCount')?.value,10) || 5;
         setStatus(`Fetching Chess.com games (N=${n})…`);
         const games = await fetchChesscom(u, n);
-        try{
-          const pgnText = games.join('\n\n');
-          const fname = `chesscom-${u}-${new Date().toISOString().slice(0,10)}.pgn`;
-          downloadText(fname, pgnText);
-          const help = document.querySelector('#importHelp');
-          if(help){
-            const dataUrl = 'data:application/x-chess-pgn;charset=utf-8,' + encodeURIComponent(pgnText);
-            help.innerHTML = `${games.length} game(s) listed. If no file downloaded, click <a href="${dataUrl}" download="${fname}">here to download PGNs</a>.`;
-          }
-        }catch(e){ console.warn('PGN download failed', e); }
         setStatus(`Analyzing ${games.length} games (depth 12)…`);
         const all = [];
         let k=0;
@@ -1876,6 +1910,20 @@ window.addEventListener('unhandledrejection', (e) => {
       await Engine.ensure();
       setStatus('Idle');
     })();
+
+    // Game viewer controls
+    document.getElementById('gvPrev')?.addEventListener('click', () => {
+      if(GAMEVIEW.idx>0){ GAMEVIEW.idx--; gvDraw(); }
+    });
+    document.getElementById('gvNext')?.addEventListener('click', () => {
+      if(GAMEVIEW.idx+1 < GAMEVIEW.fens.length){ GAMEVIEW.idx++; gvDraw(); }
+    });
+    document.getElementById('gvStart')?.addEventListener('click', () => {
+      GAMEVIEW.idx = 0; gvDraw();
+    });
+    document.getElementById('gvEnd')?.addEventListener('click', () => {
+      GAMEVIEW.idx = Math.max(0, GAMEVIEW.fens.length-1); gvDraw();
+    });
 
   window.addEventListener('error', (e) => {
   try { setStatus('JS error: ' + (e.message || (e.error && e.error.message) || 'unknown')); } catch {}

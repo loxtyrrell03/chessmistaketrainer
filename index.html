@@ -164,20 +164,28 @@
             <label>Lichess username</label>
             <input id="lichessUser" type="text" placeholder="e.g., lox123" />
           </div>
+          <div style="max-width:120px">
+            <label>Count</label>
+            <input id="lichessCount" type="number" min="1" max="50" value="5" />
+          </div>
           <div style="max-width:220px">
             <label>&nbsp;</label>
-            <button id="btnFetchLichess">Fetch last 5 (Lichess)</button>
+            <button id="btnFetchLichess">Fetch (Lichess)</button>
           </div>
         </div>
         <div class="row">
           <div>
             <label>Chess.com username</label>
             <input id="chesscomUser" type="text" placeholder="e.g., lox123" />
-            <div class="tiny muted" style="margin-top:4px">We fetch your latest Chess.com archives and take the most recent 5 PGNs.</div>
+            <div class="tiny muted" style="margin-top:4px">We fetch your latest Chess.com archives and take the most recent N PGNs.</div>
+          </div>
+          <div style="max-width:120px">
+            <label>Count</label>
+            <input id="chesscomCount" type="number" min="1" max="50" value="5" />
           </div>
           <div style="max-width:220px">
             <label>&nbsp;</label>
-            <button id="btnFetchChesscom">Fetch last 5 (Chess.com)</button>
+            <button id="btnFetchChesscom">Fetch (Chess.com)</button>
           </div>
         </div>
         <div style="margin-top:10px">
@@ -1322,40 +1330,54 @@ window.addEventListener('unhandledrejection', (e) => {
         if(help) help.textContent = `${pgns.length} game(s) listed below.`;
       }catch(e){ console.warn('renderImportedGames failed', e); }
     }
-    async function fetchLichessLast5(user){
-      // Lichess: streamed PGN text, include evals, take last 5 games
-      const url = `https://lichess.org/api/games/user/${encodeURIComponent(user)}?max=5&evals=true&accuracy=true`;
+    async function fetchLichess(user, maxN){
+      // Lichess: streamed PGN text, include evals, take last N games
+      const n = Math.max(1, Math.min(50, parseInt(maxN,10) || 5));
+      const url = `https://lichess.org/api/games/user/${encodeURIComponent(user)}?max=${n}&evals=true&accuracy=true`;
       const res = await fetch(url, { headers:{ 'Accept':'application/x-chess-pgn' }});
       if(!res.ok) throw new Error('Lichess request failed');
       const text = await res.text();
       // Split into games (handle both LF and CRLF newlines)
       const chunks = text.split(/\r?\n\r?\n(?=\[Event\s)/g).filter(s => s.trim());
-      const out = chunks.slice(-5);
+      const out = chunks.slice(-n);
       renderImportedGames(out, 'Lichess');
       return out;
     }
 
-    async function fetchChesscomLast5(user){
+    // Back-compat wrappers (default to 5)
+    function fetchLichessLast5(user){ return fetchLichess(user, 5); }
+
+    async function fetchChesscom(user, maxN){
       // Chess.com: discover latest archives, then pull most recent 5 PGNs overall
+      const n = Math.max(1, Math.min(50, parseInt(maxN,10) || 5));
       const arcUrl = `https://api.chess.com/pub/player/${encodeURIComponent(user)}/games/archives`;
       const arcRes = await fetch(arcUrl);
       if(!arcRes.ok) throw new Error('Chess.com archives request failed');
       const arcJson = await arcRes.json();
       const archives = (arcJson.archives || []).slice();
       if(!archives.length) return [];
-      // Fetch the last 2 archives to be safe across month boundary
-      const lastArchives = archives.slice(-2);
-      const monthly = await Promise.all(lastArchives.map(url => fetch(url).then(r => {
-        if(!r.ok) throw new Error('Chess.com month fetch failed');
-        return r.json();
-      })));
-      const allGames = monthly.flatMap(m => (m.games||[])).filter(g => g && g.pgn);
+      // Fetch archives from newest backwards until we gather N PGNs or run out
+      const reversed = archives.slice().reverse();
+      const allGames = [];
+      for(const url of reversed){
+        try{
+          const r = await fetch(url);
+          if(!r.ok) continue;
+          const m = await r.json();
+          const batch = (m.games||[]).filter(g => g && g.pgn);
+          allGames.push(...batch);
+          if(allGames.length >= n) break;
+        }catch{}
+      }
       // Sort by end_time if present, else keep order
       allGames.sort((a,b) => (b.end_time||0) - (a.end_time||0));
-      const out = allGames.slice(0,5).map(g => g.pgn);
+      const out = allGames.slice(0,n).map(g => g.pgn);
       renderImportedGames(out, 'Chess.com');
       return out;
     }
+
+    // Back-compat wrapper
+    function fetchChesscomLast5(user){ return fetchChesscom(user, 5); }
 
     /********************************************************************
      * Trainer session + SM-2 scheduling

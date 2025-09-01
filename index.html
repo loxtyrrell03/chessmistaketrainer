@@ -12,17 +12,12 @@
     ✅ No frameworks used.
 
     This build addresses your latest requests:
-      • Game Viewer board scales cleanly as it gets smaller (no cramping).
-      • Black pieces are truly black (not purple).
-      • Removed a1/h8 corner labels so the left column is not wider.
-      • Drag & drop moves enabled on the TRAIN board (click-to-move still works).
-        - Dragging to the same square (or clicking the same square twice) deselects.
-      • Do NOT auto-advance after a correct best move; user presses Next.
-      • Every time a new arrow appears, old arrows are cleared.
-      • Reveal Best reverts the position to the original mistake FEN, then shows best arrow.
-      • Mistake list shows ONLY the user’s mistakes (using usernames or explicit side).
-      • Removed the “pane split” slider.
-      • When a set is selected for training, its row is highlighted.
+      • Board-size slider works even in fullscreen (width uses min(100%, var(--board-size))).
+      • Black pieces are truly black; forced non-emoji (solid) glyphs.
+      • Added "Show mistake" button; shows red arrow for the played mistake; clears on Reveal Best or on move.
+      • Dragging shows legal-move dots; removed dotted/focus square when dragging/lifting.
+      • Imports stack across sources (Lichess + Chess.com + Manual) and analyse runs over the full stack.
+      • Stop analysis immediately resets the button; partial results still saved and a set is created if >0 mistakes.
 
     MIT-style: extend/adapt freely.
   -->
@@ -48,7 +43,7 @@
       --arrow-best:#2ecc71; /* green */
 
       /* Train sizing */
-      --board-size: 520px; /* main board max width */
+      --board-size: 520px; /* main board target width */
     }
 
     *{box-sizing:border-box}
@@ -118,8 +113,8 @@
     /* Board containers */
     .board-wrap{display:flex;gap:14px;align-items:flex-start}
     .board{
-      width:100%;
-      max-width:var(--board-size);
+      /* FIX: make slider effective in fullscreen/wide windows */
+      width: min(100%, var(--board-size));
       aspect-ratio:1 / 1; /* always square */
       background:#ddd;border-radius:12px;overflow:hidden;border:1px solid #c7cdd8;position:relative
     }
@@ -156,14 +151,21 @@
     .sq.sel{outline:3px solid var(--sq-sel);z-index:2}
     .sq.hl{outline:3px solid var(--sq-hl)}
 
-    /* Crisp readable pieces */
+    /* Crisp readable pieces — force monochrome (non-emoji) solid glyphs */
     .piece{
       filter:drop-shadow(0 2px 2px rgba(0,0,0,.25));
       opacity:1 !important; font-weight:900; letter-spacing:0;
       pointer-events:auto;
+      /* Prefer symbol fonts, force text presentation to avoid color/emoji glyphs (purple pawns etc.) */
+      font-family:"Noto Sans Symbols 2","DejaVu Sans","Segoe UI Symbol","Symbola","Noto Sans","Arial Unicode MS",system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,Cantarell,Arial;
+      font-variant-emoji:text;
     }
     .piece.w{color:#ffffff;text-shadow:0 1px 0 #000, 0 0 4px rgba(0,0,0,.5)}
     .piece.b{color:#111111;text-shadow:0 1px 0 #ffffff, 0 0 3px rgba(255,255,255,.15)} /* true black */
+
+    /* Remove dotted focus rectangles when dragging/lifting */
+    .sq:focus, .piece:focus { outline: none; }
+    .sq, .piece { -webkit-tap-highlight-color: transparent; }
 
     .legend{display:flex;gap:8px;flex-wrap:wrap}
     .legend span{padding:4px 8px;background:#0f1320;border-radius:999px;border:1px solid #2a3142}
@@ -429,7 +431,9 @@
               <div class="tiny"><b>Side to move:</b> <span id="sideToMove">—</span></div>
               <div class="tiny"><b>Your attempt:</b> <span id="yourMove">—</span></div>
               <div class="tiny"><b>Feedback:</b> <span id="feedback">—</span></div>
-              <div class="row" style="margin-top:8px">
+              <div class="row" style="margin-top:8px; gap:8px">
+                <!-- NEW: Show mistake button (left of Reveal best) -->
+                <button id="btnShowMistake" class="ghost">Show mistake</button>
                 <button id="btnReveal" class="secondary">Reveal best</button>
                 <button id="btnNext" class="ghost">Next</button>
                 <button id="btnFlip" class="ghost">Flip board</button>
@@ -1177,9 +1181,55 @@
       return mistakes;
     }
 
+    // NEW: keep a stacked list of imported games across sources
+    window.importedGames = window.importedGames || []; // [{pgn, source}]
+    function rebuildImportedTable(){
+      const tb = $('#importTBody'); if(!tb) return;
+      tb.innerHTML='';
+      let i=0;
+      for(const rec of window.importedGames){
+        const pgn = rec.pgn; const source=rec.source||'Imported';
+        const h = parsePGNHeaders(pgn||'');
+        const tr=document.createElement('tr');
+        tr.innerHTML = `
+          <td>${++i}</td>
+          <td>${h.White||'-'}</td>
+          <td>${h.Black||'-'}</td>
+          <td>${h.Result||'-'}</td>
+          <td>${h.Date||h.UTCDate||'-'}</td>
+          <td>${source}</td>`;
+        tr.style.cursor='pointer';
+        tr.addEventListener('click', () => {
+          Array.from(tb.querySelectorAll('tr')).forEach(r=>r.classList.remove('selected'));
+          tr.classList.add('selected');
+          // load game into viewer (mini-board)
+          try{
+            const cl = ChessLite(); cl.reset();
+            const startFen = cl.fen();
+            const mixed = cl.loadPGN(pgn);
+            const fens = [startFen, ...mixed.filter(x=>x.san).map(x=>x.fenAfter)];
+            GAMEVIEW.fens=fens; GAMEVIEW.idx=0; GAMEVIEW.total=fens.length-1; GAMEVIEW.pgn=pgn;
+            gvShow(); drawBoardInto('gvBoard', fens[0], true); gvUpdate();
+            setStatus('Game loaded in viewer.');
+          }catch(e){ console.warn('viewer load failed', e); }
+        });
+        tb.appendChild(tr);
+      }
+      const help = $('#importHelp');
+      if(help) help.textContent = `${window.importedGames.length} game(s) listed. Click a row to preview.`;
+    }
+    function appendImportedGames(pgns, source){
+      const set = new Set((window.importedGames||[]).map(r=>r.pgn));
+      for(const p of (pgns||[])){
+        if(!p || set.has(p)) continue;
+        window.importedGames.push({pgn:p, source:source||'Imported'});
+      }
+      rebuildImportedTable();
+    }
+
     async function analyzeImportedWithBackendAbortable(state){
-      const info=window.lastFetchedPGNs;
-      const list = info && Array.isArray(info.pgns) ? info.pgns : [];
+      const imported = window.importedGames || [];
+      const list = imported.map(x => x.pgn);
       if(!list.length){ alert('No imported games found. Import games first.'); return; }
       inferUsernames();
       const all=[];
@@ -1198,13 +1248,21 @@
         }catch(e){ console.warn('Analyze failed:', e); }
       }
       if(all.length) addMistakes(all);
-      if(!state.stop){
-        const tag=(info && info.source) ? info.source : 'Imported';
-        const set=createSetFromMistakes(all, `${tag} ${new Date().toLocaleString()}`);
+
+      const srcSet = new Set(imported.map(x => x.source || 'Imported'));
+      const tagBase = (srcSet.size===1 ? Array.from(srcSet)[0] : 'Imported');
+      const tagName = `${tagBase}${state.stop ? ' (partial)' : ''} ${new Date().toLocaleString()}`;
+
+      // Create a set even if stopped early, as long as mistakes > 0
+      if(all.length > 0){
+        const set=createSetFromMistakes(all, tagName);
         setActiveSet(set); renderActiveSetInfo();
-        setStatus(`Done. Added ${all.length} user-mistake(s).`);
-      }else{
+      }
+
+      if(state.stop){
         setStatus('Analysis stopped.');
+      }else{
+        setStatus(`Done. Added ${all.length} user-mistake(s).`);
       }
     }
 
@@ -1230,51 +1288,13 @@
     /********************************************************************
      * Importers
      ********************************************************************/
-    function renderImportedGames(pgns, source){
-      try{
-        const tb = $('#importTBody'); if(!tb) return;
-        tb.innerHTML='';
-        let i=0;
-        for(const pgn of pgns){
-          const h = parsePGNHeaders(pgn);
-          const tr=document.createElement('tr');
-          tr.innerHTML = `
-            <td>${++i}</td>
-            <td>${h.White||'-'}</td>
-            <td>${h.Black||'-'}</td>
-            <td>${h.Result||'-'}</td>
-            <td>${h.Date||h.UTCDate||'-'}</td>
-            <td>${source}</td>`;
-          tr.style.cursor='pointer';
-          tr.addEventListener('click', () => {
-            Array.from(tb.querySelectorAll('tr')).forEach(r=>r.classList.remove('selected'));
-            tr.classList.add('selected');
-            // load game into viewer (mini-board)
-            try{
-              const cl = ChessLite(); cl.reset();
-              const startFen = cl.fen();
-              const mixed = cl.loadPGN(pgn);
-              const fens = [startFen, ...mixed.filter(x=>x.san).map(x=>x.fenAfter)];
-              GAMEVIEW.fens=fens; GAMEVIEW.idx=0; GAMEVIEW.total=fens.length-1; GAMEVIEW.pgn=pgn;
-              gvShow(); drawBoardInto('gvBoard', fens[0], true); gvUpdate();
-              setStatus('Game loaded in viewer.');
-            }catch(e){ console.warn('viewer load failed', e); }
-          });
-          tb.appendChild(tr);
-        }
-        const help = $('#importHelp');
-        if(help) help.textContent = `${pgns.length} game(s) listed. Click a row to preview.`;
-        window.lastFetchedPGNs = { source, pgns };
-      }catch(e){ console.warn('renderImportedGames failed', e); }
-    }
-
     async function fetchLichess(user, maxN){
       const n=Math.max(1, Math.min(50, parseInt(maxN,10)||5));
       const base=(window.FN_LICHESS_URL||`${window.FN_BASE||''}/fetchLichess`).replace(/\/$/,'');
       const url=`${base}?username=${encodeURIComponent(user)}&max=${n}`;
       const res=await fetch(url,{headers:{'Accept':'application/json'}}); if(!res.ok) throw new Error(`Lichess proxy failed (${res.status})`);
       const json=await res.json(); const games=(json.games||[]).filter(g=>g&&g.pgn); const out=games.map(g=>g.pgn);
-      renderImportedGames(out,'Lichess'); return out;
+      appendImportedGames(out,'Lichess'); return out;
     }
 
     async function fetchChesscom(user, maxN){
@@ -1283,7 +1303,7 @@
       const url=`${base}?username=${encodeURIComponent(user)}&limit=${n}`;
       const res=await fetch(url,{headers:{'Accept':'application/json'}}); if(!res.ok) throw new Error(`Chess.com proxy failed (${res.status})`);
       const json=await res.json(); const games=(json.games||[]).filter(g=>g&&g.pgn); const out=games.map(g=>g.pgn);
-      renderImportedGames(out,'Chess.com'); return out;
+      appendImportedGames(out,'Chess.com'); return out;
     }
 
     /********************************************************************
@@ -1364,7 +1384,11 @@
     /********************************************************************
      * Board rendering + arrows + DnD
      ********************************************************************/
-    const PIECES = {'P':'♙','N':'♘','B':'♗','R':'♖','Q':'♕','K':'♔','p':'♟','n':'♞','b':'♝','r':'♜','q':'♛','k':'♚'};
+    const VS15 = '\uFE0E'; // force text (non-emoji) glyphs
+    const PIECES = {
+      'P':'♙'+VS15,'N':'♘'+VS15,'B':'♗'+VS15,'R':'♖'+VS15,'Q':'♕'+VS15,'K':'♔'+VS15,
+      'p':'♟'+VS15,'n':'♞'+VS15,'b':'♝'+VS15,'r':'♜'+VS15,'q':'♛'+VS15,'k':'♚'+VS15
+    };
     const BOARD = { current:null, selected:null, highlights:new Set(), chess:ChessLite(), arrows:{ user:null, best:null, showBest:false } };
 
     function ensureArrowCanvas(){
@@ -1521,9 +1545,32 @@
     function onDragStart(ev){
       const parent = ev.target.closest('.sq');
       DRAG_FROM = parent?.dataset.square || null;
-      try{ ev.dataTransfer.setData('text/plain', DRAG_FROM||''); }catch{}
+
+      // Mark selected and show legal-move dots during drag
+      try{
+        if(DRAG_FROM){
+          BOARD.selected = BOARD.chess.sqToIdx(DRAG_FROM);
+          showHints();
+        }
+      }catch{}
+
+      // Use a custom drag image to avoid dotted placeholders
+      try{
+        if(ev.dataTransfer){
+          const ghost = ev.target.cloneNode(true);
+          ghost.style.position='absolute'; ghost.style.top='-1000px';
+          document.body.appendChild(ghost);
+          ev.dataTransfer.setDragImage(ghost, ghost.offsetWidth/2, ghost.offsetHeight/2);
+          setTimeout(()=>document.body.removeChild(ghost),0);
+          ev.dataTransfer.setData('text/plain', DRAG_FROM||'');
+        }
+      }catch{}
     }
-    function onDragEnd(){ DRAG_FROM=null; }
+    function onDragEnd(){
+      DRAG_FROM=null;
+      // Clear selection/hints after drag
+      BOARD.selected=null; showHints();
+    }
     function onDragOver(ev){ ev.preventDefault(); }
     function onDrop(ev){
       ev.preventDefault();
@@ -1558,7 +1605,7 @@
       }catch{}
     }
 
-    // Reveal & Next buttons
+    // Reveal, Show mistake & Next buttons
     $('#btnReveal').addEventListener('click', () => {
       const a=Session.active; if(!a) return;
       // Revert to original mistake position, then show best arrow
@@ -1567,6 +1614,21 @@
       $('#feedback').innerHTML = `Best move: <b class="mono">${bestSan || a.best}</b>`;
       BOARD.arrows.user=null; BOARD.arrows.best=a.best; BOARD.arrows.showBest=true; renderArrows();
     });
+    // NEW: Show mistake arrow (red) for the move actually played in the game
+    $('#btnShowMistake').addEventListener('click', () => {
+      const a=Session.active; if(!a) return;
+      drawBoardMain(a.fen); // ensure original position
+      const cl=ChessLite(); cl.loadFEN(a.fen);
+      const uci=cl.parseSANtoMove(a.played||'');
+      if(uci){
+        BOARD.arrows.best=null; // only show the user's (mistake) arrow
+        BOARD.arrows.user=uci; BOARD.arrows.showBest=false; renderArrows();
+        $('#feedback').innerHTML = `Mistake played: <b class="mono">${a.played}</b>`;
+      }else{
+        $('#feedback').textContent='Could not parse recorded mistake.';
+      }
+    });
+
     $('#btnNext').addEventListener('click', () => Session.next());
     $('#btnFlip').addEventListener('click', () => { ORIENT_WHITE_BOTTOM=!ORIENT_WHITE_BOTTOM; if(Session.active) drawBoardMain(Session.active.fen); });
 
@@ -1623,28 +1685,31 @@
         btnAnalyze.classList.remove('btn-green'); btnAnalyze.classList.add('btn-red');
         ANALYZE_STATE={stop:false};
         try{ await analyzeImportedWithBackendAbortable(ANALYZE_STATE); }catch(e){ setStatus('Error: '+(e?.message||e)); }
+        // ensure button reset (in case stop wasn't pressed)
         btnAnalyze.dataset.state='idle';
         btnAnalyze.textContent='Analyse mistakes';
         btnAnalyze.classList.remove('btn-red'); btnAnalyze.classList.add('btn-green');
       }else{
-        // stop analysis
+        // stop analysis — immediately revert UI as requested
         ANALYZE_STATE.stop=true;
+        btnAnalyze.dataset.state='idle';
+        btnAnalyze.textContent='Analyse mistakes';
+        btnAnalyze.classList.remove('btn-red'); btnAnalyze.classList.add('btn-green');
       }
     });
 
     $('#btnClearImports')?.addEventListener('click', () => {
-      const info=window.lastFetchedPGNs || {pgns:[]};
+      const toRemove = new Set((window.importedGames||[]).map(r=>r.pgn));
       // Remove mistakes created from these imports (match by pgn)
-      if(info.pgns && info.pgns.length){
-        const set=new Set(info.pgns);
+      if(toRemove.size){
         let list=loadMistakes();
-        list=list.filter(m => !set.has(m.pgn));
+        list=list.filter(m => !toRemove.has(m.pgn));
         saveMistakes(list);
       }
       // Clear table + viewer + state
-      const tb=$('#importTBody'); if(tb) tb.innerHTML='';
+      window.importedGames = [];
+      rebuildImportedTable();
       const help=$('#importHelp'); if(help) help.textContent='Imported games cleared.';
-      window.lastFetchedPGNs = { source:'', pgns:[] };
       gvHide();
     });
 
@@ -1661,7 +1726,7 @@
     $('#btnImportPGN').addEventListener('click', async () => {
       const t=$('#pgnInput').value.trim(); if(!t) return alert('Paste one or more PGNs first.');
       const parts=t.split(/\n(?=\[Event\s)/g).filter(s=>s.trim());
-      renderImportedGames(parts, 'Manual');
+      appendImportedGames(parts, 'Manual');
       setStatus(`Imported ${parts.length} game(s). You can now press “Analyse mistakes”.`);
     });
 
@@ -1694,6 +1759,7 @@
         const rng=$('#boardSizeRange'); if(rng) rng.value = String(cur);
       }catch{}
 
+      rebuildImportedTable();
       renderMistakeList(); renderStats(); renderSets(); renderSetsForTrain(); renderActiveSetInfo();
       drawBoardMain(null);
       setStatus('Loading engine…'); await Engine.ensure(); setStatus('Idle');

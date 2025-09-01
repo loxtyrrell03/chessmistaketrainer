@@ -11,28 +11,20 @@
     ✅ Works offline once loaded (except for fetching online games).
     ✅ No frameworks used.
 
-    Core:
-      • Import last N games from Lichess or Chess.com, or paste PGN to import
-      • Detect mistakes with Stockfish backend (preferred) or local WASM fallback
-      • Store mistakes in localStorage (and Firestore) and train them (Woodpecker or SM‑2)
+    This build addresses your latest requests:
+      • Game Viewer board scales cleanly as it gets smaller (no cramping).
+      • Black pieces are truly black (not purple).
+      • Removed a1/h8 corner labels so the left column is not wider.
+      • Drag & drop moves enabled on the TRAIN board (click-to-move still works).
+        - Dragging to the same square (or clicking the same square twice) deselects.
+      • Do NOT auto-advance after a correct best move; user presses Next.
+      • Every time a new arrow appears, old arrows are cleared.
+      • Reveal Best reverts the position to the original mistake FEN, then shows best arrow.
+      • Mistake list shows ONLY the user’s mistakes (using usernames or explicit side).
+      • Removed the “pane split” slider.
+      • When a set is selected for training, its row is highlighted.
 
-    This build addresses:
-      • Board squish & piece legibility; consistent classic board palette; aspect ratio fixed
-      • Red arrow for your move (immediately); green arrow for best (only after Reveal)
-      • Import tab (was Analyze) + working game viewer board on Import page
-      • “Analyse mistakes” (green) ↔ “Stop analysis” (red) ↔ “Continue analysis” instant toggle
-      • “Import PGN” (replaces “Analyze PGN”) — only imports to list for backend analysis
-      • Clear imports button removes imported games and mistakes originating from them
-      • Set creation de‑duped; “Train” in Sets opens Train tab and auto-starts SRS on that set
-      • SAN notation throughout (best/your move)
-
-    New in this patch:
-      • FIX: Best-move green arrow and red arrows (original mistake + your attempt) reliably render on the TRAIN board only.
-      • SHOW: Original mistake is displayed/logged; your attempt is shown separately.
-      • GAME INFO: PGN shows only the first line + Copy PGN button; game link shown where available.
-      • ANALYSIS UX: Stop is instant. You can Continue where it left off. Mistakes found so far are kept.
-      • CREATE SET: A “Create set from found mistakes” button appears under Imported games when you stop/finish.
-      • USER-ONLY: Analysis filters mistakes to your color only (Auto via username, or force White/Black).
+    MIT-style: extend/adapt freely.
   -->
   <style>
     :root{
@@ -55,10 +47,8 @@
       --arrow-user:#ff5c5c; /* red */
       --arrow-best:#2ecc71; /* green */
 
-      /* Train sizing (user adjustable) */
-      --board-size: 520px;           /* px, user can change */
-      --train-left-fr: 1.1;          /* grid fraction */
-      --train-right-fr: 0.9;         /* grid fraction */
+      /* Train sizing */
+      --board-size: 520px; /* main board max width */
     }
 
     *{box-sizing:border-box}
@@ -78,10 +68,11 @@
       grid-template-columns: 1.1fr .9fr;
       gap:18px;
     }
-    /* Train page grid with adjustable pane widths */
+
+    /* Train page grid (fixed split; pane-split slider removed) */
     .train-grid{
       display:grid;
-      grid-template-columns: var(--train-left-fr)fr var(--train-right-fr)fr;
+      grid-template-columns: 1.15fr .85fr;
       gap:18px;
     }
 
@@ -124,26 +115,40 @@
     .warn{color:var(--warn)}
     .right{float:right}
 
-    /* Board */
+    /* Board containers */
     .board-wrap{display:flex;gap:14px;align-items:flex-start}
     .board{
-      width:min(var(--board-size), 100%);
-      aspect-ratio:1/1; /* Never squish the board */
+      width:100%;
+      max-width:var(--board-size);
+      aspect-ratio:1 / 1; /* always square */
       background:#ddd;border-radius:12px;overflow:hidden;border:1px solid #c7cdd8;position:relative
     }
-    .board-mini{ --board-size: 360px; } /* used on Import page game viewer */
+    /* Game Viewer mini board: fills available width responsively (no cramping) */
+    .board-mini{
+      width:100%;
+      max-width:540px;
+      aspect-ratio:1 / 1;
+      background:#ddd;border-radius:12px;overflow:hidden;border:1px solid #c7cdd8;position:relative
+    }
 
+    /* Chess grid */
     .grid8{
-      display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);width:100%;height:100%;
+      display:grid;
+      grid-template-columns:repeat(8, minmax(0,1fr)); /* prevent content from stretching columns */
+      grid-template-rows:repeat(8, minmax(0,1fr));
+      width:100%;
+      height:100%;
+      contain: content;
     }
     .sq{
       display:flex;align-items:center;justify-content:center;
-      font-size:min(8vw, 44px);
       user-select:none;position:relative;transition:background .08s ease;
+      overflow:hidden; /* if glyph gets large, don't distort grid */
+      font-size:var(--cell-font, 36px); /* set by JS per board size */
     }
     .sq.light{background:var(--sq-light)}
     .sq.dark{background:var(--sq-dark)}
-    .sq.coord{ position:absolute;left:6px;bottom:6px;font-size:10px;color:#000a }
+    /* coords removed */
     .sq.hint::after{
       content:"";position:absolute;width:26%;height:26%;border-radius:50%;
       background:rgba(0,0,0,.25)
@@ -152,9 +157,13 @@
     .sq.hl{outline:3px solid var(--sq-hl)}
 
     /* Crisp readable pieces */
-    .piece{filter:drop-shadow(0 2px 2px rgba(0,0,0,.25)); opacity:1 !important; font-weight:900; letter-spacing:0}
+    .piece{
+      filter:drop-shadow(0 2px 2px rgba(0,0,0,.25));
+      opacity:1 !important; font-weight:900; letter-spacing:0;
+      pointer-events:auto;
+    }
     .piece.w{color:#ffffff;text-shadow:0 1px 0 #000, 0 0 4px rgba(0,0,0,.5)}
-    .piece.b{color:#0a0f1a;text-shadow:0 1px 0 #fff, 0 0 4px rgba(255,255,255,.35)}
+    .piece.b{color:#111111;text-shadow:0 1px 0 #ffffff, 0 0 3px rgba(255,255,255,.15)} /* true black */
 
     .legend{display:flex;gap:8px;flex-wrap:wrap}
     .legend span{padding:4px 8px;background:#0f1320;border-radius:999px;border:1px solid #2a3142}
@@ -214,7 +223,7 @@
     </div>
   </div>
 
-  <!-- Import (was Analyze) -->
+  <!-- Import -->
   <div class="wrap section" id="analyzeSection">
     <h1>Import games & prepare analysis</h1>
     <p class="muted small">Import games → then press <b>Analyse mistakes</b> to run Stockfish (server) and extract mistakes. All data stays in your browser (plus Firestore sync).</p>
@@ -270,11 +279,6 @@
             <b>Imported Games</b>
             <span class="tiny muted" id="importHelp">Fetched games will appear here.</span>
             <span style="margin-left:auto"></span>
-            <select id="yourSideSel" title="Only analyze your mistakes" class="ghost" style="max-width:160px">
-              <option value="auto" selected>Your side: Auto</option>
-              <option value="w">White only</option>
-              <option value="b">Black only</option>
-            </select>
             <button id="btnAnalyzeImported" class="btn-green" title="Analyse mistakes (server)">Analyse mistakes</button>
             <button id="btnClearImports" class="ghost" title="Clear imported games & their mistakes">Clear imports</button>
           </div>
@@ -294,7 +298,7 @@
             </table>
           </div>
 
-          <!-- Game viewer with its own mini board -->
+          <!-- Game Viewer with fully responsive board -->
           <div id="gameViewer" class="stroke tiny" style="margin-top:10px; display:none">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               <b>Game Viewer</b>
@@ -306,14 +310,9 @@
                 <button id="gvEnd" class="ghost" title="End">End ⏭</button>
               </div>
             </div>
-            <div class="board board-mini" style="margin-top:8px">
+            <div class="board-mini" style="margin-top:8px">
               <div id="gvBoard" class="grid8" aria-label="game-viewer-board"></div>
             </div>
-          </div>
-
-          <!-- Appears when analysis stopped/finished and at least 1 mistake found -->
-          <div id="createSetFromImportsWrap" style="margin-top:10px; display:none; text-align:right">
-            <button id="btnCreateSetFromImports" class="btn-green">Create set from found mistakes</button>
           </div>
         </div>
 
@@ -326,7 +325,7 @@
       <!-- RIGHT COLUMN: Mistakes + Stats -->
       <div class="card">
         <h2>3) Mistake List</h2>
-        <div class="tiny muted" style="margin:6px 0 10px">Synced to Firebase (with offline cache). Click a row to load it on the board.</div>
+        <div class="tiny muted" style="margin:6px 0 10px">Only your mistakes are shown. Click a row to load it on the board.</div>
         <div style="max-height:320px;overflow:auto;border:1px dashed #2a3142;border-radius:10px">
           <table id="mistakeTable">
             <thead>
@@ -396,7 +395,7 @@
   <div class="wrap section" id="trainSection">
     <h1>Train</h1>
 
-    <!-- Sizing controls -->
+    <!-- Only board-size control (pane split removed) -->
     <div class="card" style="margin-bottom:12px">
       <div class="grid-2">
         <div>
@@ -404,11 +403,10 @@
           <input id="boardSizeRange" type="range" min="320" max="820" step="10" />
         </div>
         <div>
-          <label>Pane split (left %, affects board/info vs sets)</label>
-          <input id="paneSplitRange" type="range" min="30" max="70" step="1" />
+          <label>&nbsp;</label>
+          <div class="tiny muted">Preference saved locally.</div>
         </div>
       </div>
-      <div class="tiny muted" style="margin-top:6px">These preferences are saved locally.</div>
     </div>
 
     <div class="train-grid" style="margin-top:12px">
@@ -420,7 +418,7 @@
           </div>
           <div style="flex:1;min-width:260px">
             <div class="legend tiny">
-              <span>Click a piece, then a target square</span>
+              <span>Drag or click to move</span>
               <span>✔️ correct = best move</span>
               <span>❌ otherwise</span>
             </div>
@@ -429,7 +427,6 @@
               <div class="tiny muted" id="mInfo">—</div>
               <div class="tiny" style="margin-top:6px"><b>Goal:</b> find the best move from this position.</div>
               <div class="tiny"><b>Side to move:</b> <span id="sideToMove">—</span></div>
-              <div class="tiny"><b>Your move (in game):</b> <span id="origYourMove">—</span></div>
               <div class="tiny"><b>Your attempt:</b> <span id="yourMove">—</span></div>
               <div class="tiny"><b>Feedback:</b> <span id="feedback">—</span></div>
               <div class="row" style="margin-top:8px">
@@ -445,7 +442,6 @@
               <div class="tiny">Link: <a id="trainLink" href="#" target="_blank" rel="noopener">—</a></div>
             </div>
 
-            <!-- Session queue (optional) could be added here if needed -->
           </div>
         </div>
       </div>
@@ -607,7 +603,7 @@
     });
   </script>
 
-  <!-- Stockfish WASM (allowed external) -->
+  <!-- Stockfish WASM -->
   <script src="https://unpkg.com/stockfish.wasm/stockfish.js"></script>
 
   <script>
@@ -636,6 +632,7 @@
       const total = GAMEVIEW.total;
       const idx = GAMEVIEW.idx;
       lbl.textContent = total ? `Move ${idx}/${total}` : '-';
+      setBoardFonts(); /* keep font sizes responsive */
     }
 
     /********************************************************************
@@ -753,14 +750,45 @@
       let i=0; for(const s of sets){
         const tr = document.createElement('tr');
         tr.style.cursor = 'pointer';
+        tr.classList.toggle('selected', ACTIVE_SET && s.id===ACTIVE_SET.id);
         tr.innerHTML = `<td>${++i}</td><td>${s.name}</td><td>${s.keys.length}</td>`;
-        tr.addEventListener('click', () => { setActiveSet(s); renderActiveSetInfo(); });
+        tr.addEventListener('click', () => { setActiveSet(s); renderActiveSetInfo(); renderSetsForTrain(); });
         tb.appendChild(tr);
       }
     }
 
     /********************************************************************
-     * ChessLite engine (FEN, legal moves, SAN parsing)
+     * User-only helpers for filtering mistakes
+     ********************************************************************/
+    function parsePGNHeaders(pgn){
+      const h={}; const re=/\[(\w+)\s+"([^"]*)"\]/g; let m; while((m=re.exec(pgn||''))) h[m[1]]=m[2]; return h;
+    }
+    function inferUsernames(){
+      const names=[];
+      const u1=$('#lichessUser')?.value.trim(); if(u1) names.push(u1.toLowerCase());
+      const u2=$('#chesscomUser')?.value.trim(); if(u2) names.push(u2.toLowerCase());
+      window.LAST_USERNAMES = new Set(names);
+    }
+    function userSideForPGN(pgn){
+      try{
+        const h=parsePGNHeaders(pgn||''); const w=(h.White||'').toLowerCase(); const b=(h.Black||'').toLowerCase();
+        const us = window.LAST_USERNAMES || new Set();
+        for(const name of us){ if(!name) continue; if(w===name || w.includes(name)) return 'w'; if(b===name || b.includes(name)) return 'b'; }
+        return null;
+      }catch{return null;}
+    }
+    function filterMistakesToUserOnly(ms){
+      if(!ms || !ms.length) return [];
+      const out=[];
+      for(const m of ms){
+        const side = userSideForPGN(m.pgn||'');
+        if(side && m.side===side) out.push(m);
+      }
+      return out;
+    }
+
+    /********************************************************************
+     * ChessLite minimal engine (FEN, legal moves, SAN parsing)
      ********************************************************************/
     function ChessLite(){
       const FILES='abcdefgh';
@@ -870,11 +898,11 @@
         // update ep
         ep=-1;
         if(p==='P' || p==='p'){
-          const {r:rf,c:cf}=rcOf(from); const {r:rt}=rcOf(to);
+          const {r:rf}=rcOf(from); const {r:rt}=rcOf(to);
           if(Math.abs(rt-rf)===2) ep = pc==='w' ? (to+8) : (to-8);
         }
 
-        // castling rights (move rook/king)
+        // castling rights
         const fromSq=idxToSq(from), toSq=idxToSq(to);
         if(p==='K'){ castling.K=false; castling.Q=false; }
         if(p==='k'){ castling.k=false; castling.q=false; }
@@ -991,7 +1019,7 @@
       }
 
       function loadPGN(pgn){
-        const text = pgn.replace(/\r/g,'').replace(/\[(.|\n)*?\]\s*/g,' ').trim();
+        const text = (pgn||'').replace(/\r/g,'').replace(/\[(.|\n)*?\]\s*/g,' ').trim();
         const tokens=[]; let i=0;
         while(i<text.length){
           const ch=text[i];
@@ -1027,7 +1055,7 @@
     }
 
     /********************************************************************
-     * SAN/PGN helpers for UI
+     * SAN helper (UCI -> SAN)
      ********************************************************************/
     function uciToSAN(fen, uci){
       if(!fen || !uci) return uci || '—';
@@ -1053,7 +1081,7 @@
           else disamb = mv.from;
         }
       }
-      const isCapture = !!mv.captured; // our generator doesn't detect captures; left as-is
+      const isCapture = !!mv.captured;
       let san = '';
       if(isPawn){ san = (isCapture ? (mv.from[0] + 'x') : '') + mv.to; }
       else { san = pieceLetter + disamb + (isCapture?'x':'') + mv.to; }
@@ -1062,17 +1090,6 @@
       const opp = tmp.turn(); const inCheck = tmp.inCheck(opp); const hasReply = tmp.moves().length>0;
       if(inCheck) san += hasReply ? '+' : '#';
       return san;
-    }
-    function sanToUCI(fen, san){
-      if(!fen || !san) return null;
-      const cl = ChessLite(); cl.loadFEN(fen);
-      return cl.parseSANtoMove(san);
-    }
-    function firstPGNLine(pgn){
-      try{
-        const line = (pgn||'').split('\n').find(l=>l.trim().length>0) || '';
-        return line.trim();
-      }catch{return '—'}
     }
 
     /********************************************************************
@@ -1133,15 +1150,11 @@
     })();
 
     /********************************************************************
-     * PGN helpers & analysis
+     * PGN helpers & analysis (user-only)
      ********************************************************************/
     const DEFAULT_SEV={ inacc:50, mistake:150, blunder:300 };
     function getSev(){ try{ const o=JSON.parse(localStorage.getItem('pmtt_sev')||'{}'); return {...DEFAULT_SEV, ...o}; }catch{return DEFAULT_SEV;} }
     function severityFromDrop(cp){ const T=getSev(); const x=Math.abs(Math.round(cp)); if(x>=T.blunder) return 'blunder'; if(x>=T.mistake) return 'mistake'; if(x>=T.inacc) return 'inaccuracy'; return null; }
-
-    function parsePGNHeaders(pgn){
-      const h={}; const re=/\[(\w+)\s+"([^"]*)"\]/g; let m; while((m=re.exec(pgn))) h[m[1]]=m[2]; return h;
-    }
 
     async function analyzeOnBackend(pgns){
       const url=`${window.FN_BASE}/analyzePGNs`;
@@ -1149,19 +1162,7 @@
       const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pgns,depth:12,thresholds:thr})});
       if(!res.ok) throw new Error(`analyzePGNs failed ${res.status}`);
       const json=await res.json();
-      const mistakes=(json.mistakes||[]);
-
-      // attach pgn and gameUrl for each resulting mistake
-      for(const m of mistakes){
-        // If single PGN we can copy; otherwise backend includes per-record pgn association
-        if(!m.pgn && pgns.length===1) m.pgn = pgns[0];
-        try{
-          const h = parsePGNHeaders(m.pgn || '');
-          const urlHdr = h.Site || h.Link || '';
-          if(urlHdr && /^https?:\/\//i.test(urlHdr)) m.gameUrl = urlHdr;
-        }catch{}
-      }
-      return mistakes;
+      return json.mistakes||[];
     }
     async function analyzeOnServer(pgn, depth=12){
       const base=(window.SF_BACKEND_URL||'').replace(/\/$/,''); if(!base) throw new Error('SF_BACKEND_URL not set');
@@ -1171,118 +1172,47 @@
       if(!res.ok) throw new Error(`Stockfish backend error ${res.status}`);
       const data=await res.json(); const mistakes=data.mistakes||[];
       try{
-        const h=parsePGNHeaders(pgn); const urlHdr=h.Site||h.Link||'';
-        mistakes.forEach(m=>{ m.pgn=pgn; if(urlHdr && /^https?:\/\//i.test(urlHdr)) m.gameUrl=urlHdr; });
+        mistakes.forEach(m=>{ m.pgn=pgn; const h=parsePGNHeaders(pgn); const urlHdr=h.Site||h.Link||''; if(urlHdr && /^https?:\/\//i.test(urlHdr)) m.gameUrl=urlHdr; });
       }catch{}
       return mistakes;
     }
 
-    /* ---------- User-only filtering ---------- */
-    function inferUsernames(){
-      const names=[];
-      const u1=$('#lichessUser')?.value.trim(); if(u1) names.push(u1.toLowerCase());
-      const u2=$('#chesscomUser')?.value.trim(); if(u2) names.push(u2.toLowerCase());
-      window.LAST_USERNAMES = new Set(names);
-    }
-    function userSideForPGN(pgn){
-      try{
-        const pref = ($('#yourSideSel')?.value)||'auto';
-        if(pref==='w' || pref==='b') return pref;
-        const h=parsePGNHeaders(pgn||''); const w=(h.White||'').toLowerCase(); const b=(h.Black||'').toLowerCase();
-        const us = window.LAST_USERNAMES || new Set();
-        for(const name of us){
-          if(!name) continue;
-          if(w===name || w.includes(name)) return 'w';
-          if(b===name || b.includes(name)) return 'b';
-        }
-        return null; // unknown in auto mode
-      }catch{return null;}
-    }
-
-    function filterMistakesToUserOnly(ms){
-      if(!ms || !ms.length) return [];
-      const out=[];
-      for(const m of ms){
-        const pgn = m.pgn || '';
-        const side = userSideForPGN(pgn);
-        if(side===null){
-          // Auto but couldn't resolve — skip to ensure we only keep user's mistakes
-          continue;
-        }
-        if(m.side === side) out.push(m);
-      }
-      return out;
-    }
-
-    /* ---------- Abortable, resumable analysis state ---------- */
-    let ANALYZE_STATE = { status:'idle', stop:false, idx:0, results:[], list:[], source:'' };
-
-    function updateAnalyzeButtonsUI(){
-      const btn = $('#btnAnalyzeImported'); if(!btn) return;
-      if(ANALYZE_STATE.status==='running'){
-        btn.textContent='Stop analysis';
-        btn.classList.add('btn-red'); btn.classList.remove('btn-green');
-        btn.dataset.state='running';
-      }else if(ANALYZE_STATE.status==='paused'){
-        btn.textContent='Continue analysis';
-        btn.classList.remove('btn-red'); btn.classList.add('btn-green');
-        btn.dataset.state='paused';
-      }else{
-        btn.textContent='Analyse mistakes';
-        btn.classList.remove('btn-red'); btn.classList.add('btn-green');
-        btn.dataset.state='idle';
-      }
-    }
-    function updateCreateSetFromImportsVisibility(){
-      const wrap = $('#createSetFromImportsWrap'); if(!wrap) return;
-      wrap.style.display = (ANALYZE_STATE.results && ANALYZE_STATE.results.length && (ANALYZE_STATE.status==='paused' || ANALYZE_STATE.status==='done')) ? 'block' : 'none';
-    }
-
-    async function runAnalysisLoop(){
-      const info = window.lastFetchedPGNs;
-      if(!info || !Array.isArray(info.pgns) || !info.pgns.length){ setStatus('No imported games found.'); ANALYZE_STATE.status='idle'; updateAnalyzeButtonsUI(); return; }
-
-      const list = ANALYZE_STATE.list;
-      for(; ANALYZE_STATE.idx < list.length; ANALYZE_STATE.idx++){
-        if(ANALYZE_STATE.stop || ANALYZE_STATE.status!=='running'){ ANALYZE_STATE.status='paused'; setStatus('Analysis paused.'); updateAnalyzeButtonsUI(); updateCreateSetFromImportsVisibility(); return; }
-
-        const cur = list[ANALYZE_STATE.idx];
-        setStatus(`Analyzing ${ANALYZE_STATE.idx+1}/${list.length}…`);
-
+    async function analyzeImportedWithBackendAbortable(state){
+      const info=window.lastFetchedPGNs;
+      const list = info && Array.isArray(info.pgns) ? info.pgns : [];
+      if(!list.length){ alert('No imported games found. Import games first.'); return; }
+      inferUsernames();
+      const all=[];
+      let i=0;
+      for(const pgn of list){
+        if(state.stop) break;
+        setStatus(`Analyzing ${++i}/${list.length}…`);
         try{
-          let ms = [];
-          if(window.SF_BACKEND_URL) ms = await analyzeOnServer(cur,12);
-          else if(window.FN_BASE) { const chunk = await analyzeOnBackend([cur]); ms = chunk.filter(x=>x && (x.pgn ? x.pgn===cur : true)); }
-          else { const chunk = await analyzeManualLocal(cur); ms = chunk; }
-
-          // ensure pgn/gameUrl attached & filter to user-only
-          ms = ms.map(m => { if(!m.pgn) m.pgn = cur; try{ const h=parsePGNHeaders(cur); const urlHdr=h.Site||h.Link||''; if(urlHdr && /^https?:\/\//i.test(urlHdr)) m.gameUrl=urlHdr; }catch{} return m; });
+          let ms=[];
+          if(window.SF_BACKEND_URL){ ms=await analyzeOnServer(pgn,12); }
+          else if(window.FN_BASE){ ms=await analyzeOnBackend([pgn]); }
+          else { ms = await analyzeManualLocal(pgn); }
+          // user-only
           ms = filterMistakesToUserOnly(ms);
-
-          if(ms.length){
-            ANALYZE_STATE.results.push(...ms);
-            addMistakes(ms); // persist incrementally
-          }
-        }catch(e){
-          console.warn('Analyze failed:', e);
-        }
+          if(ms.length) all.push(...ms);
+        }catch(e){ console.warn('Analyze failed:', e); }
       }
-      ANALYZE_STATE.status='done';
-      setStatus(`Done. Added ${ANALYZE_STATE.results.length} mistake(s).`);
-      updateAnalyzeButtonsUI();
-      updateCreateSetFromImportsVisibility();
+      if(all.length) addMistakes(all);
+      if(!state.stop){
+        const tag=(info && info.source) ? info.source : 'Imported';
+        const set=createSetFromMistakes(all, `${tag} ${new Date().toLocaleString()}`);
+        setActiveSet(set); renderActiveSetInfo();
+        setStatus(`Done. Added ${all.length} user-mistake(s).`);
+      }else{
+        setStatus('Analysis stopped.');
+      }
     }
 
+    // Local fallback (slow)
     async function analyzeManualLocal(pgn){
       const cl=ChessLite(); const seq=cl.loadPGN(pgn).filter(x=>x.san);
       const mistakes=[]; const cl2=ChessLite(); cl2.reset();
-
-      // Determine which side is user for this PGN; if unknown -> skip recording mistakes entirely
       const sideWanted = userSideForPGN(pgn);
-      if(sideWanted===null){
-        console.info('User side could not be inferred in AUTO mode; skipping mistakes for this PGN.');
-      }
-
       for(const mv of seq){
         const fenBefore=cl2.fen(); const sideToMove=cl2.turn();
         const { cp:cpBefore, bestmove } = await Engine.analyze(fenBefore,12);
@@ -1290,10 +1220,8 @@
         cl2.moveUci(uci); const fenAfter=cl2.fen();
         const { cp:cpAfter } = await Engine.analyze(fenAfter,12);
         const drop=Math.max(0, cpBefore + cpAfter); const sev=severityFromDrop(drop);
-
-        // Only keep if this move belongs to the user's side
-        if(sev && (sideWanted ? (sideToMove===sideWanted) : false)){
-          mistakes.push({ id:uid(), fen:fenBefore, side:sideToMove, played:mv.san, best:bestmove, deltaCp:drop, severity:sev, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn, gameUrl: (parsePGNHeaders(pgn).Site||'') });
+        if(sev && sideWanted && sideToMove===sideWanted){
+          mistakes.push({ id:uid(), fen:fenBefore, side:sideToMove, played:mv.san, best:bestmove, deltaCp:drop, severity:sev, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn });
         }
       }
       return mistakes;
@@ -1394,8 +1322,9 @@
       }
       function startSRS(){ queue = pickDueSRS(); mode='srs'; next(); }
       function next(){
-        $('#yourMove').textContent='—'; $('#origYourMove').textContent='—'; $('#feedback').textContent='—';
-        BOARD.arrows.userOrig=null; BOARD.arrows.userAttempt=null; BOARD.arrows.showBest=false; renderArrows();
+        $('#yourMove').textContent='—'; $('#feedback').textContent='—';
+        // clear arrows
+        BOARD.arrows.user = null; BOARD.arrows.best = null; BOARD.arrows.showBest=false; renderArrows();
         if(queue.length===0){
           if(mode==='srs'){ queue = pickDueSRS(); if(queue.length===0){ $('#mInfo').textContent='No SRS items due now. 🎉'; active=null; drawBoardMain(null); return; } }
           else { $('#mInfo').textContent='Woodpecker set complete. ✅'; active=null; drawBoardMain(null); return; }
@@ -1408,15 +1337,19 @@
         const yourSan = uciToSAN(active.fen, moveUci);
         $('#yourMove').textContent = yourSan || moveUci || '—';
 
-        // show your attempt arrow (red, solid) immediately
-        BOARD.arrows.userAttempt = moveUci || null; BOARD.arrows.showBest=false; renderArrows();
+        // Replace previous attempt arrow with this one
+        BOARD.arrows.user = moveUci || null; BOARD.arrows.showBest=false; renderArrows();
+
+        // Move the board tentatively so user can see result
+        const tmp=ChessLite(); tmp.loadFEN(BOARD.current); const mv=tmp.moveUci(moveUci);
+        if(mv.ok){ drawBoardMain(tmp.fen()); }
 
         if(correct){
           $('#feedback').innerHTML = '✔️ Correct (best move)';
           const list = loadMistakes(); const idx=list.findIndex(m=>m.id===active.id);
           if(idx>=0){ const q=(mode==='srs') ? (pendingFirstTry?5:3) : (pendingFirstTry?5:4); sm2Update(list[idx], q); saveMistakes(list); }
           logAttempt(active.id, true, moveUci);
-          next();
+          // DO NOT auto-advance; user presses Next
         }else{
           const bestSan = uciToSAN(active.fen, active.best);
           $('#feedback').innerHTML = `❌ Not the best. <span class="mono">Best = ${bestSan || active.best}</span>`;
@@ -1429,10 +1362,10 @@
     })();
 
     /********************************************************************
-     * Board rendering + arrows
+     * Board rendering + arrows + DnD
      ********************************************************************/
     const PIECES = {'P':'♙','N':'♘','B':'♗','R':'♖','Q':'♕','K':'♔','p':'♟','n':'♞','b':'♝','r':'♜','q':'♛','k':'♚'};
-    const BOARD = { current:null, selected:null, highlights:new Set(), chess:ChessLite(), arrows:{ userOrig:null, userAttempt:null, best:null, showBest:false } };
+    const BOARD = { current:null, selected:null, highlights:new Set(), chess:ChessLite(), arrows:{ user:null, best:null, showBest:false } };
 
     function ensureArrowCanvas(){
       const outer = document.getElementById('trainBoard'); if(!outer) return null;
@@ -1471,8 +1404,7 @@
       const {cv,dpr}=info; const ctx=cv.getContext('2d'); if(!ctx) return; ctx.clearRect(0,0,cv.width,cv.height);
       const red = getComputedStyle(document.documentElement).getPropertyValue('--arrow-user').trim()||'#ff5c5c';
       const green = getComputedStyle(document.documentElement).getPropertyValue('--arrow-best').trim()||'#2ecc71';
-      const uo=BOARD.arrows.userOrig; if(uo){ drawArrow(ctx,dpr,uo.slice(0,2),uo.slice(2,4),red,true); }   // dashed = original mistake
-      const ua=BOARD.arrows.userAttempt; if(ua){ drawArrow(ctx,dpr,ua.slice(0,2),ua.slice(2,4),red,false); } // solid = current attempt
+      const u=BOARD.arrows.user; if(u){ drawArrow(ctx,dpr,u.slice(0,2),u.slice(2,4),red,false); }
       const b=BOARD.arrows.best; if(b && BOARD.arrows.showBest){ drawArrow(ctx,dpr,b.slice(0,2),b.slice(2,4),green,false); }
     }
 
@@ -1481,32 +1413,46 @@
       root.innerHTML='';
       if(!fen){
         for(let r=0;r<8;r++){ for(let c=0;c<8;c++){ const el=document.createElement('div'); el.className='sq '+(((r+c)%2)?'dark':'light'); root.appendChild(el); } }
-        return;
+        setBoardFonts(); return;
       }
       const cl=ChessLite(); cl.loadFEN(fen);
       const parts=fen.split(' ')[0].split('/'); const cells=[];
       for(const row of parts){ for(const ch of row){ if(/[1-8]/.test(ch)){ for(let k=0;k<parseInt(ch,10);k++) cells.push(null); } else cells.push(ch); } }
 
-      // orientation
       const idxOrder=[]; for(let r=0;r<8;r++){ for(let c=0;c<8;c++) idxOrder.push(r*8+c); }
       const oriented = (whiteBottom ? idxOrder : idxOrder.slice().reverse());
 
       oriented.forEach(i=>{
-        const r=Math.floor(i/8), c=i%8; const sq=cl.idxToSq(i);
+        const r=Math.floor(i/8), c=i%8;
         const cell=document.createElement('div'); cell.className='sq '+(((r+c)%2)?'dark':'light');
-        const coord=document.createElement('div'); coord.className='coord';
-        if((whiteBottom && (r===7&&c===0)) || (!whiteBottom && (r===0&&c===7))) coord.textContent=sq;
-        cell.appendChild(coord);
         const piece=cells[i]; if(piece){ const span=document.createElement('div'); span.className='piece'; span.textContent=PIECES[piece]||''; span.classList.add(piece===piece.toUpperCase()?'w':'b'); cell.appendChild(span); }
         root.appendChild(cell);
       });
+      setBoardFonts();
+    }
+
+    function setBoardFonts(){
+      // main board
+      try{
+        const outer = document.getElementById('trainBoard');
+        const grid = document.getElementById('board');
+        const w = outer?.clientWidth || 520;
+        grid && grid.style.setProperty('--cell-font', Math.max(14, Math.floor((w/8)*0.78))+'px');
+      }catch{}
+      // game viewer board
+      try{
+        const gv = document.getElementById('gvBoard');
+        const gvw = gv?.clientWidth || 360;
+        gv && gv.style.setProperty('--cell-font', Math.max(12, Math.floor((gvw/8)*0.78))+'px');
+      }catch{}
+      renderArrows();
     }
 
     function drawBoardMain(fen){
       const root = $('#board'); root.innerHTML='';
       if(!fen){
         for(let r=0;r<8;r++){ for(let c=0;c<8;c++){ const el=document.createElement('div'); el.className='sq '+(((r+c)%2)?'dark':'light'); root.appendChild(el); } }
-        renderArrows(); return;
+        setBoardFonts(); renderArrows(); return;
       }
       BOARD.chess.loadFEN(fen); BOARD.current=fen; $('#sideToMove').textContent = BOARD.chess.turn()==='w'?'White':'Black';
       const parts=fen.split(' ')[0].split('/'); const cells=[];
@@ -1518,14 +1464,25 @@
         const r=Math.floor(i/8), c=i%8; const sq=BOARD.chess.idxToSq(i);
         const cell=document.createElement('div'); cell.className='sq '+(((r+c)%2)?'dark':'light');
         cell.dataset.index=i; cell.dataset.square=sq;
-        const coord=document.createElement('div'); coord.className='coord';
-        if((ORIENT_WHITE_BOTTOM && (r===7&&c===0)) || (!ORIENT_WHITE_BOTTOM && (r===0&&c===7))) coord.textContent=sq;
-        cell.appendChild(coord);
-        const piece=cells[i]; if(piece){ const span=document.createElement('div'); span.className='piece'; span.textContent=PIECES[piece]||''; span.classList.add(piece===piece.toUpperCase()?'w':'b'); cell.appendChild(span); }
+        const piece=cells[i]; 
+        if(piece){ 
+          const span=document.createElement('div'); 
+          span.className='piece'; 
+          span.textContent=PIECES[piece]||''; 
+          span.classList.add(piece===piece.toUpperCase()?'w':'b'); 
+          span.setAttribute('draggable','true');
+          span.addEventListener('dragstart', onDragStart);
+          span.addEventListener('dragend', onDragEnd);
+          cell.appendChild(span); 
+        }
+        // Drag over/drop targets
+        cell.addEventListener('dragover', onDragOver);
+        cell.addEventListener('drop', onDrop);
+        // Click to move support
         cell.addEventListener('click', onSquareClick);
         root.appendChild(cell);
       });
-      BOARD.selected=null; BOARD.highlights.clear(); showHints(); renderArrows();
+      BOARD.selected=null; BOARD.highlights.clear(); showHints(); setBoardFonts(); renderArrows();
     }
 
     function showHints(){
@@ -1546,22 +1503,42 @@
         if(all.some(m=>m.from===sq)){ BOARD.selected=idx; showHints(); }
       }else{
         const from=BOARD.chess.idxToSq(BOARD.selected); const to=e.currentTarget.dataset.square;
+        if(from===to){ BOARD.selected=null; showHints(); return; } // deselect if same square
         let uci = from+to;
         const legal=BOARD.chess.moves().filter(m=>m.from===from && m.to===to);
         if(legal.length){ let move=legal[0]; if(legal.length>1){ const q=legal.find(m=>m.promotion==='q'); if(q) move=q; } if(move.promotion) uci+=move.promotion; }
         const tmp=ChessLite(); tmp.loadFEN(BOARD.current); const mv=tmp.moveUci(uci);
         if(mv.ok){ drawBoardMain(tmp.fen()); }
-        Session.answer(uci);
         BOARD.selected=null; showHints();
+        // clear old arrows, then answer
+        BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
+        Session.answer(uci);
       }
     }
 
-    function playedUCIFromMistake(m){
-      if(!m) return null;
-      const val = m.played || '';
-      if(/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(val)) return val;            // already UCI
-      const u = sanToUCI(m.fen, val); if(u) return u;                       // convert SAN to UCI
-      return null;
+    // Drag & Drop support
+    let DRAG_FROM=null;
+    function onDragStart(ev){
+      const parent = ev.target.closest('.sq');
+      DRAG_FROM = parent?.dataset.square || null;
+      try{ ev.dataTransfer.setData('text/plain', DRAG_FROM||''); }catch{}
+    }
+    function onDragEnd(){ DRAG_FROM=null; }
+    function onDragOver(ev){ ev.preventDefault(); }
+    function onDrop(ev){
+      ev.preventDefault();
+      const to = ev.currentTarget.dataset.square;
+      const from = DRAG_FROM || (ev.dataTransfer && ev.dataTransfer.getData('text/plain')) || null;
+      if(!from || !to) return;
+      if(from===to){ BOARD.selected=null; showHints(); return; } // deselect on same-square drop
+      let uci = from+to;
+      const legal=BOARD.chess.moves().filter(m=>m.from===from && m.to===to);
+      if(legal.length){ let move=legal[0]; if(legal.length>1){ const q=legal.find(m=>m.promotion==='q'); if(q) move=q; } if(move.promotion) uci+=move.promotion; }
+      const tmp=ChessLite(); tmp.loadFEN(BOARD.current); const mv=tmp.moveUci(uci);
+      if(mv.ok){ drawBoardMain(tmp.fen()); }
+      BOARD.selected=null; showHints();
+      BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
+      Session.answer(uci);
     }
 
     function loadMistakeOnBoard(m){
@@ -1569,51 +1546,26 @@
       gvHide();
       $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> · <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · Δcp ${Math.round(m.deltaCp)}`;
       $('#yourMove').textContent='—'; $('#feedback').textContent='—';
-
       ORIENT_WHITE_BOTTOM = (m.side==='w'); drawBoardMain(m.fen);
+      // Arrows start clean; will draw on attempt/reveal
+      BOARD.arrows.user = null; BOARD.arrows.best = m.best || null; BOARD.arrows.showBest = false; renderArrows();
 
-      // Arrows: original mistake (red dashed), best (green after Reveal)
-      const origUci = playedUCIFromMistake(m);
-      BOARD.arrows.userOrig = origUci || null;
-      BOARD.arrows.userAttempt = null;
-      BOARD.arrows.best = m.best || null;
-      BOARD.arrows.showBest = false;
-      renderArrows();
-
-      // Update info (FEN/PGN/link + original move text)
+      // Update info
       try{
         const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent=`FEN: ${m.fen}`;
-
-        // Original move text
-        let origText = m.played || '—';
-        if(/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(origText)){ origText = uciToSAN(m.fen, origText); }
-        $('#origYourMove').textContent = origText;
-
-        // PGN: first line only + Copy button
-        const pgnLine = firstPGNLine(m.pgn||'—');
-        const pgnEl=$('#trainPgn');
-        if(pgnEl){
-          pgnEl.innerHTML = `PGN: <span class="mono">${pgnLine}</span> <button id="copyPgnBtn" class="ghost tiny" style="margin-left:8px">Copy PGN</button>`;
-          window.CURRENT_PGN = m.pgn || '';
-          $('#copyPgnBtn')?.addEventListener('click', async () => {
-            try{ await navigator.clipboard.writeText(window.CURRENT_PGN||''); setStatus('PGN copied to clipboard.'); }catch{ setStatus('Copy failed'); }
-          });
-        }
-
-        const linkEl=$('#trainLink');
-        if(linkEl){
-          if(m.gameUrl){ linkEl.textContent='Open game'; linkEl.href=m.gameUrl; }
-          else { linkEl.textContent='—'; linkEl.href='#'; }
-        }
+        const pgnEl=$('#trainPgn'); if(pgnEl) pgnEl.textContent=`PGN: ${m.pgn ? m.pgn.split('\n')[0] : '—'}`;
+        const linkEl=$('#trainLink'); if(linkEl){ if(m.gameUrl){ linkEl.textContent='Open game'; linkEl.href=m.gameUrl; } else { linkEl.textContent='—'; linkEl.href='#'; } }
       }catch{}
     }
 
     // Reveal & Next buttons
     $('#btnReveal').addEventListener('click', () => {
       const a=Session.active; if(!a) return;
+      // Revert to original mistake position, then show best arrow
+      drawBoardMain(a.fen);
       const bestSan=uciToSAN(a.fen, a.best);
       $('#feedback').innerHTML = `Best move: <b class="mono">${bestSan || a.best}</b>`;
-      BOARD.arrows.showBest=true; renderArrows();
+      BOARD.arrows.user=null; BOARD.arrows.best=a.best; BOARD.arrows.showBest=true; renderArrows();
     });
     $('#btnNext').addEventListener('click', () => Session.next());
     $('#btnFlip').addEventListener('click', () => { ORIENT_WHITE_BOTTOM=!ORIENT_WHITE_BOTTOM; if(Session.active) drawBoardMain(Session.active.fen); });
@@ -1622,8 +1574,11 @@
      * Mistake list + Stats
      ********************************************************************/
     function renderMistakeList(){
+      inferUsernames();
       const tb=$('#mistakeTBody'); if(!tb) return;
-      const list=loadMistakes(); tb.innerHTML='';
+      const all=loadMistakes();
+      const list=filterMistakesToUserOnly(all); /* ONLY user's mistakes */
+      tb.innerHTML='';
       list.forEach((m,i)=>{
         const bestSan = m.best ? uciToSAN(m.fen, m.best) : '—';
         const tr=document.createElement('tr');
@@ -1658,40 +1613,23 @@
     /********************************************************************
      * Import controls & toggles
      ********************************************************************/
+    let ANALYZE_STATE = { stop:false };
     const btnAnalyze = $('#btnAnalyzeImported');
     btnAnalyze?.addEventListener('click', async () => {
-      inferUsernames();
-      const info=window.lastFetchedPGNs;
-      if(!info || !Array.isArray(info.pgns) || !info.pgns.length) { alert('No imported games found. Import games first.'); return; }
-
-      if(ANALYZE_STATE.status==='idle' || ANALYZE_STATE.status==='done'){
-        ANALYZE_STATE = { status:'running', stop:false, idx:0, results:[], list:[...info.pgns], source: (info.source||'Imported') };
-        updateAnalyzeButtonsUI();
-        updateCreateSetFromImportsVisibility();
-        try{ await runAnalysisLoop(); }catch(e){ setStatus('Error: '+(e?.message||e)); ANALYZE_STATE.status='paused'; updateAnalyzeButtonsUI(); updateCreateSetFromImportsVisibility(); }
-      }else if(ANALYZE_STATE.status==='running'){
-        // stop immediately (instant UI change)
+      if(btnAnalyze.dataset.state!=='running'){
+        // start analysis
+        btnAnalyze.dataset.state='running';
+        btnAnalyze.textContent='Stop analysis';
+        btnAnalyze.classList.remove('btn-green'); btnAnalyze.classList.add('btn-red');
+        ANALYZE_STATE={stop:false};
+        try{ await analyzeImportedWithBackendAbortable(ANALYZE_STATE); }catch(e){ setStatus('Error: '+(e?.message||e)); }
+        btnAnalyze.dataset.state='idle';
+        btnAnalyze.textContent='Analyse mistakes';
+        btnAnalyze.classList.remove('btn-red'); btnAnalyze.classList.add('btn-green');
+      }else{
+        // stop analysis
         ANALYZE_STATE.stop=true;
-        ANALYZE_STATE.status='paused';
-        setStatus('Stopping after current game…');
-        updateAnalyzeButtonsUI();
-        updateCreateSetFromImportsVisibility();
-      }else if(ANALYZE_STATE.status==='paused'){
-        ANALYZE_STATE.stop=false;
-        ANALYZE_STATE.status='running';
-        updateAnalyzeButtonsUI();
-        updateCreateSetFromImportsVisibility();
-        try{ await runAnalysisLoop(); }catch(e){ setStatus('Error: '+(e?.message||e)); ANALYZE_STATE.status='paused'; updateAnalyzeButtonsUI(); updateCreateSetFromImportsVisibility(); }
       }
-    });
-
-    $('#btnCreateSetFromImports')?.addEventListener('click', () => {
-      if(!ANALYZE_STATE.results || !ANALYZE_STATE.results.length){ alert('No mistakes found yet.'); return; }
-      const def = `${ANALYZE_STATE.source||'Imported'} ${new Date().toLocaleString()}`;
-      const name = prompt('Set name', def) || def;
-      const set = createSetFromMistakes(ANALYZE_STATE.results, name);
-      setActiveSet(set); renderActiveSetInfo();
-      setStatus(`Set “${set.name}” created with ${set.keys.length} unique position(s).`);
     });
 
     $('#btnClearImports')?.addEventListener('click', () => {
@@ -1707,9 +1645,6 @@
       const tb=$('#importTBody'); if(tb) tb.innerHTML='';
       const help=$('#importHelp'); if(help) help.textContent='Imported games cleared.';
       window.lastFetchedPGNs = { source:'', pgns:[] };
-      ANALYZE_STATE = { status:'idle', stop:false, idx:0, results:[], list:[], source:'' };
-      updateAnalyzeButtonsUI();
-      updateCreateSetFromImportsVisibility();
       gvHide();
     });
 
@@ -1725,7 +1660,6 @@
 
     $('#btnImportPGN').addEventListener('click', async () => {
       const t=$('#pgnInput').value.trim(); if(!t) return alert('Paste one or more PGNs first.');
-      // split by [Event ...]
       const parts=t.split(/\n(?=\[Event\s)/g).filter(s=>s.trim());
       renderImportedGames(parts, 'Manual');
       setStatus(`Imported ${parts.length} game(s). You can now press “Analyse mistakes”.`);
@@ -1753,24 +1687,25 @@
     (async function init(){
       // prefs
       try{
-        const bs = localStorage.getItem('pmtt_board_size'); if(bs){ document.documentElement.style.setProperty('--board-size', bs+'px'); $('#boardSizeRange').value = bs; }
-        else $('#boardSizeRange').value = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--board-size'))||520;
-        const split = localStorage.getItem('pmtt_pane_split') || '55';
-        $('#paneSplitRange').value = split;
-        document.documentElement.style.setProperty('--train-left-fr', (parseInt(split,10)/10).toFixed(1));
-        document.documentElement.style.setProperty('--train-right-fr', ((100-parseInt(split,10))/10).toFixed(1));
+        const bs = localStorage.getItem('pmtt_board_size'); 
+        if(bs){ document.documentElement.style.setProperty('--board-size', bs+'px'); $('#boardSizeRange').value = bs; }
+        else { const cur=parseInt(getComputedStyle(document.documentElement).getPropertyValue('--board-size'))||520; $('#boardSizeRange').value = cur; }
       }catch{}
 
       renderMistakeList(); renderStats(); renderSets(); renderSetsForTrain(); renderActiveSetInfo();
       drawBoardMain(null);
       setStatus('Loading engine…'); await Engine.ensure(); setStatus('Idle');
-      // keep arrows sized when window resizes or sliders change
-      window.addEventListener('resize', renderArrows);
+      // keep fonts/arrows sized when window resizes
+      window.addEventListener('resize', setBoardFonts);
     })();
 
-    // Pref sliders
-    $('#boardSizeRange')?.addEventListener('input', (e)=>{ const v=parseInt(e.target.value,10)||520; document.documentElement.style.setProperty('--board-size', v+'px'); localStorage.setItem('pmtt_board_size', String(v)); renderArrows(); });
-    $('#paneSplitRange')?.addEventListener('input', (e)=>{ const p=parseInt(e.target.value,10)||55; document.documentElement.style.setProperty('--train-left-fr', (p/10).toFixed(1)); document.documentElement.style.setProperty('--train-right-fr', ((100-p)/10).toFixed(1)); });
+    // Pref slider
+    $('#boardSizeRange')?.addEventListener('input', (e)=>{
+      const v=parseInt(e.target.value,10)||520;
+      document.documentElement.style.setProperty('--board-size', v+'px');
+      localStorage.setItem('pmtt_board_size', String(v));
+      setBoardFonts();
+    });
 
   </script>
 
@@ -1784,8 +1719,7 @@
       document.getElementById('navAnalyze')?.classList.toggle('active', which==='analyze');
       document.getElementById('navSets')?.classList.toggle('active', which==='sets');
       document.getElementById('navTrain')?.classList.toggle('active', which==='train');
-      // Recompute arrows when showing Train (sizes change)
-      if(which==='train'){ setTimeout(renderArrows, 50); }
+      if(which==='train'){ setTimeout(()=>{ setBoardFonts(); renderArrows(); }, 50); }
     }
     document.getElementById('navHome')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('home'); });
     document.getElementById('navAnalyze')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('analyze'); });

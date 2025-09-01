@@ -204,6 +204,7 @@
       <div style="font-weight:700;color:#e6edf3">♟️ PMT</div>
       <a href="#" data-sec="home" id="navHome" class="active">Home</a>
       <a href="#" data-sec="analyze" id="navAnalyze">Import</a>
+      <a href="#" data-sec="stats" id="navStats">Stats</a>
       <a href="#" data-sec="sets" id="navSets">Sets</a>
       <a href="#" data-sec="train" id="navTrain">Train</a>
       <div style="margin-left:auto"></div>
@@ -327,45 +328,7 @@
         </div>
       </div>
 
-      <!-- RIGHT COLUMN: Mistakes + Stats -->
-      <div class="card">
-        <h2>3) Mistake List</h2>
-        <div class="tiny muted" style="margin:6px 0 10px">Only your mistakes are shown. Click a row to load it on the board.</div>
-        <div style="max-height:320px;overflow:auto;border:1px dashed #2a3142;border-radius:10px">
-          <table id="mistakeTable">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Severity</th>
-                <th>Side</th>
-                <th>Played</th>
-                <th>Best</th>
-                <th>Δcp</th>
-                <th>Next review</th>
-              </tr>
-            </thead>
-            <tbody id="mistakeTBody"></tbody>
-          </table>
-        </div>
-
-        <hr style="border:none;border-top:1px solid #242a39;margin:16px 0">
-
-        <h2>4) Stats</h2>
-        <div class="grid-2" style="margin-top:8px">
-          <div class="stroke">
-            <div class="small"><b>Accuracy:</b> <span id="statAcc">—</span></div>
-            <div class="small"><b>Reviews done:</b> <span id="statReviews">0</span></div>
-          </div>
-          <div class="stroke">
-            <div class="small"><b>Total mistakes:</b> <span id="statTotal">0</span></div>
-            <div class="small"><b>Due now (SRS):</b> <span id="statDue">0</span></div>
-          </div>
-        </div>
-        <div style="margin-top:10px">
-          <div class="small"><b>Severity distribution</b></div>
-          <div class="bar"><canvas id="sevChart" width="600" height="180"></canvas></div>
-        </div>
-      </div>
+      
     </div>
   </div>
 
@@ -392,6 +355,72 @@
           </thead>
           <tbody id="setsTBody"></tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stats Page -->
+  <div class="wrap section" id="statsSection">
+    <h1>Stats</h1>
+    <div class="grid" style="margin-top:12px">
+      <!-- LEFT: Mistake list filtered by set -->
+      <div class="card">
+        <h2>Mistake List</h2>
+        <div class="row" style="align-items:flex-end;margin-top:6px">
+          <div>
+            <label>Set</label>
+            <select id="statsSetSelect"></select>
+          </div>
+        </div>
+        <div class="tiny muted" style="margin:6px 0 10px">Select a set to view its mistakes. Click a row to preview on the right.</div>
+        <div style="max-height:360px;overflow:auto;border:1px dashed #2a3142;border-radius:10px">
+          <table id="statsMistakeTable">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Severity</th>
+                <th>Side</th>
+                <th>Played</th>
+                <th>Best</th>
+                <th>Δcp</th>
+                <th>Next review</th>
+              </tr>
+            </thead>
+            <tbody id="statsMistakeTBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- RIGHT: Board + Summary -->
+      <div class="card">
+        <h2>Preview</h2>
+        <div class="board-mini" style="margin-top:8px">
+          <div id="statsBoard" class="grid8" aria-label="stats-board"></div>
+        </div>
+        <div class="stroke tiny" style="margin-top:10px">
+          <div class="small"><b>Selected mistake</b></div>
+          <div class="tiny mono" id="statsMInfo">-</div>
+          <div class="tiny"><b>Side to move:</b> <span id="statsSideToMove">-</span></div>
+          <div class="tiny"><b>Best:</b> <span id="statsBest">-</span></div>
+          <div class="tiny"><b>Δcp:</b> <span id="statsDelta">-</span></div>
+        </div>
+
+        <hr style="border:none;border-top:1px solid #242a39;margin:16px 0">
+        <h2>Summary</h2>
+        <div class="grid-2" style="margin-top:8px">
+          <div class="stroke">
+            <div class="small"><b>Accuracy:</b> <span id="statsAcc">-</span></div>
+            <div class="small"><b>Reviews done:</b> <span id="statsReviews">0</span></div>
+          </div>
+          <div class="stroke">
+            <div class="small"><b>Total mistakes:</b> <span id="statsTotal">0</span></div>
+            <div class="small"><b>Due now (SRS):</b> <span id="statsDue">0</span></div>
+          </div>
+        </div>
+        <div style="margin-top:10px">
+          <div class="small"><b>Severity distribution</b></div>
+          <div class="bar"><canvas id="statsSevChart" width="600" height="180"></canvas></div>
+        </div>
       </div>
     </div>
   </div>
@@ -651,7 +680,7 @@
     const fb = () => (window.firebaseAPI && window.firebaseAPI.ready) ? window.firebaseAPI : null;
 
     function loadMistakes(){ try{ return JSON.parse(localStorage.getItem(LS_MISTAKES)||'[]'); }catch{return [];} }
-    function saveMistakes(arr){ localStorage.setItem(LS_MISTAKES, JSON.stringify(arr)); if(fb()) fb().saveAllMistakes(arr).catch(()=>{}); renderMistakeList(); renderStats(); }
+    function saveMistakes(arr){ localStorage.setItem(LS_MISTAKES, JSON.stringify(arr)); if(fb()) fb().saveAllMistakes(arr).catch(()=>{}); renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); }
     function addMistakes(newOnes){
       const cur = loadMistakes();
       const seen = new Set(cur.map(m => m.fen + '|' + m.played));
@@ -687,7 +716,7 @@
       }catch{return []}
     }
 
-    window.addEventListener('firebase:mMistakesUpdated', ()=>{ try{renderMistakeList();renderStats();}catch{} });
+    window.addEventListener('firebase:mMistakesUpdated', ()=>{ try{renderStatsSetOptions();renderStatsMistakeList();renderStatsSummary();}catch{} });
     window.addEventListener('firebase:attemptsUpdated', ()=>{ try{renderStats();}catch{} });
 
     /********************************************************************
@@ -1514,6 +1543,12 @@
         const gvw = gv?.clientWidth || 360;
         gv && gv.style.setProperty('--cell-font', Math.max(12, Math.floor((gvw/8)*0.78))+'px');
       }catch{}
+      // stats preview board
+      try{
+        const sb = document.getElementById('statsBoard');
+        const sbw = sb?.clientWidth || 360;
+        sb && sb.style.setProperty('--cell-font', Math.max(12, Math.floor((sbw/8)*0.78))+'px');
+      }catch{}
       renderArrows();
     }
 
@@ -1709,14 +1744,32 @@
     /********************************************************************
      * Mistake list + Stats
      ********************************************************************/
-    function renderMistakeList(){
+    // Stats page: set-filtered mistakes list + summary + preview board
+    let STATS_SELECTED_SET_ID = null;
+    let STATS_CURRENT_LIST = [];
+    function renderStatsSetOptions(){
+      const sel = $('#statsSetSelect'); if(!sel) return;
+      const sets = loadSets();
+      sel.innerHTML = '';
+      const opt0 = document.createElement('option'); opt0.value=''; opt0.textContent='Select a set…'; sel.appendChild(opt0);
+      for(const s of sets){ const o=document.createElement('option'); o.value=s.id; o.textContent=`${s.name} (${s.keys.length})`; sel.appendChild(o); }
+      if(STATS_SELECTED_SET_ID){ sel.value = STATS_SELECTED_SET_ID; }
+      else if(sets.length){ STATS_SELECTED_SET_ID = sets[0].id; sel.value = STATS_SELECTED_SET_ID; }
+      sel.onchange = ()=>{ STATS_SELECTED_SET_ID = sel.value || null; renderStatsMistakeList(); renderStatsSummary(); drawBoardInto('statsBoard', null, true); $('#statsMInfo').textContent='-'; $('#statsSideToMove').textContent='-'; $('#statsBest').textContent='-'; $('#statsDelta').textContent='-'; };
+    }
+
+    function renderStatsMistakeList(){
       inferUsernames();
-      const tb=$('#mistakeTBody'); if(!tb) return;
-      const all=loadMistakes();
-      const list=filterMistakesToUserOnly(all); /* ONLY user's mistakes */
+      const tb=$('#statsMistakeTBody'); if(!tb) return;
       tb.innerHTML='';
+      const sets = loadSets(); const target = sets.find(s=>s.id===STATS_SELECTED_SET_ID);
+      if(!target){ STATS_CURRENT_LIST=[]; $('#statsTotal') && ($('#statsTotal').textContent='0'); $('#statsDue') && ($('#statsDue').textContent='0'); return; }
+      const keySet = new Set(target.keys||[]);
+      const all=filterMistakesToUserOnly(loadMistakes());
+      const list=all.filter(m => keySet.has(keyOf(m)));
+      STATS_CURRENT_LIST = list;
       list.forEach((m,i)=>{
-        const bestSan = m.best ? uciToSAN(m.fen, m.best) : '—';
+        const bestSan = m.best ? uciToSAN(m.fen, m.best) : '-';
         const tr=document.createElement('tr');
         tr.innerHTML=`
           <td class="mono tiny">${i+1}</td>
@@ -1726,24 +1779,36 @@
           <td class="mono tiny">${bestSan}</td>
           <td class="mono tiny">${Math.round(m.deltaCp||0)}</td>
           <td class="tiny">${tsToDate(m.nextReview)}</td>`;
-        tr.addEventListener('click', ()=>{ loadMistakeOnBoard(m); showSection('train'); });
+        tr.addEventListener('click', ()=>{ loadMistakeOnStatsBoard(m); });
         tb.appendChild(tr);
       });
-      $('#statTotal').textContent=list.length;
-      $('#statDue').textContent=pickDueSRS().length;
+      const due = pickDueSRS().filter(m => keySet.has(keyOf(m))).length;
+      const totalEl=$('#statsTotal'); if(totalEl) totalEl.textContent=list.length;
+      const dueEl=$('#statsDue'); if(dueEl) dueEl.textContent=due;
     }
 
-    function renderStats(){
+    function renderStatsSummary(){
       const att=getAttempts(); const n=att.length; const correct=att.filter(a=>a.correct).length; const acc=n?Math.round(100*correct/n):0;
-      $('#statAcc').textContent = n ? `${acc}% (${correct}/${n})` : '—';
-      $('#statReviews').textContent = n.toString();
+      $('#statsAcc') && ($('#statsAcc').textContent = n ? `${acc}% (${correct}/${n})` : '-');
+      $('#statsReviews') && ($('#statsReviews').textContent = String(n));
 
-      const list=loadMistakes(); const counts={inaccuracy:0,mistake:0,blunder:0};
-      list.forEach(m=>{ if(counts[m.severity]!==undefined) counts[m.severity]++; });
-      const canvas=$('#sevChart'); const ctx=canvas.getContext('2d'); const W=canvas.width,H=canvas.height;
+      const counts={inaccuracy:0,mistake:0,blunder:0};
+      for(const m of (STATS_CURRENT_LIST||[])){ if(counts[m.severity]!==undefined) counts[m.severity]++; }
+      const canvas=$('#statsSevChart'); if(!canvas) return; const ctx=canvas.getContext('2d'); const W=canvas.width,H=canvas.height;
       ctx.clearRect(0,0,W,H); ctx.fillStyle='#0d0f15'; ctx.fillRect(0,0,W,H);
       const labels=['Inacc','Mistake','Blunder'], keys=['inaccuracy','mistake','blunder']; const maxv=Math.max(1, ...keys.map(k=>counts[k])); const barW=Math.floor((W-80)/3);
-      for(let i=0;i<3;i++){ const x=40+i*(barW+20); const v=counts[keys[i]]; const h=Math.round((H-40)*(v/maxv)); ctx.fillStyle=i===0?'#2f9e44':(i===1?'#f2c94c':'#ff6b6b'); ctx.fillRect(x,H-20-h,barW,h); ctx.fillStyle='#9aa4b2'; ctx.font='12px system-ui'; ctx.textAlign='center'; ctx.fillText(labels[i],x+barW/2,H-6); ctx.fillText(v.toString(),x+barW/2,H-28-h); }
+      for(let i=0;i<3;i++){ const x=40+i*(barW+20); const v=counts[keys[i]]; const h=Math.round((H-40)*(v/maxv)); ctx.fillStyle=i===0?'#2f9e44':(i===1?'#f2c94c':'#ff6b6b'); ctx.fillRect(x,H-20-h,barW,h); ctx.fillStyle='#9aa4b2'; ctx.font='12px system-ui'; ctx.textAlign='center'; ctx.fillText(labels[i],x+barW/2,H-6); ctx.fillText(String(v),x+barW/2,H-28-h); }
+    }
+
+    function loadMistakeOnStatsBoard(m){
+      if(!m){ drawBoardInto('statsBoard', null, true); return; }
+      $('#statsMInfo').textContent = m.fen.split(' ').slice(0,4).join(' ');
+      $('#statsSideToMove').textContent = (m.side==='w')?'White':'Black';
+      const bestSan = m.best ? uciToSAN(m.fen, m.best) : '-';
+      $('#statsBest').textContent = bestSan || m.best || '-';
+      $('#statsDelta').textContent = String(Math.round(m.deltaCp||0));
+      const whiteBottom = (m.side==='w');
+      drawBoardInto('statsBoard', m.fen, whiteBottom);
     }
 
     /********************************************************************
@@ -1862,7 +1927,7 @@
       }catch{}
 
       rebuildImportedTable();
-      renderMistakeList(); renderStats(); renderSets(); renderSetsForTrain(); renderActiveSetInfo();
+      renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); renderSets(); renderSetsForTrain(); renderActiveSetInfo();
       drawBoardMain(null);
       setStatus('Loading engine…'); await Engine.ensure(); setStatus('Idle');
       // keep fonts/arrows sized when window resizes
@@ -1889,17 +1954,19 @@
   <script>
     // Simple SPA nav
     function showSection(which){
-      const map = { home:'homeSection', analyze:'analyzeSection', sets:'setsSection', train:'trainSection' };
+      const map = { home:'homeSection', analyze:'analyzeSection', stats:'statsSection', sets:'setsSection', train:'trainSection' };
       Object.values(map).forEach(id => document.getElementById(id)?.classList.remove('active'));
       document.getElementById(map[which]||'homeSection')?.classList.add('active');
       document.getElementById('navHome')?.classList.toggle('active', which==='home');
       document.getElementById('navAnalyze')?.classList.toggle('active', which==='analyze');
+      document.getElementById('navStats')?.classList.toggle('active', which==='stats');
       document.getElementById('navSets')?.classList.toggle('active', which==='sets');
       document.getElementById('navTrain')?.classList.toggle('active', which==='train');
-      if(which==='train'){ setTimeout(()=>{ setBoardFonts(); renderArrows(); }, 50); }
+      if(which==='train' || which==='stats'){ setTimeout(()=>{ setBoardFonts(); renderArrows(); }, 50); }
     }
     document.getElementById('navHome')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('home'); });
     document.getElementById('navAnalyze')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('analyze'); });
+    document.getElementById('navStats')?.addEventListener('click', (e)=>{ e.preventDefault(); renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); showSection('stats'); });
     document.getElementById('navSets')?.addEventListener('click', (e)=>{ e.preventDefault(); renderSets(); showSection('sets'); });
     document.getElementById('navTrain')?.addEventListener('click', (e)=>{ e.preventDefault(); renderSetsForTrain(); renderActiveSetInfo(); showSection('train'); });
     document.getElementById('btnGoAnalyze')?.addEventListener('click', ()=> showSection('analyze'));

@@ -1239,9 +1239,31 @@
         setStatus(`Analyzing ${++i}/${list.length}…`);
         try{
           let ms=[];
-          if(window.SF_BACKEND_URL){ ms=await analyzeOnServer(pgn,12); }
+          if(window.SF_BACKEND_URL){
+            try{ ms=await analyzeOnServer(pgn,12); }
+            catch(err){
+              console.warn('Analyze via SF backend failed, falling back', err);
+              if(window.FN_BASE){
+                try{ ms=await analyzeOnBackend([pgn]); }
+                catch(err2){ console.warn('Analyze via Functions failed, falling back to local', err2); ms=await analyzeManualLocal(pgn); }
+              } else {
+                ms=await analyzeManualLocal(pgn);
+              }
+            }
+          }
           else if(window.FN_BASE){ ms=await analyzeOnBackend([pgn]); }
           else { ms = await analyzeManualLocal(pgn); }
+
+          // Ensure PGN and game URL are attached regardless of backend
+          try{
+            const hdr = parsePGNHeaders(pgn);
+            const urlHdr = hdr.Site || hdr.Link || '';
+            ms.forEach(m => {
+              if(!m.pgn) m.pgn = pgn;
+              if(!m.gameUrl && urlHdr && /^https?:\/\//i.test(urlHdr)) m.gameUrl = urlHdr;
+            });
+          }catch{}
+
           // user-only
           ms = filterMistakesToUserOnly(ms);
           if(ms.length) all.push(...ms);
@@ -1342,9 +1364,10 @@
       }
       function startSRS(){ queue = pickDueSRS(); mode='srs'; next(); }
       function next(){
-        $('#yourMove').textContent='—'; $('#feedback').textContent='—';
+        $('#yourMove').textContent='-'; $('#feedback').textContent='-';
         // clear arrows
         BOARD.arrows.user = null; BOARD.arrows.best = null; BOARD.arrows.showBest=false; renderArrows();
+        try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
         if(queue.length===0){
           if(mode==='srs'){ queue = pickDueSRS(); if(queue.length===0){ $('#mInfo').textContent='No SRS items due now. 🎉'; active=null; drawBoardMain(null); return; } }
           else { $('#mInfo').textContent='Woodpecker set complete. ✅'; active=null; drawBoardMain(null); return; }
@@ -1476,9 +1499,12 @@
       const root = $('#board'); root.innerHTML='';
       if(!fen){
         for(let r=0;r<8;r++){ for(let c=0;c<8;c++){ const el=document.createElement('div'); el.className='sq '+(((r+c)%2)?'dark':'light'); root.appendChild(el); } }
+        try{ const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent='FEN: —'; }catch{}
         setBoardFonts(); renderArrows(); return;
       }
       BOARD.chess.loadFEN(fen); BOARD.current=fen; $('#sideToMove').textContent = BOARD.chess.turn()==='w'?'White':'Black';
+      // Update Game Info FEN whenever board changes
+      try{ const fenEl = $('#trainFen'); if(fenEl) fenEl.textContent = `FEN: ${fen}`; }catch{}
       const parts=fen.split(' ')[0].split('/'); const cells=[];
       for(const row of parts){ for(const ch of row){ if(/[1-8]/.test(ch)){ for(let k=0;k<parseInt(ch,10);k++) cells.push(null); } else cells.push(ch); } }
       const idxOrder=[]; for(let r=0;r<8;r++){ for(let c=0;c<8;c++) idxOrder.push(r*8+c); }
@@ -1536,6 +1562,7 @@
         BOARD.selected=null; showHints();
         // clear old arrows, then answer
         BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
+        try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
         Session.answer(uci);
       }
     }
@@ -1585,6 +1612,7 @@
       if(mv.ok){ drawBoardMain(tmp.fen()); }
       BOARD.selected=null; showHints();
       BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
+      try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
       Session.answer(uci);
     }
 
@@ -1596,6 +1624,7 @@
       ORIENT_WHITE_BOTTOM = (m.side==='w'); drawBoardMain(m.fen);
       // Arrows start clean; will draw on attempt/reveal
       BOARD.arrows.user = null; BOARD.arrows.best = m.best || null; BOARD.arrows.showBest = false; renderArrows();
+      try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
 
       // Update info
       try{
@@ -1608,24 +1637,42 @@
     // Reveal, Show mistake & Next buttons
     $('#btnReveal').addEventListener('click', () => {
       const a=Session.active; if(!a) return;
-      // Revert to original mistake position, then show best arrow
-      drawBoardMain(a.fen);
-      const bestSan=uciToSAN(a.fen, a.best);
-      $('#feedback').innerHTML = `Best move: <b class="mono">${bestSan || a.best}</b>`;
-      BOARD.arrows.user=null; BOARD.arrows.best=a.best; BOARD.arrows.showBest=true; renderArrows();
+      const btn=$('#btnReveal');
+      const isOn=!!BOARD.arrows.showBest;
+      if(isOn){
+        BOARD.arrows.showBest=false; renderArrows();
+        btn && btn.setAttribute('aria-pressed','false');
+        const fb=$('#feedback'); if(fb) fb.textContent='-';
+      }else{
+        // Revert to original mistake position, then show best arrow
+        drawBoardMain(a.fen);
+        const bestSan=uciToSAN(a.fen, a.best);
+        $('#feedback').innerHTML = `Best move: <b class="mono">${bestSan || a.best}</b>`;
+        BOARD.arrows.user=null; BOARD.arrows.best=a.best; BOARD.arrows.showBest=true; renderArrows();
+        btn && btn.setAttribute('aria-pressed','true');
+        const other=$('#btnShowMistake'); other && other.setAttribute('aria-pressed','false');
+      }
     });
-    // NEW: Show mistake arrow (red) for the move actually played in the game
+    // NEW: Show mistake arrow (red) for the move actually played in the game (toggle)
     $('#btnShowMistake').addEventListener('click', () => {
       const a=Session.active; if(!a) return;
-      drawBoardMain(a.fen); // ensure original position
+      const btn=$('#btnShowMistake');
       const cl=ChessLite(); cl.loadFEN(a.fen);
       const uci=cl.parseSANtoMove(a.played||'');
-      if(uci){
+      if(!uci){ $('#feedback').textContent='Could not parse recorded mistake.'; return; }
+      if(BOARD.arrows.user === uci){
+        // toggle off
+        BOARD.arrows.user=null; renderArrows();
+        btn && btn.setAttribute('aria-pressed','false');
+        const fb=$('#feedback'); if(fb) fb.textContent='-';
+      }else{
+        // toggle on (reset position to original mistake)
+        drawBoardMain(a.fen);
         BOARD.arrows.best=null; // only show the user's (mistake) arrow
         BOARD.arrows.user=uci; BOARD.arrows.showBest=false; renderArrows();
         $('#feedback').innerHTML = `Mistake played: <b class="mono">${a.played}</b>`;
-      }else{
-        $('#feedback').textContent='Could not parse recorded mistake.';
+        btn && btn.setAttribute('aria-pressed','true');
+        const other=$('#btnReveal'); other && other.setAttribute('aria-pressed','false');
       }
     });
 

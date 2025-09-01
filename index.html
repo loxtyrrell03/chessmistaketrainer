@@ -71,18 +71,14 @@
       gap:18px;
     }
 
+    /* Training view layout: hide sets pane; keep board left + info right */
+    #trainSection.training-mode .train-grid{ grid-template-columns:1fr; }
+    #trainSection.training-mode .train-grid > .card:nth-of-type(2){ display:none; }
     /* Show only selection view when not training */
     #trainSection:not(.training-mode) .train-grid{ display:none; }
     #trainSection.training-mode #trainSelectView{ display:none; }
-    /* Hide the inline right pane in board card when in training mode */
-    #trainSection.training-mode .board-wrap > div:last-child{ display:none; }
-    /* In training mode, show the dedicated right pane within the second card */
-    #trainSection.training-mode .train-info{ display:block; }
-    #trainSection.training-mode .sets-pane{ display:none; }
     .train-center{ display:flex; flex-direction:column; align-items:center; gap:12px }
     .train-block{ width:min(100%, var(--board-size)); margin:0 auto }
-    /* Exit button minimal width */
-    #btnExitTrain{ min-width:auto; padding:6px 10px; }
 
     @media (max-width:1000px){
       .grid, .train-grid{grid-template-columns:1fr}
@@ -473,10 +469,7 @@
 
     <div class="train-grid" style="margin-top:12px">
       <div class="card">
-        <div class="row" style="align-items:center;justify-content:space-between">
-          <h2>Board</h2>
-          <button id="btnExitTrain" class="ghost">Exit</button>
-        </div>
+        <h2>Board</h2>
         <div class="board-wrap" style="margin-top:10px">
           <div class="board" id="trainBoard">
             <div id="board" class="grid8" aria-label="chessboard"></div>
@@ -514,42 +507,36 @@
         </div>
       </div>
       <div class="card">
-        <!-- Right pane: training info shown in training mode -->
-        <div class="train-info" style="display:none"></div>
-
-        <!-- Default (selection mode) content preserved for when not training -->
-        <div class="sets-pane">
-          <h2>Sets</h2>
-          <div class="tiny muted">Click a set to activate then Start.</div>
-          <div style="max-height:380px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:6px">
-            <table style="width:100%">
-              <thead>
-                <tr><th>#</th><th>Name</th><th>Count</th></tr>
-              </thead>
-              <tbody id="trainSetsTBody"></tbody>
-            </table>
-          </div>
-          <div class="row" style="margin-top:10px">
-            <div class="grid-2">
-              <div>
-                <label>Mode</label>
-                <select id="modeSel">
-                  <option value="woodpecker">Woodpecker</option>
-                  <option value="srs" selected>Spaced Repetition (SM-2)</option>
-                </select>
-              </div>
-              <div id="wpCountWrap">
-                <label>Woodpecker count (N)</label>
-                <input id="wpCount" type="number" min="1" value="10" />
-              </div>
-            </div>
-            <div style="max-width:220px">
-              <label>&nbsp;</label>
-              <button id="btnStart">Start session</button>
-            </div>
-          </div>
-          <div class="tiny muted" id="activeSetInfo" style="margin-top:6px">Active set: -</div>
+        <h2>Sets</h2>
+        <div class="tiny muted">Click a set to activate then Start.</div>
+        <div style="max-height:380px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:6px">
+          <table style="width:100%">
+            <thead>
+              <tr><th>#</th><th>Name</th><th>Count</th></tr>
+            </thead>
+            <tbody id="trainSetsTBody"></tbody>
+          </table>
         </div>
+        <div class="row" style="margin-top:10px">
+          <div class="grid-2">
+            <div>
+              <label>Mode</label>
+              <select id="modeSel">
+                <option value="woodpecker">Woodpecker</option>
+                <option value="srs" selected>Spaced Repetition (SM-2)</option>
+              </select>
+            </div>
+            <div id="wpCountWrap">
+              <label>Woodpecker count (N)</label>
+              <input id="wpCount" type="number" min="1" value="10" />
+            </div>
+          </div>
+          <div style="max-width:220px">
+            <label>&nbsp;</label>
+            <button id="btnStart">Start session</button>
+          </div>
+        </div>
+        <div class="tiny muted" id="activeSetInfo" style="margin-top:6px">Active set: —</div>
       </div>
     </div>
   </div>
@@ -1718,7 +1705,7 @@
     function loadMistakeOnBoard(m){
       if(!m){ drawBoardMain(null); return; }
       gvHide();
-      $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · Δcp ${Math.round(m.deltaCp)}`;
+      $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> · <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · Δcp ${Math.round(m.deltaCp)}`;
       $('#yourMove').textContent='—'; $('#feedback').textContent='—';
       ORIENT_WHITE_BOTTOM = (m.side==='w'); drawBoardMain(m.fen);
       // Arrows start clean; will draw on attempt/reveal
@@ -1943,17 +1930,12 @@
     /********************************************************************
      * Session start buttons
      ********************************************************************/
-    const btnStartEl = $('#btnStart');
-    if(btnStartEl){
-      btnStartEl.addEventListener('click', () => {
-        const modeSelEl = $('#modeSel');
-        const mode = modeSelEl ? modeSelEl.value : 'srs';
-        if(mode==='woodpecker'){ const N=parseInt($('#wpCount')?.value||'10',10)||10; Session.startWoodpecker(N); }
-        else{ Session.startSRS(); }
-      });
-    }
-    const modeSelEl = $('#modeSel');
-    if(modeSelEl){ modeSelEl.addEventListener('change', () => { const wrap=$('#wpCountWrap'); if(wrap) wrap.style.display = (modeSelEl.value==='woodpecker') ? 'block' : 'none'; }); }
+    $('#btnStart').addEventListener('click', () => {
+      const mode=$('#modeSel').value;
+      if(mode==='woodpecker'){ const N=parseInt($('#wpCount').value,10)||10; Session.startWoodpecker(N); }
+      else{ Session.startSRS(); }
+    });
+    $('#modeSel').addEventListener('change', () => { $('#wpCountWrap').style.display = ($('#modeSel').value==='woodpecker') ? 'block' : 'none'; });
 
     /********************************************************************
      * Init + preferences + nav
@@ -2009,14 +1991,6 @@
       const sec = document.getElementById('trainSection'); if(!sec) return;
       sec.classList.add('training-mode');
       try{ gvHide(); }catch{}
-      // Move right-side info from the board card to the dedicated right pane
-      try{
-        const dest = sec.querySelector('.train-info');
-        const srcWrap = sec.querySelector('.board-wrap > div:last-child');
-        if(dest && srcWrap && dest.children.length===0){
-          while(srcWrap.firstChild){ dest.appendChild(srcWrap.firstChild); }
-        }
-      }catch{}
       setTimeout(()=>{ setBoardFonts(); renderArrows(); }, 0);
     }
     function showTrainSelectionMode(){
@@ -2168,12 +2142,6 @@
     document.getElementById('navTrain')?.addEventListener('click', (e)=>{
       e.preventDefault();
       showSection('train');
-      showTrainSelectionMode();
-      renderTrainSelectList();
-    });
-
-    // Exit button in training view -> back to set list
-    document.getElementById('btnExitTrain')?.addEventListener('click', ()=>{
       showTrainSelectionMode();
       renderTrainSelectList();
     });

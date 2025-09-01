@@ -399,8 +399,8 @@
     <div class="card" style="margin-bottom:12px">
       <div class="grid-2">
         <div>
-          <label>Board size (px)</label>
-          <input id="boardSizeRange" type="range" min="320" max="820" step="10" />
+          <label>Board size (px) <span id="boardSizeVal" class="tiny muted"></span></label>
+          <input id="boardSizeRange" type="range" min="320" max="820" step="10" value="520" />
         </div>
         <div>
           <label>&nbsp;</label>
@@ -1687,9 +1687,11 @@
     (async function init(){
       // prefs
       try{
-        const bs = localStorage.getItem('pmtt_board_size'); 
-        if(bs){ document.documentElement.style.setProperty('--board-size', bs+'px'); $('#boardSizeRange').value = bs; }
-        else { const cur=parseInt(getComputedStyle(document.documentElement).getPropertyValue('--board-size'))||520; $('#boardSizeRange').value = cur; }
+        const bs = localStorage.getItem('pmtt_board_size');
+        const curDefault = parseInt((getComputedStyle(document.documentElement).getPropertyValue('--board-size')||'520').replace('px',''))||520;
+        const cur = bs ? parseInt(bs,10) : curDefault;
+        applyBoardSize(cur);
+        const rng=$('#boardSizeRange'); if(rng) rng.value = String(cur);
       }catch{}
 
       renderMistakeList(); renderStats(); renderSets(); renderSetsForTrain(); renderActiveSetInfo();
@@ -1699,13 +1701,20 @@
       window.addEventListener('resize', setBoardFonts);
     })();
 
-    // Pref slider
-    $('#boardSizeRange')?.addEventListener('input', (e)=>{
-      const v=parseInt(e.target.value,10)||520;
-      document.documentElement.style.setProperty('--board-size', v+'px');
-      localStorage.setItem('pmtt_board_size', String(v));
+    // Board size preference
+    function applyBoardSize(v){
+      const size = Math.max(320, Math.min(820, parseInt(v,10)||520));
+      document.documentElement.style.setProperty('--board-size', size+'px');
+      const lbl=$('#boardSizeVal'); if(lbl) lbl.textContent = `(${size})`;
+      localStorage.setItem('pmtt_board_size', String(size));
       setBoardFonts();
-    });
+      renderArrows();
+    }
+    const bsEl=$('#boardSizeRange');
+    if(bsEl){
+      bsEl.addEventListener('input', (e)=> applyBoardSize(e.target.value));
+      bsEl.addEventListener('change', (e)=> applyBoardSize(e.target.value));
+    }
 
   </script>
 

@@ -71,6 +71,19 @@
       gap:18px;
     }
 
+    /* Show only selection view when not training */
+    #trainSection:not(.training-mode) .train-grid{ display:none; }
+    #trainSection.training-mode #trainSelectView{ display:none; }
+    /* Hide the inline right pane in board card when in training mode */
+    #trainSection.training-mode .board-wrap > div:last-child{ display:none; }
+    /* In training mode, show the dedicated right pane within the second card */
+    #trainSection.training-mode .train-info{ display:block; }
+    #trainSection.training-mode .sets-pane{ display:none; }
+    .train-center{ display:flex; flex-direction:column; align-items:center; gap:12px }
+    .train-block{ width:min(100%, var(--board-size)); margin:0 auto }
+    /* Exit button minimal width */
+    #btnExitTrain{ min-width:auto; padding:6px 10px; }
+
     @media (max-width:1000px){
       .grid, .train-grid{grid-template-columns:1fr}
     }
@@ -113,10 +126,25 @@
     /* Board containers */
     .board-wrap{display:flex;gap:14px;align-items:flex-start}
     .board{
-      /* FIX: make slider effective in fullscreen/wide windows */
+      /* board width controlled via --board-size; stays square */
       width: min(100%, var(--board-size));
       aspect-ratio:1 / 1; /* always square */
       background:#ddd;border-radius:12px;overflow:hidden;border:1px solid #c7cdd8;position:relative
+    }
+    /* Cursor hint when hovering near corner */
+    .board.resize-corner-hover{ cursor:nwse-resize; }
+    /* Drag handle for resizing the main board */
+    .resize-handle{
+      position:absolute; right:8px; bottom:8px;
+      width:18px; height:18px; border-radius:4px;
+      background:
+        linear-gradient(135deg, rgba(255,255,255,.9) 2px, transparent 2px) no-repeat,
+        linear-gradient(135deg, rgba(255,255,255,.6) 2px, transparent 2px) no-repeat,
+        linear-gradient(135deg, rgba(255,255,255,.35) 2px, transparent 2px) no-repeat;
+      background-size: 100% 100%, 12px 12px, 8px 8px;
+      background-position: right bottom, right 2px bottom 2px, right 6px bottom 6px;
+      border:1px solid #2a3142; cursor: nwse-resize; z-index:6; opacity:.9;
+      box-shadow:0 2px 8px rgba(0,0,0,.25);
     }
     /* Game Viewer mini board: fills available width responsively (no cramping) */
     .board-mini{
@@ -429,26 +457,30 @@
   <div class="wrap section" id="trainSection">
     <h1>Train</h1>
 
-    <!-- Only board-size control (pane split removed) -->
-    <div class="card" style="margin-bottom:12px">
-      <div class="grid-2">
-        <div>
-          <label>Board size (px) <span id="boardSizeVal" class="tiny muted"></span></label>
-          <input id="boardSizeRange" type="range" min="320" max="820" step="10" value="520" />
-        </div>
-        <div>
-          <label>&nbsp;</label>
-          <div class="tiny muted">Preference saved locally.</div>
-        </div>
+    <!-- View 1: Select a set to train -->
+    <div id="trainSelectView" class="card" style="margin-top:12px">
+      <h2>Select a set</h2>
+      <div class="tiny muted" style="margin-top:6px">Click a set to start training. You can also press Train in Actions.</div>
+      <div style="max-height:420px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:8px">
+        <table style="width:100%">
+          <thead>
+            <tr><th>#</th><th>Name</th><th>Count</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="trainSelectTBody"></tbody>
+        </table>
       </div>
     </div>
 
     <div class="train-grid" style="margin-top:12px">
       <div class="card">
-        <h2>Board</h2>
+        <div class="row" style="align-items:center;justify-content:space-between">
+          <h2>Board</h2>
+          <button id="btnExitTrain" class="ghost">Exit</button>
+        </div>
         <div class="board-wrap" style="margin-top:10px">
           <div class="board" id="trainBoard">
             <div id="board" class="grid8" aria-label="chessboard"></div>
+            <div id="resizeHandle" class="resize-handle" title="Drag to resize"></div>
           </div>
           <div style="flex:1;min-width:260px">
             <div class="legend tiny">
@@ -482,36 +514,42 @@
         </div>
       </div>
       <div class="card">
-        <h2>Sets</h2>
-        <div class="tiny muted">Click a set to activate then Start.</div>
-        <div style="max-height:380px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:6px">
-          <table style="width:100%">
-            <thead>
-              <tr><th>#</th><th>Name</th><th>Count</th></tr>
-            </thead>
-            <tbody id="trainSetsTBody"></tbody>
-          </table>
-        </div>
-        <div class="row" style="margin-top:10px">
-          <div class="grid-2">
-            <div>
-              <label>Mode</label>
-              <select id="modeSel">
-                <option value="woodpecker">Woodpecker</option>
-                <option value="srs" selected>Spaced Repetition (SM-2)</option>
-              </select>
+        <!-- Right pane: training info shown in training mode -->
+        <div class="train-info" style="display:none"></div>
+
+        <!-- Default (selection mode) content preserved for when not training -->
+        <div class="sets-pane">
+          <h2>Sets</h2>
+          <div class="tiny muted">Click a set to activate then Start.</div>
+          <div style="max-height:380px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:6px">
+            <table style="width:100%">
+              <thead>
+                <tr><th>#</th><th>Name</th><th>Count</th></tr>
+              </thead>
+              <tbody id="trainSetsTBody"></tbody>
+            </table>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <div class="grid-2">
+              <div>
+                <label>Mode</label>
+                <select id="modeSel">
+                  <option value="woodpecker">Woodpecker</option>
+                  <option value="srs" selected>Spaced Repetition (SM-2)</option>
+                </select>
+              </div>
+              <div id="wpCountWrap">
+                <label>Woodpecker count (N)</label>
+                <input id="wpCount" type="number" min="1" value="10" />
+              </div>
             </div>
-            <div id="wpCountWrap">
-              <label>Woodpecker count (N)</label>
-              <input id="wpCount" type="number" min="1" value="10" />
+            <div style="max-width:220px">
+              <label>&nbsp;</label>
+              <button id="btnStart">Start session</button>
             </div>
           </div>
-          <div style="max-width:220px">
-            <label>&nbsp;</label>
-            <button id="btnStart">Start session</button>
-          </div>
+          <div class="tiny muted" id="activeSetInfo" style="margin-top:6px">Active set: -</div>
         </div>
-        <div class="tiny muted" id="activeSetInfo" style="margin-top:6px">Active set: —</div>
       </div>
     </div>
   </div>
@@ -763,11 +801,10 @@
         const id = btn.getAttribute('data-id');
         const s = loadSets().find(x => x.id===id); if(!s) return;
         setActiveSet(s);
-        // jump to Train and start SRS
+        // jump to Train selection -> training mode and start SRS
         showSection('train');
-        renderSetsForTrain();
+        enterTrainingMode();
         renderActiveSetInfo();
-        $('#modeSel').value = 'srs';
         Session.startSRS();
       }));
       tb.querySelectorAll('input.setNameInput').forEach(inp => inp.addEventListener('change', () => {
@@ -1681,7 +1718,7 @@
     function loadMistakeOnBoard(m){
       if(!m){ drawBoardMain(null); return; }
       gvHide();
-      $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> · <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · Δcp ${Math.round(m.deltaCp)}`;
+      $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · Δcp ${Math.round(m.deltaCp)}`;
       $('#yourMove').textContent='—'; $('#feedback').textContent='—';
       ORIENT_WHITE_BOTTOM = (m.side==='w'); drawBoardMain(m.fen);
       // Arrows start clean; will draw on attempt/reveal
@@ -1906,12 +1943,17 @@
     /********************************************************************
      * Session start buttons
      ********************************************************************/
-    $('#btnStart').addEventListener('click', () => {
-      const mode=$('#modeSel').value;
-      if(mode==='woodpecker'){ const N=parseInt($('#wpCount').value,10)||10; Session.startWoodpecker(N); }
-      else{ Session.startSRS(); }
-    });
-    $('#modeSel').addEventListener('change', () => { $('#wpCountWrap').style.display = ($('#modeSel').value==='woodpecker') ? 'block' : 'none'; });
+    const btnStartEl = $('#btnStart');
+    if(btnStartEl){
+      btnStartEl.addEventListener('click', () => {
+        const modeSelEl = $('#modeSel');
+        const mode = modeSelEl ? modeSelEl.value : 'srs';
+        if(mode==='woodpecker'){ const N=parseInt($('#wpCount')?.value||'10',10)||10; Session.startWoodpecker(N); }
+        else{ Session.startSRS(); }
+      });
+    }
+    const modeSelEl = $('#modeSel');
+    if(modeSelEl){ modeSelEl.addEventListener('change', () => { const wrap=$('#wpCountWrap'); if(wrap) wrap.style.display = (modeSelEl.value==='woodpecker') ? 'block' : 'none'; }); }
 
     /********************************************************************
      * Init + preferences + nav
@@ -1923,7 +1965,6 @@
         const curDefault = parseInt((getComputedStyle(document.documentElement).getPropertyValue('--board-size')||'520').replace('px',''))||520;
         const cur = bs ? parseInt(bs,10) : curDefault;
         applyBoardSize(cur);
-        const rng=$('#boardSizeRange'); if(rng) rng.value = String(cur);
       }catch{}
 
       rebuildImportedTable();
@@ -1932,21 +1973,177 @@
       setStatus('Loading engine…'); await Engine.ensure(); setStatus('Idle');
       // keep fonts/arrows sized when window resizes
       window.addEventListener('resize', setBoardFonts);
+
+      // Enable board drag-resize via the corner handle
+      setupBoardResizeHandle();
     })();
 
     // Board size preference
     function applyBoardSize(v){
-      const size = Math.max(320, Math.min(820, parseInt(v,10)||520));
+      // Allow large sizes so fullscreen resizing isn't capped artificially
+      const hi = 2400; // upper bound; final width still limited by layout (min(100%, var(--board-size)))
+      const size = Math.max(320, Math.min(hi, parseInt(v,10)||520));
       document.documentElement.style.setProperty('--board-size', size+'px');
       const lbl=$('#boardSizeVal'); if(lbl) lbl.textContent = `(${size})`;
       localStorage.setItem('pmtt_board_size', String(size));
       setBoardFonts();
       renderArrows();
     }
-    const bsEl=$('#boardSizeRange');
-    if(bsEl){
-      bsEl.addEventListener('input', (e)=> applyBoardSize(e.target.value));
-      bsEl.addEventListener('change', (e)=> applyBoardSize(e.target.value));
+    // Train page: selection list (click to start training)
+    function renderTrainSelectList(){
+      const tb = $('#trainSelectTBody'); if(!tb) return;
+      tb.innerHTML='';
+      const sets = loadSets(); let i=0;
+      for(const s of sets){
+        const tr = document.createElement('tr');
+        tr.style.cursor='pointer';
+        tr.innerHTML = `<td>${++i}</td><td>${s.name}</td><td>${s.keys.length}</td><td><button class="ghost" data-id="${s.id}">Train</button></td>`;
+        const start = ()=>{ setActiveSet(s); enterTrainingMode(); renderActiveSetInfo(); Session.startSRS(); };
+        tr.addEventListener('click', (ev)=>{ if((ev.target && ev.target.tagName==='BUTTON')) return; start(); });
+        tr.querySelector('button')?.addEventListener('click', (ev)=>{ ev.stopPropagation(); start(); });
+        tb.appendChild(tr);
+      }
+    }
+
+    function enterTrainingMode(){
+      const sec = document.getElementById('trainSection'); if(!sec) return;
+      sec.classList.add('training-mode');
+      try{ gvHide(); }catch{}
+      // Move right-side info from the board card to the dedicated right pane
+      try{
+        const dest = sec.querySelector('.train-info');
+        const srcWrap = sec.querySelector('.board-wrap > div:last-child');
+        if(dest && srcWrap && dest.children.length===0){
+          while(srcWrap.firstChild){ dest.appendChild(srcWrap.firstChild); }
+        }
+      }catch{}
+      setTimeout(()=>{ setBoardFonts(); renderArrows(); }, 0);
+    }
+    function showTrainSelectionMode(){
+      const sec = document.getElementById('trainSection'); if(!sec) return;
+      sec.classList.remove('training-mode');
+      try{ drawBoardMain(null); }catch{}
+    }
+    // Pointer-based resize on the corner handle
+    function setupBoardResizeHandle(){
+      const handle = document.getElementById('resizeHandle');
+      const boardEl = document.getElementById('trainBoard');
+      if(!handle || !boardEl) return;
+      let startRect=null, active=false, mode='corner';
+      const THRESH=60; // px from edges/corner considered resizable zone (fullscreen friendly)
+
+      const onMove = (ev)=>{
+        if(!active) return;
+        const t = ev.touches && ev.touches[0];
+        const clientX = (t ? t.clientX : ev.clientX) ?? 0;
+        const clientY = (t ? t.clientY : ev.clientY) ?? 0;
+        const r = startRect || boardEl.getBoundingClientRect();
+        let targetPx = 0;
+        if(mode==='right') targetPx = clientX - r.left;
+        else if(mode==='bottom') targetPx = clientY - r.top;
+        else targetPx = Math.max(clientX - r.left, clientY - r.top);
+        const next = Math.round(targetPx);
+        applyBoardSize(next);
+      };
+      const end = ()=>{
+        if(!active) return;
+        active=false;
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', end);
+        window.removeEventListener('touchmove', onMove);
+        window.removeEventListener('touchend', end);
+        try{ document.body.style.userSelect=''; document.body.style.cursor=''; boardEl.classList.remove('resize-corner-hover'); }catch{}
+      };
+      handle.addEventListener('pointerdown', (ev)=>{
+        ev.preventDefault();
+        ev.stopPropagation();
+        active=true;
+        startRect = boardEl.getBoundingClientRect(); mode='corner';
+        try{ handle.setPointerCapture && handle.setPointerCapture(ev.pointerId); }catch{}
+        window.addEventListener('pointermove', onMove, {passive:false});
+        window.addEventListener('pointerup', end, {passive:false});
+        try{ document.body.style.userSelect='none'; document.body.style.cursor='nwse-resize'; }catch{}
+      });
+      // Basic touch support
+      handle.addEventListener('touchstart', (ev)=>{
+        const t = ev.touches && ev.touches[0]; if(!t) return;
+        ev.preventDefault(); ev.stopPropagation(); active=true;
+        startRect = boardEl.getBoundingClientRect(); mode='corner';
+        window.addEventListener('touchmove', onMove, {passive:false});
+        window.addEventListener('touchend', end);
+        try{ document.body.style.userSelect='none'; document.body.style.cursor='nwse-resize'; }catch{}
+      }, {passive:false});
+
+      // Allow grabbing from the very corner or the right/bottom edges
+      const zoneAt = (clientX, clientY)=>{
+        const r = boardEl.getBoundingClientRect();
+        const inRight = clientX >= r.right-THRESH && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
+        const inBottom = clientY >= r.bottom-THRESH && clientY <= r.bottom && clientX >= r.left && clientX <= r.right;
+        const inCorner = clientX >= r.right-THRESH && clientY >= r.bottom-THRESH;
+        if(inCorner) return 'corner';
+        if(inRight && inBottom) return 'corner';
+        if(inRight) return 'right';
+        if(inBottom) return 'bottom';
+        return null;
+      };
+      // Extended zone: allow starting just outside the board (useful when pointer is at the exact corner of the window)
+      const zoneAtExtended = (clientX, clientY)=>{
+        const r = boardEl.getBoundingClientRect();
+        const slack = 14; // px outside
+        const inRight = clientX > r.right && clientX <= r.right+slack && clientY >= r.top && clientY <= r.bottom+slack;
+        const inBottom = clientY > r.bottom && clientY <= r.bottom+slack && clientX >= r.left && clientX <= r.right+slack;
+        const inCorner = (clientX > r.right && clientY > r.bottom && clientX <= r.right+slack && clientY <= r.bottom+slack);
+        if(inCorner) return 'corner';
+        if(inRight && inBottom) return 'corner';
+        if(inRight) return 'right';
+        if(inBottom) return 'bottom';
+        return null;
+      };
+      const hoverCheck = (ev)=>{
+        if(active) return;
+        const cx = ev.clientX ?? 0, cy = ev.clientY ?? 0;
+        if(zoneAt(cx, cy)) boardEl.classList.add('resize-corner-hover');
+        else boardEl.classList.remove('resize-corner-hover');
+      };
+      const startFromCorner = (ev)=>{
+        const t = ev.touches && ev.touches[0];
+        const cx = (t ? t.clientX : ev.clientX) ?? 0;
+        const cy = (t ? t.clientY : ev.clientY) ?? 0;
+        const z = zoneAt(cx, cy); if(!z) return;
+        ev.preventDefault(); ev.stopPropagation();
+        active=true; mode=z; startRect = boardEl.getBoundingClientRect();
+        try{ boardEl.setPointerCapture && boardEl.setPointerCapture(ev.pointerId); }catch{}
+        window.addEventListener('pointermove', onMove, {passive:false});
+        window.addEventListener('pointerup', end, {passive:false});
+        window.addEventListener('touchmove', onMove, {passive:false});
+        window.addEventListener('touchend', end);
+        try{ document.body.style.userSelect='none'; document.body.style.cursor='nwse-resize'; }catch{}
+      };
+      // Use capture to intercept before piece drag begins
+      boardEl.addEventListener('pointermove', hoverCheck, true);
+      boardEl.addEventListener('pointerleave', ()=> boardEl.classList.remove('resize-corner-hover'));
+      boardEl.addEventListener('pointerdown', startFromCorner, true);
+      boardEl.addEventListener('touchstart', startFromCorner, {passive:false, capture:true});
+      boardEl.addEventListener('dragstart', (ev)=>{ if(active) { ev.preventDefault(); ev.stopPropagation(); } }, true);
+
+      // Also listen on the document to catch clicks just outside the board corner/edges
+      const docStart = (ev)=>{
+        if(active) return;
+        const t = ev.touches && ev.touches[0];
+        const cx = (t ? t.clientX : ev.clientX) ?? 0;
+        const cy = (t ? t.clientY : ev.clientY) ?? 0;
+        const z = zoneAtExtended(cx, cy);
+        if(!z) return;
+        ev.preventDefault(); ev.stopPropagation();
+        active=true; mode=z; startRect = boardEl.getBoundingClientRect();
+        try{ document.body.style.userSelect='none'; document.body.style.cursor='nwse-resize'; }catch{}
+        window.addEventListener('pointermove', onMove, {passive:false});
+        window.addEventListener('pointerup', end, {passive:false});
+        window.addEventListener('touchmove', onMove, {passive:false});
+        window.addEventListener('touchend', end);
+      };
+      document.addEventListener('pointerdown', docStart, true);
+      document.addEventListener('touchstart', docStart, {passive:false, capture:true});
     }
 
   </script>
@@ -1968,7 +2165,18 @@
     document.getElementById('navAnalyze')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('analyze'); });
     document.getElementById('navStats')?.addEventListener('click', (e)=>{ e.preventDefault(); renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); showSection('stats'); });
     document.getElementById('navSets')?.addEventListener('click', (e)=>{ e.preventDefault(); renderSets(); showSection('sets'); });
-    document.getElementById('navTrain')?.addEventListener('click', (e)=>{ e.preventDefault(); renderSetsForTrain(); renderActiveSetInfo(); showSection('train'); });
+    document.getElementById('navTrain')?.addEventListener('click', (e)=>{
+      e.preventDefault();
+      showSection('train');
+      showTrainSelectionMode();
+      renderTrainSelectList();
+    });
+
+    // Exit button in training view -> back to set list
+    document.getElementById('btnExitTrain')?.addEventListener('click', ()=>{
+      showTrainSelectionMode();
+      renderTrainSelectList();
+    });
     document.getElementById('btnGoAnalyze')?.addEventListener('click', ()=> showSection('analyze'));
 
     // Sets page actions (create empty set, de-duped by name+content)

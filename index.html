@@ -282,7 +282,11 @@
             <span class="tiny muted" id="importHelp">Fetched games will appear here.</span>
             <span style="margin-left:auto"></span>
             <button id="btnAnalyzeImported" class="btn-green" title="Analyse mistakes (server)">Analyse mistakes</button>
+            <button id="btnCreateSetFromLast" class="secondary" style="display:none" title="Create a set from the last analysis results">Create set</button>
             <button id="btnClearImports" class="ghost" title="Clear imported games & their mistakes">Clear imports</button>
+          </div>
+          <div id="createSetRow" class="tiny" style="display:none;margin-top:6px">
+            <span id="createSetInfo" class="muted">-</span>
           </div>
           <div style="max-height:220px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:6px">
             <table id="importTable" style="width:100%">
@@ -1187,6 +1191,11 @@
       const tb = $('#importTBody'); if(!tb) return;
       tb.innerHTML='';
       let i=0;
+      try{
+        LAST_ANALYZED = { mistakes: [], suggestedName: '' };
+        const btn=$('#btnCreateSetFromLast'); const row=$('#createSetRow'); const info=$('#createSetInfo');
+        if(btn) btn.style.display='none'; if(row) row.style.display='none'; if(info) info.textContent='-';
+      }catch{}
       for(const rec of window.importedGames){
         const pgn = rec.pgn; const source=rec.source||'Imported';
         const h = parsePGNHeaders(pgn||'');
@@ -1267,6 +1276,7 @@
           // user-only
           ms = filterMistakesToUserOnly(ms);
           if(ms.length) all.push(...ms);
+          try{ setStatus(`Analyzing ${i}/${list.length} — mistakes so far: ${all.length}.`); }catch{}
         }catch(e){ console.warn('Analyze failed:', e); }
       }
       if(all.length) addMistakes(all);
@@ -1275,11 +1285,18 @@
       const tagBase = (srcSet.size===1 ? Array.from(srcSet)[0] : 'Imported');
       const tagName = `${tagBase}${state.stop ? ' (partial)' : ''} ${new Date().toLocaleString()}`;
 
-      // Create a set even if stopped early, as long as mistakes > 0
-      if(all.length > 0){
-        const set=createSetFromMistakes(all, tagName);
-        setActiveSet(set); renderActiveSetInfo();
-      }
+      // Cache last analyzed results for manual set creation and show button
+      LAST_ANALYZED = { mistakes: all.slice(), suggestedName: tagName };
+      try{
+        const btn=$('#btnCreateSetFromLast'); const row=$('#createSetRow'); const info=$('#createSetInfo');
+        if(all.length>0){
+          if(btn){ btn.textContent = `Create set (${all.length})`; btn.style.display='inline-block'; }
+          if(row) row.style.display='block';
+          if(info) info.textContent = `Ready: ${all.length} mistake(s) detected in last analysis.`;
+        }else{
+          if(btn) btn.style.display='none'; if(row) row.style.display='none'; if(info) info.textContent='-';
+        }
+      }catch{}
 
       if(state.stop){
         setStatus('Analysis stopped.');
@@ -1558,12 +1575,15 @@
         const legal=BOARD.chess.moves().filter(m=>m.from===from && m.to===to);
         if(legal.length){ let move=legal[0]; if(legal.length>1){ const q=legal.find(m=>m.promotion==='q'); if(q) move=q; } if(move.promotion) uci+=move.promotion; }
         const tmp=ChessLite(); tmp.loadFEN(BOARD.current); const mv=tmp.moveUci(uci);
-        if(mv.ok){ drawBoardMain(tmp.fen()); }
+        // Always exit selection; only register + draw if legal
+        if(mv.ok){
+          drawBoardMain(tmp.fen());
+          // clear old arrows, then answer
+          BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
+          try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
+          Session.answer(uci);
+        }
         BOARD.selected=null; showHints();
-        // clear old arrows, then answer
-        BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
-        try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
-        Session.answer(uci);
       }
     }
 
@@ -1609,11 +1629,13 @@
       const legal=BOARD.chess.moves().filter(m=>m.from===from && m.to===to);
       if(legal.length){ let move=legal[0]; if(legal.length>1){ const q=legal.find(m=>m.promotion==='q'); if(q) move=q; } if(move.promotion) uci+=move.promotion; }
       const tmp=ChessLite(); tmp.loadFEN(BOARD.current); const mv=tmp.moveUci(uci);
-      if(mv.ok){ drawBoardMain(tmp.fen()); }
+      if(mv.ok){
+        drawBoardMain(tmp.fen());
+        BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
+        try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
+        Session.answer(uci);
+      }
       BOARD.selected=null; showHints();
-      BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
-      try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
-      Session.answer(uci);
     }
 
     function loadMistakeOnBoard(m){
@@ -1723,6 +1745,7 @@
      * Import controls & toggles
      ********************************************************************/
     let ANALYZE_STATE = { stop:false };
+    let LAST_ANALYZED = { mistakes: [], suggestedName: '' };
     const btnAnalyze = $('#btnAnalyzeImported');
     btnAnalyze?.addEventListener('click', async () => {
       if(btnAnalyze.dataset.state!=='running'){
@@ -1731,18 +1754,37 @@
         btnAnalyze.textContent='Stop analysis';
         btnAnalyze.classList.remove('btn-green'); btnAnalyze.classList.add('btn-red');
         ANALYZE_STATE={stop:false};
+        // hide create-set affordance while (re)running
+        try{
+          LAST_ANALYZED = { mistakes: [], suggestedName: '' };
+          const btn=$('#btnCreateSetFromLast'); const row=$('#createSetRow'); const info=$('#createSetInfo');
+          if(btn) btn.style.display='none'; if(row) row.style.display='none'; if(info) info.textContent='-';
+        }catch{}
         try{ await analyzeImportedWithBackendAbortable(ANALYZE_STATE); }catch(e){ setStatus('Error: '+(e?.message||e)); }
         // ensure button reset (in case stop wasn't pressed)
         btnAnalyze.dataset.state='idle';
         btnAnalyze.textContent='Analyse mistakes';
         btnAnalyze.classList.remove('btn-red'); btnAnalyze.classList.add('btn-green');
       }else{
-        // stop analysis — immediately revert UI as requested
+        // stop analysis - immediately revert UI as requested
         ANALYZE_STATE.stop=true;
         btnAnalyze.dataset.state='idle';
         btnAnalyze.textContent='Analyse mistakes';
         btnAnalyze.classList.remove('btn-red'); btnAnalyze.classList.add('btn-green');
       }
+    });
+
+    // Create set from last analysis (manual)
+    $('#btnCreateSetFromLast')?.addEventListener('click', () => {
+      const n = (LAST_ANALYZED && Array.isArray(LAST_ANALYZED.mistakes)) ? LAST_ANALYZED.mistakes.length : 0;
+      if(!n){ alert('No mistakes available from the last analysis.'); return; }
+      const defName = (LAST_ANALYZED && LAST_ANALYZED.suggestedName) ? LAST_ANALYZED.suggestedName : `Imported ${new Date().toLocaleString()}`;
+      const name = prompt(`Enter set name (${n} mistake${n!==1?'s':''})`, defName || 'New Set');
+      if(!name) return;
+      const set = createSetFromMistakes(LAST_ANALYZED.mistakes, name.trim());
+      setStatus(`Created set "${set.name}" with ${set.keys.length} mistake(s).`);
+      try{ const info=$('#createSetInfo'); if(info) info.textContent = `Created set "${set.name}" with ${set.keys.length} mistake(s).`; }catch{}
+      renderSets(); renderSetsForTrain();
     });
 
     $('#btnClearImports')?.addEventListener('click', () => {
@@ -1758,6 +1800,12 @@
       rebuildImportedTable();
       const help=$('#importHelp'); if(help) help.textContent='Imported games cleared.';
       gvHide();
+      // hide create-set affordance
+      try{
+        LAST_ANALYZED = { mistakes: [], suggestedName: '' };
+        const btn=$('#btnCreateSetFromLast'); const row=$('#createSetRow'); const info=$('#createSetInfo');
+        if(btn) btn.style.display='none'; if(row) row.style.display='none'; if(info) info.textContent='-';
+      }catch{}
     });
 
     $('#btnFetchLichess').addEventListener('click', async () => {

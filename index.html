@@ -446,6 +446,7 @@
             </div>
             <div class="stroke" style="margin-top:10px">
               <div class="small"><b>Engine</b> <span class="tiny mono" id="abStatus">idle</span></div>
+              <div class="tiny muted" style="margin-top:4px">If status is load-error/init-timeout, serve this app via http(s) instead of file://</div>
               <div class="grid-2" style="margin-top:8px">
                 <div>
                   <label>Depth</label>
@@ -663,12 +664,15 @@
   </script>
 
   <!-- Stockfish WASM (allowed external) -->
-  <script src="https://unpkg.com/stockfish.wasm/stockfish.js">window.addEventListener('error', (e) => {
+  <script crossorigin="anonymous" src="https://unpkg.com/stockfish.wasm/stockfish.js"></script>
+  <script>
+window.addEventListener('error', (e) => {
   try { setStatus('JS error: ' + (e.message || (e.error && e.error.message) || 'unknown')); } catch {}
 });
 window.addEventListener('unhandledrejection', (e) => {
   try { setStatus('Promise error: ' + ((e.reason && (e.reason.message || e.reason)) || 'unknown')); } catch {}
-});</script>
+});
+  </script>
 
   <script>
     /********************************************************************
@@ -2403,46 +2407,84 @@ window.addEventListener('unhandledrejection', (e) => {
 
     function setStatus(t){ if(!statusEl) statusEl = document.getElementById('abStatus'); if(statusEl) statusEl.textContent = t; }
 
+    let triedAltCdn = false;
+    function loadAltCdn(){
+      return new Promise((res)=>{
+        if(triedAltCdn) return res(false);
+        triedAltCdn = true;
+        setStatus('loading-cdn');
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/stockfish.wasm/stockfish.js';
+        s.crossOrigin = 'anonymous';
+        s.onload = ()=> res(true);
+        s.onerror = ()=> res(false);
+        document.head.appendChild(s);
+      });
+    }
+
     async function ensure(){
       if(sf && ready) return true;
       return new Promise((resolve) => {
         try{
-          sf = (typeof Stockfish === 'function') ? Stockfish() : null;
+          let SF = (typeof Stockfish === 'function') ? Stockfish : (typeof self!=='undefined' && self.STOCKFISH ? self.STOCKFISH : null);
+          if(!SF){
+            // try alternate CDN once
+            loadAltCdn().then(ok => {
+              try{ SF = (typeof Stockfish === 'function') ? Stockfish : (typeof self!=='undefined' && self.STOCKFISH ? self.STOCKFISH : null); }catch{}
+              if(!ok || !SF){ setStatus('load-error'); return resolve(false); }
+              // recurse to proceed after script present
+              try{
+                sf = SF();
+                wireAndInit();
+              }catch(e){ console.warn('ABEngine init failed after CDN fallback', e); setStatus('error'); resolve(false); }
+            });
+            return; // early; will resolve after fallback path
+          }
+          sf = SF ? SF() : null;
           if(!sf){ setStatus('load-error'); return resolve(false); }
-          sf.onmessage = (e) => {
-            const line = (''+(e.data || e)).trim();
-            if(line === 'uciok'){ sf.postMessage('isready'); return; }
-            if(line === 'readyok'){ ready = true; setStatus('ready'); return; }
-            if(line.startsWith('info')){
-              // Parse multipv lines
-              const mp = line.match(/\bmultipv\s+(\d+)/);
-              const sMate = line.match(/\bscore\s+mate\s+(-?\d+)/);
-              const sCp = line.match(/\bscore\s+cp\s+(-?\d+)/);
-              const nps = line.match(/\bnps\s+(\d+)/);
-              const depth = line.match(/\bdepth\s+(\d+)/);
-              const pvIdx = mp ? parseInt(mp[1],10) : 1;
-              const restPv = line.split(/\bpv\s+/)[1] || '';
-              const pv = restPv.trim();
-              const rec = {
-                pvIdx,
-                depth: depth ? parseInt(depth[1],10) : null,
-                nps: nps ? parseInt(nps[1],10) : null,
-                scoreCp: sMate? (parseInt(sMate[1],10) > 0 ? 10000 : -10000) : (sCp ? parseInt(sCp[1],10) : null),
-                mate: sMate ? parseInt(sMate[1],10) : null,
-                pvUci: pv
-              };
-              listeners.forEach(fn => { try{ fn({ type:'info', rec }); }catch{} });
-            }
-            if(line.startsWith('bestmove')){
-              running = false;
-              const bm = (line.split(' ')[1]||'').trim();
-              listeners.forEach(fn => { try{ fn({ type:'bestmove', best: bm }); }catch{} });
-            }
-          };
-          sf.postMessage('uci');
+          function wireAndInit(){
+            sf.onmessage = (e) => {
+              const line = (''+(e.data || e)).trim();
+              if(line === 'uciok'){ sf.postMessage('isready'); return; }
+              if(line === 'readyok'){
+                ready = true; setStatus('ready');
+                // Configure safe defaults for non-isolated pages
+                try{ sf.postMessage('setoption name Threads value 1'); }catch{}
+                try{ sf.postMessage(`setoption name MultiPV value ${opts.multipv}`); }catch{}
+                return resolve(true);
+              }
+              if(line.startsWith('info')){
+                // Parse multipv lines
+                const mp = line.match(/\bmultipv\s+(\d+)/);
+                const sMate = line.match(/\bscore\s+mate\s+(-?\d+)/);
+                const sCp = line.match(/\bscore\s+cp\s+(-?\d+)/);
+                const nps = line.match(/\bnps\s+(\d+)/);
+                const depth = line.match(/\bdepth\s+(\d+)/);
+                const pvIdx = mp ? parseInt(mp[1],10) : 1;
+                const restPv = line.split(/\bpv\s+/)[1] || '';
+                const pv = restPv.trim();
+                const rec = {
+                  pvIdx,
+                  depth: depth ? parseInt(depth[1],10) : null,
+                  nps: nps ? parseInt(nps[1],10) : null,
+                  scoreCp: sMate? (parseInt(sMate[1],10) > 0 ? 10000 : -10000) : (sCp ? parseInt(sCp[1],10) : null),
+                  mate: sMate ? parseInt(sMate[1],10) : null,
+                  pvUci: pv
+                };
+                listeners.forEach(fn => { try{ fn({ type:'info', rec }); }catch{} });
+              }
+              if(line.startsWith('bestmove')){
+                running = false;
+                const bm = (line.split(' ')[1]||'').trim();
+                listeners.forEach(fn => { try{ fn({ type:'bestmove', best: bm }); }catch{} });
+              }
+            };
+            sf.postMessage('uci');
+          }
+          wireAndInit();
           setStatus('loading');
-          // Give it a moment; readyok will flip state
-          resolve(true);
+          // resolve only when readyok arrives, but add a timeout safeguard
+          setTimeout(() => { if(!ready) { setStatus('init-timeout'); try{ sf.postMessage('isready'); }catch{} } }, 2500);
         }catch(err){ console.warn('ABEngine ensure failed', err); setStatus('error'); resolve(false); }
       });
     }
@@ -2639,6 +2681,7 @@ window.addEventListener('unhandledrejection', (e) => {
       try{ await ABEngine.ensure(); }catch{}
       try{ AB.chess.reset(); AB.fen = AB.chess.fen(); document.getElementById('abFenInput').value = AB.fen; }catch{}
       abDrawBoard(AB.fen);
+      abKickAnalysis();
     });
     window.addEventListener('resize', abRenderArrows);
   })();

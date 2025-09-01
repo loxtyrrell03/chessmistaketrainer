@@ -80,6 +80,9 @@
     .train-center{ display:flex; flex-direction:column; align-items:center; gap:12px }
     .train-block{ width:min(100%, var(--board-size)); margin:0 auto }
 
+    /* Hide training legend badges */
+    #trainSection .legend.tiny{ display:none !important; }
+
     @media (max-width:1000px){
       .grid, .train-grid{grid-template-columns:1fr}
     }
@@ -498,9 +501,12 @@
             </div>
             <div class="stroke tiny" style="margin-top:10px">
               <div><b>Game Info</b></div>
-              <div class="tiny mono" id="trainFen">FEN: —</div>
-              <div class="tiny mono" id="trainPgn" style="word-break:break-word">PGN: —</div>
-              <div class="tiny">Link: <a id="trainLink" href="#" target="_blank" rel="noopener">—</a></div>
+              <div class="tiny mono" id="trainFen">FEN: -</div>
+              <div class="tiny mono" id="trainPgn" style="word-break:break-word">PGN: -</div>
+              <div class="tiny">Link: <a id="trainLink" href="#" target="_blank" rel="noopener">-</a></div>
+            </div>
+            <div class="row" style="margin-top:10px">
+              <button id="btnExitTrain" class="ghost">Exit</button>
             </div>
 
           </div>
@@ -1764,7 +1770,13 @@
 
     $('#btnNext').addEventListener('click', () => Session.next());
     $('#btnFlip').addEventListener('click', () => { ORIENT_WHITE_BOTTOM=!ORIENT_WHITE_BOTTOM; if(Session.active) drawBoardMain(Session.active.fen); });
-
+    
+    $('#btnExitTrain').addEventListener('click', () => {
+      showSection('train');
+      showTrainSelectionMode();
+      renderTrainSelectList();
+    });
+    
     /********************************************************************
      * Mistake list + Stats
      ********************************************************************/

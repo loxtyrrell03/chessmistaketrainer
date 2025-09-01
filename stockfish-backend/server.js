@@ -1,6 +1,7 @@
 import express from 'express';
 import { Chess } from 'chess.js';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 
 // Severity thresholds (centipawns)
 const DEFAULT_THR = { inacc: 50, mistake: 150, blunder: 300 };
@@ -14,31 +15,27 @@ function severityFromDrop(cp, thr = DEFAULT_THR) {
 }
 
 function findEnginePath() {
-  const candidates = [
+  const ordered = [
     process.env.STOCKFISH_PATH,
-    'stockfish',
+    '/usr/local/bin/stockfish',
     '/usr/games/stockfish',
     '/usr/bin/stockfish',
-    '/usr/local/bin/stockfish',
+    '/bin/stockfish',
   ].filter(Boolean);
-  return candidates;
+  for (const p of ordered) {
+    try { if (p && existsSync(p)) return p; } catch {}
+  }
+  try {
+    const out = execFileSync('which', ['stockfish'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    if (out && existsSync(out)) return out;
+  } catch {}
+  return null;
 }
 
 function startEngine() {
-  let eng;
-  let lastError;
-  for (const candidate of findEnginePath()) {
-    try {
-      eng = spawn(candidate);
-      break;
-    } catch (e) {
-      lastError = e;
-    }
-  }
-  if (!eng) {
-    const err = lastError || new Error('Stockfish binary not found');
-    throw err;
-  }
+  const bin = findEnginePath();
+  if (!bin) throw new Error('Stockfish binary not found on PATH');
+  const eng = spawn(bin);
   eng.stderr.setEncoding('utf8');
   eng.stdout.setEncoding('utf8');
   let buf = '';

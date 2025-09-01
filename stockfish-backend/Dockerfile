@@ -20,6 +20,7 @@ RUN npm install --production
 COPY server.js ./
 
 ENV NODE_ENV=production
+ENV STOCKFISH_PATH=/usr/games/stockfish
 ENV PORT=8080
 
 EXPOSE 8080

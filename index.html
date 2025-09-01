@@ -252,7 +252,6 @@
           <div>
             <label>Chess.com username</label>
             <input id="chesscomUser" type="text" placeholder="e.g., lox123" />
-            <div class="tiny muted" style="margin-top:4px">We fetch your latest Chess.com archives and take the most recent N PGNs.</div>
           </div>
           <div style="max-width:120px">
             <label>Count</label>
@@ -273,7 +272,7 @@
 
         <div class="stroke tiny" id="statusBox" style="margin-top:10px">
           <b>Status:</b> <span id="status">Idle</span>
-          <span class="right"><b>Engine:</b> <span id="engineState">loading…</span></span>
+          <span class="right" id="engineWrap" style="display:none"><span id="engineState"></span></span>
         </div>
 
         <div class="stroke tiny" id="importedBox" style="margin-top:10px">
@@ -282,10 +281,10 @@
             <span class="tiny muted" id="importHelp">Fetched games will appear here.</span>
             <span style="margin-left:auto"></span>
             <button id="btnAnalyzeImported" class="btn-green" title="Analyse mistakes (server)">Analyse mistakes</button>
-            <button id="btnCreateSetFromLast" class="secondary" style="display:none" title="Create a set from the last analysis results">Create set</button>
+            <button id="btnCreateSetFromLast" class="secondary" title="Create a set from the last analysis results">Create set (0 mistakes)</button>
             <button id="btnClearImports" class="ghost" title="Clear imported games & their mistakes">Clear imports</button>
           </div>
-          <div id="createSetRow" class="tiny" style="display:none;margin-top:6px">
+          <div id="createSetRow" class="tiny" style="margin-top:6px">
             <span id="createSetInfo" class="muted">-</span>
           </div>
           <div style="max-height:220px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:6px">
@@ -1113,7 +1112,7 @@
           }catch{}
           try{
             sf = (typeof Stockfish==='function') ? Stockfish() : null;
-            if(!sf){ $('#engineState').textContent='failed'; return resolve(false); }
+            if(!sf){ /* do not show error text in UI */ return resolve(false); }
             sf.onmessage = (e) => {
               const line=(''+(e.data||e)).trim();
               if(line==='uciok'){ sf.postMessage('isready'); return; }
@@ -1132,7 +1131,7 @@
             const t0=Date.now(); while(!ready && (Date.now()-t0)<4000){ await sleep(20); }
             $('#engineState').textContent = ready ? 'ready' : 'loading…';
             resolve(true);
-          }catch(err){ $('#engineState').textContent='error'; resolve(false); }
+          }catch(err){ /* suppress Engine:error in UI */ resolve(false); }
         });
         return initPromise;
       }
@@ -1193,8 +1192,9 @@
       let i=0;
       try{
         LAST_ANALYZED = { mistakes: [], suggestedName: '' };
-        const btn=$('#btnCreateSetFromLast'); const row=$('#createSetRow'); const info=$('#createSetInfo');
-        if(btn) btn.style.display='none'; if(row) row.style.display='none'; if(info) info.textContent='-';
+        const btn=$('#btnCreateSetFromLast'); const info=$('#createSetInfo');
+        if(btn){ btn.textContent = 'Create set (0 mistakes)'; }
+        if(info){ info.textContent = '-'; }
       }catch{}
       for(const rec of window.importedGames){
         const pgn = rec.pgn; const source=rec.source||'Imported';
@@ -1245,7 +1245,7 @@
       let i=0;
       for(const pgn of list){
         if(state.stop) break;
-        setStatus(`Analyzing ${++i}/${list.length}…`);
+        setStatus(`Analyzing ${++i}/${list.length} — mistakes found: ${all.length}`);
         try{
           let ms=[];
           if(window.SF_BACKEND_URL){
@@ -1254,14 +1254,14 @@
               console.warn('Analyze via SF backend failed, falling back', err);
               if(window.FN_BASE){
                 try{ ms=await analyzeOnBackend([pgn]); }
-                catch(err2){ console.warn('Analyze via Functions failed, falling back to local', err2); ms=await analyzeManualLocal(pgn); }
+                catch(err2){ console.warn('Analyze via Functions failed, falling back to local', err2); ms=await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} — mistakes found: ${all.length}`); }catch{} }); }
               } else {
-                ms=await analyzeManualLocal(pgn);
+                ms=await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} — mistakes found: ${all.length}`); }catch{} });
               }
             }
           }
           else if(window.FN_BASE){ ms=await analyzeOnBackend([pgn]); }
-          else { ms = await analyzeManualLocal(pgn); }
+          else { ms = await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} — mistakes found: ${all.length}`); }catch{} }); }
 
           // Ensure PGN and game URL are attached regardless of backend
           try{
@@ -1275,8 +1275,16 @@
 
           // user-only
           ms = filterMistakesToUserOnly(ms);
-          if(ms.length) all.push(...ms);
-          try{ setStatus(`Analyzing ${i}/${list.length} — mistakes so far: ${all.length}.`); }catch{}
+          if(ms.length){
+            for(const m of ms){
+              all.push(m);
+              LAST_ANALYZED.mistakes = all.slice();
+              try{
+                const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`;
+                setStatus(`Analyzing ${i}/${list.length} — mistakes found: ${all.length}`);
+              }catch{}
+            }
+          }
         }catch(e){ console.warn('Analyze failed:', e); }
       }
       if(all.length) addMistakes(all);
@@ -1288,25 +1296,20 @@
       // Cache last analyzed results for manual set creation and show button
       LAST_ANALYZED = { mistakes: all.slice(), suggestedName: tagName };
       try{
-        const btn=$('#btnCreateSetFromLast'); const row=$('#createSetRow'); const info=$('#createSetInfo');
-        if(all.length>0){
-          if(btn){ btn.textContent = `Create set (${all.length})`; btn.style.display='inline-block'; }
-          if(row) row.style.display='block';
-          if(info) info.textContent = `Ready: ${all.length} mistake(s) detected in last analysis.`;
-        }else{
-          if(btn) btn.style.display='none'; if(row) row.style.display='none'; if(info) info.textContent='-';
-        }
+        const btn=$('#btnCreateSetFromLast'); const info=$('#createSetInfo');
+        if(btn){ btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; }
+        if(info) info.textContent = all.length>0 ? `Ready: ${all.length} mistake(s) detected in last analysis.` : '-';
       }catch{}
 
       if(state.stop){
-        setStatus('Analysis stopped.');
+        setStatus(`Analysis stopped — mistakes found: ${all.length}`);
       }else{
         setStatus(`Done. Added ${all.length} user-mistake(s).`);
       }
     }
 
     // Local fallback (slow)
-    async function analyzeManualLocal(pgn){
+    async function analyzeManualLocal(pgn, onFound){
       const cl=ChessLite(); const seq=cl.loadPGN(pgn).filter(x=>x.san);
       const mistakes=[]; const cl2=ChessLite(); cl2.reset();
       const sideWanted = userSideForPGN(pgn);
@@ -1318,7 +1321,9 @@
         const { cp:cpAfter } = await Engine.analyze(fenAfter,12);
         const drop=Math.max(0, cpBefore + cpAfter); const sev=severityFromDrop(drop);
         if(sev && sideWanted && sideToMove===sideWanted){
-          mistakes.push({ id:uid(), fen:fenBefore, side:sideToMove, played:mv.san, best:bestmove, deltaCp:drop, severity:sev, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn });
+          const m = { id:uid(), fen:fenBefore, side:sideToMove, played:mv.san, best:bestmove, deltaCp:drop, severity:sev, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn };
+          mistakes.push(m);
+          try{ if(typeof onFound==='function') onFound(m); }catch{}
         }
       }
       return mistakes;
@@ -1754,11 +1759,12 @@
         btnAnalyze.textContent='Stop analysis';
         btnAnalyze.classList.remove('btn-green'); btnAnalyze.classList.add('btn-red');
         ANALYZE_STATE={stop:false};
-        // hide create-set affordance while (re)running
+        // reset create-set affordance while (re)running (keep visible)
         try{
           LAST_ANALYZED = { mistakes: [], suggestedName: '' };
-          const btn=$('#btnCreateSetFromLast'); const row=$('#createSetRow'); const info=$('#createSetInfo');
-          if(btn) btn.style.display='none'; if(row) row.style.display='none'; if(info) info.textContent='-';
+          const btn=$('#btnCreateSetFromLast'); const info=$('#createSetInfo');
+          if(btn) btn.textContent='Create set (0 mistakes)';
+          if(info) info.textContent='-';
         }catch{}
         try{ await analyzeImportedWithBackendAbortable(ANALYZE_STATE); }catch(e){ setStatus('Error: '+(e?.message||e)); }
         // ensure button reset (in case stop wasn't pressed)
@@ -1800,11 +1806,12 @@
       rebuildImportedTable();
       const help=$('#importHelp'); if(help) help.textContent='Imported games cleared.';
       gvHide();
-      // hide create-set affordance
+      // reset create-set affordance
       try{
         LAST_ANALYZED = { mistakes: [], suggestedName: '' };
-        const btn=$('#btnCreateSetFromLast'); const row=$('#createSetRow'); const info=$('#createSetInfo');
-        if(btn) btn.style.display='none'; if(row) row.style.display='none'; if(info) info.textContent='-';
+        const btn=$('#btnCreateSetFromLast'); const info=$('#createSetInfo');
+        if(btn){ btn.textContent = 'Create set (0 mistakes)'; }
+        if(info){ info.textContent='-'; }
       }catch{}
     });
 

@@ -1222,6 +1222,15 @@
     function getSev(){ try{ const o=JSON.parse(localStorage.getItem('pmtt_sev')||'{}'); return {...DEFAULT_SEV, ...o}; }catch{return DEFAULT_SEV;} }
     function severityFromDrop(cp){ const T=getSev(); const x=Math.abs(Math.round(cp)); if(x>=T.blunder) return 'blunder'; if(x>=T.mistake) return 'mistake'; if(x>=T.inacc) return 'inaccuracy'; return null; }
 
+    // Format deltaCp (positive drop) as "centipawn loss" (negative value in pawns)
+    function formatCentipawnLoss(deltaCp){
+      const cp = Number(deltaCp)||0; // delta in centipawns (positive means worse)
+      const loss = -(cp)/100;        // convert to pawns and invert sign
+      const abs = Math.abs(loss);
+      if(loss === 0) return '0';
+      return abs < 1 ? loss.toFixed(1) : loss.toFixed(2);
+    }
+
     async function analyzeOnBackend(pgns){
       const url=`${window.FN_BASE}/analyzePGNs`;
       const thr=getSev();
@@ -1445,7 +1454,15 @@
       }
       function startSRS(){ queue = pickDueSRS(); mode='srs'; next(); }
       function next(){
-        $('#yourMove').textContent='-'; $('#feedback').textContent='-';
+      $('#yourMove').textContent='-'; $('#feedback').textContent='-';
+      try{
+        const cpl = formatCentipawnLoss(m.deltaCp);
+        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · centipawn loss: ${cpl}`;
+      }catch{}
+      try{
+        const cpl = formatCentipawnLoss(m.deltaCp);
+        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · centipawn loss: ${cpl}`;
+      }catch{}
         // clear arrows
         BOARD.arrows.user = null; BOARD.arrows.best = null; BOARD.arrows.showBest=false; renderArrows();
         try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
@@ -1711,9 +1728,17 @@
     function loadMistakeOnBoard(m){
       if(!m){ drawBoardMain(null); return; }
       gvHide();
+      try{
+        const cpl = formatCentipawnLoss(m.deltaCp);
+        $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> · centipawn loss: ${cpl}`;
+      }catch{}
       $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> · <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · Δcp ${Math.round(m.deltaCp)}`;
       $('#yourMove').textContent='—'; $('#feedback').textContent='—';
       ORIENT_WHITE_BOTTOM = (m.side==='w'); drawBoardMain(m.fen);
+      try{
+        const cpl = formatCentipawnLoss(m.deltaCp);
+        $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> · centipawn loss: ${cpl}`;
+      }catch{}
       // Arrows start clean; will draw on attempt/reveal
       BOARD.arrows.user = null; BOARD.arrows.best = m.best || null; BOARD.arrows.showBest = false; renderArrows();
       try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
@@ -1797,6 +1822,7 @@
     function renderStatsMistakeList(){
       inferUsernames();
       const tb=$('#statsMistakeTBody'); if(!tb) return;
+      try{ const thCp=document.querySelector('#statsMistakeTable thead th:nth-child(6)'); if(thCp) thCp.textContent='centipawn loss'; }catch{}
       tb.innerHTML='';
       const sets = loadSets(); const target = sets.find(s=>s.id===STATS_SELECTED_SET_ID);
       if(!target){ STATS_CURRENT_LIST=[]; $('#statsTotal') && ($('#statsTotal').textContent='0'); $('#statsDue') && ($('#statsDue').textContent='0'); return; }
@@ -1807,13 +1833,13 @@
       list.forEach((m,i)=>{
         const bestSan = m.best ? uciToSAN(m.fen, m.best) : '-';
         const tr=document.createElement('tr');
-        tr.innerHTML=`
+      tr.innerHTML=`
           <td class="mono tiny">${i+1}</td>
           <td>${m.severity ? `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span>` : '-'}</td>
           <td>${m.side==='w'?'White':'Black'}</td>
           <td class="mono tiny">${m.played}</td>
           <td class="mono tiny">${bestSan}</td>
-          <td class="mono tiny">${Math.round(m.deltaCp||0)}</td>
+          <td class="mono tiny">${formatCentipawnLoss(m.deltaCp)}</td>
           <td class="tiny">${tsToDate(m.nextReview)}</td>`;
         tr.addEventListener('click', ()=>{ loadMistakeOnStatsBoard(m); });
         tb.appendChild(tr);
@@ -1842,7 +1868,8 @@
       $('#statsSideToMove').textContent = (m.side==='w')?'White':'Black';
       const bestSan = m.best ? uciToSAN(m.fen, m.best) : '-';
       $('#statsBest').textContent = bestSan || m.best || '-';
-      $('#statsDelta').textContent = String(Math.round(m.deltaCp||0));
+      try{ const lbl=$('#statsDelta')?.parentElement?.querySelector('b'); if(lbl) lbl.textContent='centipawn loss:'; }catch{}
+      $('#statsDelta').textContent = formatCentipawnLoss(m.deltaCp);
       const whiteBottom = (m.side==='w');
       drawBoardInto('statsBoard', m.fen, whiteBottom);
     }
@@ -2149,7 +2176,7 @@
     }
     document.getElementById('navHome')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('home'); });
     document.getElementById('navAnalyze')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('analyze'); });
-    document.getElementById('navStats')?.addEventListener('click', (e)=>{ e.preventDefault(); renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); showSection('stats'); });
+    document.getElementById('navStats')?.addEventListener('click', (e)=>{ e.preventDefault(); renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); showSection('stats'); try{ const lbl=document.querySelector('#statsDelta')?.parentElement?.querySelector('b'); if(lbl) lbl.textContent='centipawn loss:'; }catch{} });
     document.getElementById('navSets')?.addEventListener('click', (e)=>{ e.preventDefault(); renderSets(); showSection('sets'); });
     document.getElementById('navTrain')?.addEventListener('click', (e)=>{
       e.preventDefault();

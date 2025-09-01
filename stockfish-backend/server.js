@@ -13,8 +13,32 @@ function severityFromDrop(cp, thr = DEFAULT_THR) {
   return null;
 }
 
+function findEnginePath() {
+  const candidates = [
+    process.env.STOCKFISH_PATH,
+    'stockfish',
+    '/usr/games/stockfish',
+    '/usr/bin/stockfish',
+    '/usr/local/bin/stockfish',
+  ].filter(Boolean);
+  return candidates;
+}
+
 function startEngine() {
-  const eng = spawn('stockfish');
+  let eng;
+  let lastError;
+  for (const candidate of findEnginePath()) {
+    try {
+      eng = spawn(candidate);
+      break;
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  if (!eng) {
+    const err = lastError || new Error('Stockfish binary not found');
+    throw err;
+  }
   eng.stderr.setEncoding('utf8');
   eng.stdout.setEncoding('utf8');
   let buf = '';
@@ -27,6 +51,10 @@ function startEngine() {
   function send(cmd) {
     eng.stdin.write(cmd + '\n');
   }
+
+  eng.on('error', (err) => {
+    console.error('Stockfish spawn error:', err);
+  });
 
   eng.stdout.on('data', (chunk) => {
     buf += chunk;

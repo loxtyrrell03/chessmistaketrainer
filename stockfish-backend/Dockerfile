@@ -8,6 +8,10 @@ RUN apt-get update \
        stockfish \
     && rm -rf /var/lib/apt/lists/*
 
+# Ensure stockfish is on PATH for Cloud Run (binary is usually in /usr/games)
+ENV PATH="/usr/games:${PATH}"
+RUN if [ -x /usr/games/stockfish ]; then ln -sf /usr/games/stockfish /usr/local/bin/stockfish; fi
+
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
@@ -21,4 +25,3 @@ ENV PORT=8080
 EXPOSE 8080
 
 CMD ["node", "server.js"]
-

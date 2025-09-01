@@ -127,6 +127,10 @@
     .sq.hl{outline:3px solid var(--sq-hl)}
 
     .piece{filter:drop-shadow(0 2px 2px rgba(0,0,0,.25))}
+    /* Improve piece visibility */
+    .piece{opacity:1 !important;font-weight:900;letter-spacing:0}
+    .piece.w{color:#ffffff;text-shadow:0 1px 0 #000, 0 0 4px rgba(0,0,0,.5)}
+    .piece.b{color:#0a0f1a;text-shadow:0 1px 0 #fff, 0 0 4px rgba(255,255,255,.35)}
     .legend{display:flex;gap:8px;flex-wrap:wrap}
     .legend span{padding:4px 8px;background:#0f1320;border-radius:999px;border:1px solid #2a3142}
     .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -166,6 +170,7 @@
       <a href="#" data-sec="home" id="navHome" class="active">Home</a>
       <a href="#" data-sec="analyze" id="navAnalyze">Analyze</a>
       <a href="#" data-sec="sets" id="navSets">Sets</a>
+      <a href="#" data-sec="train" id="navTrain">Train</a>
       <div style="margin-left:auto"></div>
     </div>
   </div>
@@ -262,76 +267,8 @@
 
         <hr style="border:none;border-top:1px solid #242a39;margin:16px 0">
 
-        <h2>2) Trainer</h2>
-        <div class="row" style="margin-top:8px">
-          <div class="grid-2">
-            <div>
-              <label>Mode</label>
-              <select id="modeSel">
-                <option value="woodpecker">Woodpecker (cycle until first‑try correct)</option>
-                <option value="srs">Spaced Repetition (SM‑2)</option>
-              </select>
-            </div>
-            <div id="wpCountWrap">
-              <label>Woodpecker count (N)</label>
-              <input id="wpCount" type="number" min="1" value="10">
-            </div>
-          </div>
-          <div style="max-width:220px">
-            <label>&nbsp;</label>
-            <button id="btnStart">Start session</button>
-          </div>
-        </div>
-        <div class="tiny muted" id="activeSetInfo" style="margin:4px 0">Active set: —</div>
-        <details class="stroke" style="margin-top:8px">
-          <summary class="tiny">Settings (mistake thresholds)</summary>
-          <div class="grid-2" style="margin-top:8px">
-            <div>
-              <label>Inaccuracy ≥ (centipawns)</label>
-              <input id="thrInacc" type="number" min="0" value="50" />
-            </div>
-            <div>
-              <label>Mistake ≥ (centipawns)</label>
-              <input id="thrMist" type="number" min="0" value="150" />
-            </div>
-          </div>
-          <div class="grid-2" style="margin-top:8px">
-            <div>
-              <label>Blunder ≥ (centipawns)</label>
-              <input id="thrBlun" type="number" min="0" value="300" />
-            </div>
-            <div style="display:flex;align-items:flex-end">
-              <button id="btnSaveThr" class="ghost">Save thresholds</button>
-            </div>
-          </div>
-          <div class="tiny muted" style="margin-top:6px">New analyses will use these thresholds.</div>
-        </details>
-
-        <div class="board-wrap" style="margin-top:12px">
-          <div class="board">
-            <div id="board" class="grid8" aria-label="chessboard"></div>
-          </div>
-          <div style="flex:1;min-width:240px">
-            <div class="legend tiny">
-              <span>Click a piece, then a target square</span>
-              <span>✔️ correct = best move</span>
-              <span>❌ otherwise</span>
-            </div>
-            <div class="stroke" style="margin-top:10px">
-              <div><b>Current Mistake</b></div>
-              <div class="tiny muted" id="mInfo">—</div>
-              <div class="tiny" style="margin-top:6px"><b>Goal:</b> find the best move from this position.</div>
-              <div class="tiny"><b>Side to move:</b> <span id="sideToMove">—</span></div>
-              <div class="tiny"><b>Your move:</b> <span id="yourMove">—</span></div>
-              <div class="tiny"><b>Feedback:</b> <span id="feedback">—</span></div>
-              <div class="row" style="margin-top:8px">
-                <button id="btnReveal" class="secondary">Reveal best</button>
-                <button id="btnNext" class="ghost">Next</button>
-                <button id="btnFlip" class="ghost">Flip board</button>
-              </div>
-            </div>
-            <div class="tiny muted" style="margin-top:10px">Tip: You can flip the board to see from the side to move.</div>
-          </div>
+        <div class="stroke tiny" style="margin-top:8px">
+          Trainer has moved to its own page. Use the “Train” tab in the top navigation to start a session.
         </div>
         <!-- Lightweight Game Viewer (appears when you click an imported game) -->
         <div id="gameViewer" class="stroke tiny" style="margin-top:10px; display:none">
@@ -413,6 +350,79 @@
           </thead>
           <tbody id="setsTBody"></tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Train Page -->
+  <div class="wrap section" id="trainSection">
+    <h1>Train</h1>
+    <div class="grid" style="margin-top:12px">
+      <div class="card">
+        <h2>Board</h2>
+        <div class="board-wrap" style="margin-top:10px">
+          <div class="board">
+            <div id="board" class="grid8" aria-label="chessboard"></div>
+          </div>
+          <div style="flex:1;min-width:260px">
+            <div class="legend tiny">
+              <span>Click a piece, then a target square</span>
+              <span>✔️ correct = best move</span>
+              <span>❌ otherwise</span>
+            </div>
+            <div class="stroke" style="margin-top:10px">
+              <div class="small"><b>Current Mistake</b></div>
+              <div class="tiny muted" id="mInfo">—</div>
+              <div class="tiny" style="margin-top:6px"><b>Goal:</b> find the best move from this position.</div>
+              <div class="tiny"><b>Side to move:</b> <span id="sideToMove">—</span></div>
+              <div class="tiny"><b>Your move:</b> <span id="yourMove">—</span></div>
+              <div class="tiny"><b>Feedback:</b> <span id="feedback">—</span></div>
+              <div class="row" style="margin-top:8px">
+                <button id="btnReveal" class="secondary">Reveal best</button>
+                <button id="btnNext" class="ghost">Next</button>
+                <button id="btnFlip" class="ghost">Flip board</button>
+              </div>
+            </div>
+            <div class="stroke tiny" style="margin-top:10px">
+              <div><b>Game Info</b></div>
+              <div class="tiny mono" id="trainFen">FEN: —</div>
+              <div class="tiny mono" id="trainPgn">PGN: —</div>
+              <div class="tiny">Link: <a id="trainLink" href="#" target="_blank">—</a></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Sets</h2>
+        <div class="tiny muted">Click a set to activate then Start.</div>
+        <div style="max-height:380px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:6px">
+          <table style="width:100%">
+            <thead>
+              <tr><th>#</th><th>Name</th><th>Count</th></tr>
+            </thead>
+            <tbody id="trainSetsTBody"></tbody>
+          </table>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div class="grid-2">
+            <div>
+              <label>Mode</label>
+              <select id="modeSel">
+                <option value="woodpecker">Woodpecker</option>
+                <option value="srs">Spaced Repetition (SM-2)</option>
+              </select>
+            </div>
+            <div id="wpCountWrap">
+              <label>Woodpecker count (N)</label>
+              <input id="wpCount" type="number" min="1" value="10" />
+            </div>
+          </div>
+          <div style="max-width:220px">
+            <label>&nbsp;</label>
+            <button id="btnStart">Start session</button>
+          </div>
+        </div>
+        <div class="tiny muted" id="activeSetInfo" style="margin-top:6px">Active set: —</div>
       </div>
     </div>
   </div>
@@ -786,6 +796,19 @@ window.addEventListener('unhandledrejection', (e) => {
     let ACTIVE_SET = null; let ACTIVE_SET_KEYS = new Set();
     function setActiveSet(s){ ACTIVE_SET = s; ACTIVE_SET_KEYS = new Set((s&&s.keys)||[]); setStatus(`Active set: ${s?.name||'-'}`); }
     function renderActiveSetInfo(){ const el = document.getElementById('activeSetInfo'); if(el) el.textContent = `Active set: ${ACTIVE_SET?ACTIVE_SET.name:'—'}`; }
+
+    function renderSetsForTrain(){
+      const tb = document.getElementById('trainSetsTBody'); if(!tb) return;
+      tb.innerHTML = '';
+      const sets = loadSets();
+      let i=0; for(const s of sets){
+        const tr = document.createElement('tr');
+        tr.style.cursor = 'pointer';
+        tr.innerHTML = `<td>${++i}</td><td>${s.name}</td><td>${s.keys.length}</td>`;
+        tr.addEventListener('click', () => { setActiveSet(s); renderActiveSetInfo(); });
+        tb.appendChild(tr);
+      }
+    }
 
     /********************************************************************
      * Lightweight chess engine: ChessLite
@@ -1555,7 +1578,14 @@ window.addEventListener('unhandledrejection', (e) => {
       const res = await fetch(url, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ pgn, depth, thresholds: thr }) });
       if(!res.ok) throw new Error(`Stockfish backend error ${res.status}`);
       const data = await res.json();
-      return data.mistakes || [];
+      const mistakes = data.mistakes || [];
+      // Attach PGN + game URL metadata for trainer view/linking
+      try{
+        const h = parsePGNHeaders(pgn);
+        const urlHdr = h.Site || h.Link || '';
+        mistakes.forEach(m => { m.pgn = pgn; if(urlHdr && /^https?:\/\//i.test(urlHdr)) m.gameUrl = urlHdr; });
+      }catch{}
+      return mistakes;
     }
 
     // Analyze all imported PGNs using backend first (Cloud Run), then fallbacks
@@ -1904,6 +1934,8 @@ window.addEventListener('unhandledrejection', (e) => {
           const span = document.createElement('div');
           span.className = 'piece';
           span.textContent = PIECES[piece] || '';
+          // colorize clearly by side
+          if(piece===piece.toUpperCase()) span.classList.add('w'); else span.classList.add('b');
           cell.appendChild(span);
         }
         // events
@@ -2000,6 +2032,12 @@ window.addEventListener('unhandledrejection', (e) => {
       // Draw best arrow
       BOARD.activeArrow = m.best || null;
       renderArrows();
+      // Update train info panel
+      try{
+        const fenEl = document.getElementById('trainFen'); if(fenEl) fenEl.textContent = `FEN: ${m.fen}`;
+        const pgnEl = document.getElementById('trainPgn'); if(pgnEl) pgnEl.textContent = `PGN: ${(m.pgn||'—').slice(0,400)}`;
+        const linkEl = document.getElementById('trainLink'); if(linkEl) { linkEl.textContent = m.gameUrl || '—'; linkEl.href = m.gameUrl || '#'; }
+      }catch{}
     }
 
     // Reveal & Next buttons
@@ -2287,7 +2325,7 @@ window.addEventListener('unhandledrejection', (e) => {
 <script>
   // Simple SPA nav
   function showSection(which){
-    const map = { home:'homeSection', analyze:'analyzeSection', sets:'setsSection' };
+    const map = { home:'homeSection', analyze:'analyzeSection', sets:'setsSection', train:'trainSection' };
     for(const id of Object.values(map)){
       const el = document.getElementById(id); if(el) el.classList.remove('active');
     }
@@ -2295,10 +2333,12 @@ window.addEventListener('unhandledrejection', (e) => {
     document.getElementById('navHome')?.classList.toggle('active', which==='home');
     document.getElementById('navAnalyze')?.classList.toggle('active', which==='analyze');
     document.getElementById('navSets')?.classList.toggle('active', which==='sets');
+    document.getElementById('navTrain')?.classList.toggle('active', which==='train');
   }
   document.getElementById('navHome')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('home'); });
   document.getElementById('navAnalyze')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('analyze'); });
   document.getElementById('navSets')?.addEventListener('click', (e)=>{ e.preventDefault(); renderSets(); showSection('sets'); });
+  document.getElementById('navTrain')?.addEventListener('click', (e)=>{ e.preventDefault(); renderSetsForTrain(); renderActiveSetInfo(); showSection('train'); });
   document.getElementById('btnGoAnalyze')?.addEventListener('click', ()=> showSection('analyze'));
 
   // Sets page actions

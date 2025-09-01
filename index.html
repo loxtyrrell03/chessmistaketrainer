@@ -443,6 +443,8 @@
     // (Paste from Firebase Console triggers if you use custom domains.)
     window.FN_LICHESS_URL = window.FN_LICHESS_URL || `${window.FN_BASE}/fetchLichess`;
     window.FN_CHESSCOM_URL = window.FN_CHESSCOM_URL || `${window.FN_BASE}/fetchChessCom`;
+    // Configure Cloud Run Stockfish backend (update if you redeploy)
+    window.SF_BACKEND_URL = window.SF_BACKEND_URL || 'https://sf-backend-283045516917.europe-west2.run.app';
 
     // Initialize Analytics only where supported; dynamically import to avoid
     // executing analytics code in environments that lack globals like `process`.
@@ -1329,6 +1331,13 @@ window.addEventListener('unhandledrejection', (e) => {
       function ensure(){
         if(initPromise) return initPromise;
         initPromise = new Promise(async (resolve) => {
+          // If a remote backend is configured, we don't need a local WASM engine.
+          try{
+            if(window.SF_BACKEND_URL){
+              ready = true; const el = document.getElementById('engineState'); if(el) el.textContent = 'server';
+              return resolve(true);
+            }
+          }catch{}
           try{
             sf = (typeof Stockfish === 'function') ? Stockfish() : null;
             if(!sf){ $('#engineState').textContent = 'failed to load'; return resolve(false); }
@@ -2097,6 +2106,30 @@ window.addEventListener('unhandledrejection', (e) => {
         const n = parseInt($('#lichessCount')?.value,10) || 5;
         setStatus(`Fetching Lichess games (N=${n})…`);
         const games = await fetchLichess(u, n);
+        // Prefer backend analysis if available, then skip local loop
+        if(window.SF_BACKEND_URL || window.FN_BASE){
+          try{
+            setStatus(`Analyzing ${games.length} games (server)…`);
+            const all = [];
+            let idx=0;
+            for(const pgn of games){
+              if(window.SF_BACKEND_URL){
+                setStatus(`Lichess: backend analyze ${++idx}/${games.length}…`);
+                const ms = await analyzeOnServer(pgn, 12);
+                all.push(...ms);
+              }else{
+                setStatus(`Lichess: functions analyze ${++idx}/${games.length}…`);
+                const ms = await analyzeOnBackend([pgn]);
+                all.push(...ms);
+              }
+            }
+            addMistakes(all);
+            const set = createSetFromMistakes(all, `Lichess ${new Date().toLocaleString()}`);
+            setActiveSet(set); renderActiveSetInfo();
+            setStatus(`Done. Added ${all.length} mistakes.`);
+            return;
+          }catch(e){ console.error(e); setStatus('Error: '+(e?.message||e)); return; }
+        }
         setStatus(`Analyzing ${games.length} games (Lichess)…`);
         const all = [];
         let k=0;
@@ -2124,6 +2157,29 @@ window.addEventListener('unhandledrejection', (e) => {
         const n = parseInt($('#chesscomCount')?.value,10) || 5;
         setStatus(`Fetching Chess.com games (N=${n})…`);
         const games = await fetchChesscom(u, n);
+        if(window.SF_BACKEND_URL || window.FN_BASE){
+          try{
+            setStatus(`Analyzing ${games.length} games (server)…`);
+            const all = [];
+            let idx=0;
+            for(const pgn of games){
+              if(window.SF_BACKEND_URL){
+                setStatus(`Chess.com: backend analyze ${++idx}/${games.length}…`);
+                const ms = await analyzeOnServer(pgn, 12);
+                all.push(...ms);
+              }else{
+                setStatus(`Chess.com: functions analyze ${++idx}/${games.length}…`);
+                const ms = await analyzeOnBackend([pgn]);
+                all.push(...ms);
+              }
+            }
+            addMistakes(all);
+            const set = createSetFromMistakes(all, `Chess.com ${new Date().toLocaleString()}`);
+            setActiveSet(set); renderActiveSetInfo();
+            setStatus(`Done. Added ${all.length} mistakes.`);
+            return;
+          }catch(e){ console.error(e); setStatus('Error: '+(e?.message||e)); return; }
+        }
         setStatus(`Analyzing ${games.length} games (depth 12)…`);
         const all = [];
         let k=0;

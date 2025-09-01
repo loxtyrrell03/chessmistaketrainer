@@ -169,6 +169,7 @@
       <div style="font-weight:700;color:#e6edf3">♟️ PMT</div>
       <a href="#" data-sec="home" id="navHome" class="active">Home</a>
       <a href="#" data-sec="analyze" id="navAnalyze">Analyze</a>
+      <a href="#" data-sec="ab" id="navAB">Analysis Board</a>
       <a href="#" data-sec="sets" id="navSets">Sets</a>
       <a href="#" data-sec="train" id="navTrain">Train</a>
       <div style="margin-left:auto"></div>
@@ -423,6 +424,72 @@
           </div>
         </div>
         <div class="tiny muted" id="activeSetInfo" style="margin-top:6px">Active set: —</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Analysis Board Page -->
+  <div class="wrap section" id="abSection">
+    <h1>Analysis Board</h1>
+    <div class="grid" style="margin-top:12px">
+      <div class="card">
+        <h2>Board</h2>
+        <div class="board-wrap" style="margin-top:10px; position:relative">
+          <div class="board" id="abBoardOuter">
+            <div id="abBoard" class="grid8" aria-label="analysis-board"></div>
+            <!-- arrow canvas injected dynamically -->
+          </div>
+          <div style="flex:1;min-width:260px">
+            <div class="legend tiny">
+              <span>Click squares to make moves</span>
+              <span>Arrows show engine top lines</span>
+            </div>
+            <div class="stroke" style="margin-top:10px">
+              <div class="small"><b>Engine</b> <span class="tiny mono" id="abStatus">idle</span></div>
+              <div class="grid-2" style="margin-top:8px">
+                <div>
+                  <label>Depth</label>
+                  <input id="abDepth" type="number" min="6" max="30" value="15" />
+                </div>
+                <div>
+                  <label>MultiPV</label>
+                  <input id="abMultiPV" type="number" min="1" max="5" value="3" />
+                </div>
+              </div>
+              <div class="row" style="margin-top:8px">
+                <button id="abAnalyzeBtn">Analyze</button>
+                <button id="abStopBtn" class="ghost">Stop</button>
+                <button id="abFlipBtn" class="secondary">Flip</button>
+                <button id="abResetBtn" class="ghost">Reset</button>
+              </div>
+            </div>
+            <div class="stroke tiny" style="margin-top:10px">
+              <div class="small"><b>FEN</b></div>
+              <input id="abFenInput" type="text" class="mono" />
+              <div class="row" style="margin-top:8px">
+                <button id="abLoadFen" class="ghost">Load FEN</button>
+                <button id="abStartPos" class="ghost">Start Position</button>
+              </div>
+            </div>
+            <div class="stroke tiny" style="margin-top:10px">
+              <div class="small"><b>Top Lines</b></div>
+              <div id="abLines" class="tiny mono" style="max-height:220px;overflow:auto"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Quick PGN</h2>
+        <div class="tiny muted">Paste a PGN to step through moves, analyzing each position.</div>
+        <textarea id="abPgn" placeholder="[Event \"...\"]\n1. e4 e5 2. Nf3 ..."></textarea>
+        <div class="row" style="margin-top:8px">
+          <button id="abLoadPGN" class="ghost">Load PGN</button>
+          <button id="abPrev" class="ghost">Prev</button>
+          <button id="abNext" class="ghost">Next</button>
+          <button id="abToStart" class="ghost">Start</button>
+          <button id="abToEnd" class="ghost">End</button>
+        </div>
+        <div class="tiny mono" id="abPGNStatus" style="margin-top:6px">-</div>
       </div>
     </div>
   </div>
@@ -2322,21 +2389,278 @@ window.addEventListener('unhandledrejection', (e) => {
   try { setStatus('Promise error: ' + ((e.reason && (e.reason.message || e.reason)) || 'unknown')); } catch {}
 });</script>
 
+<!-- Analysis Board (local Stockfish WASM) -->
+<script>
+  // Standalone local engine wrapper for the Analysis Board (forces WASM, no backend)
+  const ABEngine = (() => {
+    let sf = null;
+    let ready = false;
+    let running = false;
+    let wantsStop = false;
+    let listeners = [];
+    let opts = { depth: 15, multipv: 3 };
+    let statusEl = null;
+
+    function setStatus(t){ if(!statusEl) statusEl = document.getElementById('abStatus'); if(statusEl) statusEl.textContent = t; }
+
+    async function ensure(){
+      if(sf && ready) return true;
+      return new Promise((resolve) => {
+        try{
+          sf = (typeof Stockfish === 'function') ? Stockfish() : null;
+          if(!sf){ setStatus('load-error'); return resolve(false); }
+          sf.onmessage = (e) => {
+            const line = (''+(e.data || e)).trim();
+            if(line === 'uciok'){ sf.postMessage('isready'); return; }
+            if(line === 'readyok'){ ready = true; setStatus('ready'); return; }
+            if(line.startsWith('info')){
+              // Parse multipv lines
+              const mp = line.match(/\bmultipv\s+(\d+)/);
+              const sMate = line.match(/\bscore\s+mate\s+(-?\d+)/);
+              const sCp = line.match(/\bscore\s+cp\s+(-?\d+)/);
+              const nps = line.match(/\bnps\s+(\d+)/);
+              const depth = line.match(/\bdepth\s+(\d+)/);
+              const pvIdx = mp ? parseInt(mp[1],10) : 1;
+              const restPv = line.split(/\bpv\s+/)[1] || '';
+              const pv = restPv.trim();
+              const rec = {
+                pvIdx,
+                depth: depth ? parseInt(depth[1],10) : null,
+                nps: nps ? parseInt(nps[1],10) : null,
+                scoreCp: sMate? (parseInt(sMate[1],10) > 0 ? 10000 : -10000) : (sCp ? parseInt(sCp[1],10) : null),
+                mate: sMate ? parseInt(sMate[1],10) : null,
+                pvUci: pv
+              };
+              listeners.forEach(fn => { try{ fn({ type:'info', rec }); }catch{} });
+            }
+            if(line.startsWith('bestmove')){
+              running = false;
+              const bm = (line.split(' ')[1]||'').trim();
+              listeners.forEach(fn => { try{ fn({ type:'bestmove', best: bm }); }catch{} });
+            }
+          };
+          sf.postMessage('uci');
+          setStatus('loading');
+          // Give it a moment; readyok will flip state
+          resolve(true);
+        }catch(err){ console.warn('ABEngine ensure failed', err); setStatus('error'); resolve(false); }
+      });
+    }
+
+    async function configure({ depth, multipv }={}){
+      await ensure();
+      if(typeof multipv === 'number'){
+        opts.multipv = Math.max(1, Math.min(5, Math.floor(multipv)));
+        sf.postMessage(`setoption name MultiPV value ${opts.multipv}`);
+      }
+      if(typeof depth === 'number') opts.depth = Math.max(6, Math.min(30, Math.floor(depth)));
+    }
+
+    async function start(fen){
+      await ensure();
+      wantsStop = false;
+      running = true;
+      setStatus(`analyzing d${opts.depth} x${opts.multipv}`);
+      sf.postMessage('ucinewgame');
+      sf.postMessage('position fen ' + fen);
+      sf.postMessage('go depth ' + opts.depth);
+    }
+    function stop(){
+      if(!sf) return; wantsStop = true; try{ sf.postMessage('stop'); }catch{}
+      running = false; setStatus('stopped');
+    }
+    function on(cb){ listeners.push(cb); return () => { listeners = listeners.filter(x=>x!==cb); } }
+
+    return { ensure, configure, start, stop, on };
+  })();
+
+  // Analysis Board state + UI
+  (function(){
+    const FILES = 'abcdefgh';
+    const AB = {
+      chess: ChessLite(),
+      fen: null,
+      orientWhite: true,
+      pgnFens: [], idx: 0,
+      lines: new Map(), // pvIdx -> rec
+    };
+
+    function abEnsureArrowCanvas(){
+      const outer = document.getElementById('abBoardOuter'); if(!outer) return null;
+      let cv = document.getElementById('abArrows');
+      if(!cv){ cv = document.createElement('canvas'); cv.id = 'abArrows'; Object.assign(cv.style, { position:'absolute', inset:'0', pointerEvents:'none' }); outer.appendChild(cv); }
+      const rect = outer.getBoundingClientRect();
+      const dpr = Math.min(2, (window.devicePixelRatio || 1));
+      cv.width = Math.floor(rect.width*dpr);
+      cv.height = Math.floor(rect.height*dpr);
+      cv.style.width = rect.width+'px';
+      cv.style.height = rect.height+'px';
+      return { cv, dpr, rect };
+    }
+    function abSqCenterPx(sq, rectW, rectH, dpr){
+      const f = FILES.indexOf(sq[0]); const r0 = parseInt(sq[1],10)-1;
+      let col = f; let row = 7-r0; if(!AB.orientWhite){ col = 7-col; row = 7-row; }
+      const cellW = rectW/8, cellH = rectH/8; return { x: dpr*((col+0.5)*cellW), y: dpr*((row+0.5)*cellH) };
+    }
+    function abRenderArrows(){
+      const ctxInfo = abEnsureArrowCanvas(); if(!ctxInfo) return; const { cv, dpr, rect } = ctxInfo; const ctx = cv.getContext('2d'); if(!ctx) return;
+      ctx.clearRect(0,0,cv.width,cv.height);
+      const lines = Array.from(AB.lines.values()).sort((a,b)=>a.pvIdx-b.pvIdx);
+      const colors = ['#2ecc71','#f1c40f','#ff6b6b','#9b59b6','#3498db'];
+      for(const rec of lines){
+        const pv = (rec.pvUci||'').split(/\s+/).filter(Boolean);
+        if(!pv.length) continue;
+        const move = pv[0]; const from = move.slice(0,2), to = move.slice(2,4);
+        const a = abSqCenterPx(from, rect.width, rect.height, dpr);
+        const b = abSqCenterPx(to, rect.width, rect.height, dpr);
+        const col = colors[(rec.pvIdx-1)%colors.length];
+        ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = Math.max(4, 8 - (rec.pvIdx-1))*dpr; ctx.lineCap='round';
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        const ang = Math.atan2(b.y-a.y, b.x-a.x); const size = 12*dpr;
+        ctx.beginPath(); ctx.moveTo(b.x, b.y);
+        ctx.lineTo(b.x - size*Math.cos(ang - Math.PI/6), b.y - size*Math.sin(ang - Math.PI/6));
+        ctx.lineTo(b.x - size*Math.cos(ang + Math.PI/6), b.y - size*Math.sin(ang + Math.PI/6));
+        ctx.closePath(); ctx.fill();
+      }
+    }
+
+    function abDrawBoard(fen){
+      const root = document.getElementById('abBoard'); if(!root) return;
+      root.innerHTML = '';
+      if(!fen){
+        for(let r=0;r<8;r++) for(let c=0;c<8;c++){ const el=document.createElement('div'); el.className='sq '+(((r+c)%2)?'dark':'light'); root.appendChild(el); }
+        abRenderArrows(); return;
+      }
+      AB.chess.loadFEN(fen); AB.fen = fen;
+      const parts = fen.split(' ')[0].split('/'); const cells=[];
+      for(const row of parts){ for(const ch of row){ if(/[1-8]/.test(ch)){ for(let k=0;k<parseInt(ch,10);k++) cells.push(null); } else cells.push(ch); } }
+      const idxs=[]; for(let r=0;r<8;r++) for(let c=0;c<8;c++) idxs.push(r*8+c);
+      const oriented = AB.orientWhite ? idxs : idxs.slice().reverse();
+      oriented.forEach((i)=>{
+        const r=Math.floor(i/8), c=i%8; const sq = AB.chess.idxToSq(i);
+        const cell = document.createElement('div'); cell.className='sq '+(((r+c)%2)?'dark':'light'); cell.dataset.index=i; cell.dataset.square=sq;
+        const coord = document.createElement('div'); coord.className='coord'; if((AB.orientWhite && (r===7&&c===0)) || (!AB.orientWhite && (r===0&&c===7))) coord.textContent = sq; cell.appendChild(coord);
+        const piece = cells[i]; if(piece){ const span=document.createElement('div'); span.className='piece'; span.textContent = (PIECES && PIECES[piece])||''; if(piece===piece.toUpperCase()) span.classList.add('w'); else span.classList.add('b'); cell.appendChild(span); }
+        cell.addEventListener('click', abOnSquareClick);
+        root.appendChild(cell);
+      });
+      const fenEl = document.getElementById('abFenInput'); if(fenEl) fenEl.value = fen;
+      abRenderArrows();
+    }
+
+    let abSelected = null;
+    function abOnSquareClick(e){
+      const idx = parseInt(e.currentTarget.dataset.index,10);
+      if(abSelected===null){
+        const sq = AB.chess.idxToSq(idx); const has = AB.chess.moves().some(m=>m.from===sq);
+        if(has){ abSelected = idx; abShowHints(); }
+        return;
+      } else {
+        const from = AB.chess.idxToSq(abSelected); const to = e.currentTarget.dataset.square;
+        let uci = from+to; const legal = AB.chess.moves().filter(m=>m.from===from && m.to===to);
+        if(legal.length){ let move=legal[0]; const q=legal.find(m=>m.promotion==='q'); if(q) move=q; if(move.promotion) uci += move.promotion; }
+        const tmp = ChessLite(); tmp.loadFEN(AB.fen); const mv = tmp.moveUci(uci);
+        if(mv.ok){ abDrawBoard(tmp.fen()); abKickAnalysis(); }
+        abSelected = null; abShowHints();
+      }
+    }
+    function abShowHints(){
+      const squares = Array.from(document.querySelectorAll('#abBoard .sq'));
+      squares.forEach(el=>{ el.classList.remove('sel','hint'); });
+      if(abSelected===null) return;
+      const fromSq = AB.chess.idxToSq(abSelected);
+      squares.forEach(el=>{ if(parseInt(el.dataset.index,10)===abSelected) el.classList.add('sel'); });
+      for(const m of AB.chess.moves()){ if(m.from===fromSq){ const el = document.querySelector(`#abBoard .sq[data-square="${m.to}"]`); if(el) el.classList.add('hint'); } }
+    }
+
+    // Engine wiring
+    let abDebounce = null;
+    function abKickAnalysis(){
+      clearTimeout(abDebounce);
+      abDebounce = setTimeout(async ()=>{
+        AB.lines.clear(); document.getElementById('abLines').innerHTML = '';
+        const depth = parseInt(document.getElementById('abDepth')?.value,10) || 15;
+        const mpv = parseInt(document.getElementById('abMultiPV')?.value,10) || 3;
+        await ABEngine.configure({ depth, multipv: mpv });
+        ABEngine.start(AB.fen);
+      }, 150);
+    }
+
+    function cpStr(cp, mate){ if(mate!==null && mate!==undefined) return `#${mate}`; const s = Math.round(cp||0); return (s>=0?'+':'')+s; }
+    function renderLinesPanel(){
+      const wrap = document.getElementById('abLines'); if(!wrap) return;
+      const arr = Array.from(AB.lines.values()).sort((a,b)=>a.pvIdx-b.pvIdx);
+      wrap.innerHTML = arr.map(rec => {
+        const txt = (rec.pvUci||'').split(/\s+/).filter(Boolean).slice(0,20).join(' ');
+        return `<div>#${rec.pvIdx} ${cpStr(rec.scoreCp, rec.mate)} d${rec.depth||'-'} nps:${rec.nps||'-'} :: ${txt}</div>`;
+      }).join('');
+    }
+
+    // Subscribe to engine stream
+    ABEngine.on((msg)=>{
+      if(msg.type==='info'){
+        const rec = msg.rec; AB.lines.set(rec.pvIdx, rec); abRenderArrows(); renderLinesPanel();
+      }
+      if(msg.type==='bestmove'){
+        // leave arrows and lines as final snapshot
+      }
+    });
+
+    // Controls
+    document.getElementById('abAnalyzeBtn')?.addEventListener('click', ()=> abKickAnalysis());
+    document.getElementById('abStopBtn')?.addEventListener('click', ()=> ABEngine.stop());
+    document.getElementById('abFlipBtn')?.addEventListener('click', ()=> { AB.orientWhite = !AB.orientWhite; abDrawBoard(AB.fen); });
+    document.getElementById('abResetBtn')?.addEventListener('click', ()=> { AB.chess.reset(); AB.fen = AB.chess.fen(); abDrawBoard(AB.fen); abKickAnalysis(); });
+    document.getElementById('abLoadFen')?.addEventListener('click', ()=>{
+      const v = document.getElementById('abFenInput').value.trim(); if(!v) return; try{ AB.chess.loadFEN(v); AB.fen=v; abDrawBoard(AB.fen); abKickAnalysis(); }catch{}
+    });
+    document.getElementById('abStartPos')?.addEventListener('click', ()=>{ AB.chess.reset(); AB.fen = AB.chess.fen(); abDrawBoard(AB.fen); abKickAnalysis(); });
+
+    // PGN quick loader
+    const abPGNState = { fens: [], idx: 0 };
+    document.getElementById('abLoadPGN')?.addEventListener('click', ()=>{
+      const t = document.getElementById('abPgn').value.trim(); if(!t) return;
+      try{
+        const cl = ChessLite(); cl.reset(); const start = cl.fen(); const mixed = cl.loadPGN(t);
+        const fens = [start, ...mixed.filter(x=>x.san).map(x=>x.fenAfter)];
+        abPGNState.fens = fens; abPGNState.idx = 0;
+        document.getElementById('abPGNStatus').textContent = `Move 0/${Math.max(0,fens.length-1)}`;
+        AB.fen = fens[0]; abDrawBoard(AB.fen); abKickAnalysis();
+      }catch(e){ console.warn('abLoadPGN failed', e); }
+    });
+    function abPGNUpdate(){ const n = Math.max(0, (abPGNState.fens.length-1)); document.getElementById('abPGNStatus').textContent = `Move ${abPGNState.idx}/${n}`; }
+    document.getElementById('abPrev')?.addEventListener('click', ()=>{ if(abPGNState.idx>0){ abPGNState.idx--; AB.fen = abPGNState.fens[abPGNState.idx]; abDrawBoard(AB.fen); abPGNUpdate(); abKickAnalysis(); } });
+    document.getElementById('abNext')?.addEventListener('click', ()=>{ if(abPGNState.idx+1<abPGNState.fens.length){ abPGNState.idx++; AB.fen = abPGNState.fens[abPGNState.idx]; abDrawBoard(AB.fen); abPGNUpdate(); abKickAnalysis(); } });
+    document.getElementById('abToStart')?.addEventListener('click', ()=>{ if(abPGNState.fens.length){ abPGNState.idx=0; AB.fen=abPGNState.fens[0]; abDrawBoard(AB.fen); abPGNUpdate(); abKickAnalysis(); } });
+    document.getElementById('abToEnd')?.addEventListener('click', ()=>{ if(abPGNState.fens.length){ abPGNState.idx=Math.max(0,abPGNState.fens.length-1); AB.fen=abPGNState.fens[abPGNState.idx]; abDrawBoard(AB.fen); abPGNUpdate(); abKickAnalysis(); } });
+
+    // Initialize board once the page loads
+    window.addEventListener('load', async ()=>{
+      try{ await ABEngine.ensure(); }catch{}
+      try{ AB.chess.reset(); AB.fen = AB.chess.fen(); document.getElementById('abFenInput').value = AB.fen; }catch{}
+      abDrawBoard(AB.fen);
+    });
+    window.addEventListener('resize', abRenderArrows);
+  })();
+</script>
+
 <script>
   // Simple SPA nav
   function showSection(which){
-    const map = { home:'homeSection', analyze:'analyzeSection', sets:'setsSection', train:'trainSection' };
+    const map = { home:'homeSection', analyze:'analyzeSection', ab:'abSection', sets:'setsSection', train:'trainSection' };
     for(const id of Object.values(map)){
       const el = document.getElementById(id); if(el) el.classList.remove('active');
     }
     const target = document.getElementById(map[which]||'homeSection'); if(target) target.classList.add('active');
     document.getElementById('navHome')?.classList.toggle('active', which==='home');
     document.getElementById('navAnalyze')?.classList.toggle('active', which==='analyze');
+    document.getElementById('navAB')?.classList.toggle('active', which==='ab');
     document.getElementById('navSets')?.classList.toggle('active', which==='sets');
     document.getElementById('navTrain')?.classList.toggle('active', which==='train');
   }
   document.getElementById('navHome')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('home'); });
   document.getElementById('navAnalyze')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('analyze'); });
+  document.getElementById('navAB')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('ab'); });
   document.getElementById('navSets')?.addEventListener('click', (e)=>{ e.preventDefault(); renderSets(); showSection('sets'); });
   document.getElementById('navTrain')?.addEventListener('click', (e)=>{ e.preventDefault(); renderSetsForTrain(); renderActiveSetInfo(); showSection('train'); });
   document.getElementById('btnGoAnalyze')?.addEventListener('click', ()=> showSection('analyze'));

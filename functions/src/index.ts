@@ -183,7 +183,7 @@ export const analyzePGNs = onRequest({ timeoutSeconds: 300 }, async (req: Reques
   if (req.method === "OPTIONS") { res.status(204).end(); return; }
   if (req.method !== "POST") { res.status(405).json({ error: "POST required" }); return; }
   try {
-    const body = (req.body || {}) as { pgns?: string[]; depth?: number; thresholds?: Sev };
+    const body = (req.body || {}) as { pgns?: string[]; depth?: number; thresholds?: Sev; usernames?: string[] };
     const pgns = Array.isArray(body.pgns) ? body.pgns.filter(s => typeof s === 'string' && s.trim()) : [];
     if (!pgns.length) { res.status(400).json({ error: "Missing pgns[]" }); return; }
     const depth = Math.max(6, Math.min(18, parseInt(String(body.depth||12),10) || 12));
@@ -192,10 +192,18 @@ export const analyzePGNs = onRequest({ timeoutSeconds: 300 }, async (req: Reques
       mistake: Math.max(0, (body.thresholds?.mistake ?? 150)),
       blunder: Math.max(0, (body.thresholds?.blunder ?? 300)),
     };
+    const usernames = (Array.isArray(body.usernames) ? body.usernames : []).map(s => String(s||'').toLowerCase()).filter(Boolean);
 
     const { Chess } = await import("chess.js");
     const engine = await createEngine();
     const mistakes: any[] = [];
+
+    function parseHeaders(pgn: string){
+      const h: Record<string,string> = {};
+      const re = /\[(\w+)\s+"([^"]*)"\]/g; let m: RegExpExecArray|null;
+      while((m = re.exec(pgn||''))) h[m[1]] = m[2];
+      return h;
+    }
 
     for (const pgn of pgns) {
       const chess = new Chess();
@@ -203,9 +211,20 @@ export const analyzePGNs = onRequest({ timeoutSeconds: 300 }, async (req: Reques
       // Re-iterate from start to get sequence
       const game = new Chess();
       const moves = chess.history({ verbose: true });
+      // Determine user's side from provided usernames and PGN headers
+      let sideWanted: 'w'|'b'|null = null;
+      if (usernames.length){
+        try{
+          const h = parseHeaders(pgn);
+          const w = String(h.White||'').toLowerCase();
+          const b = String(h.Black||'').toLowerCase();
+          for(const nm of usernames){ if(w===nm || w.includes(nm)) { sideWanted='w'; break; } if(b===nm || b.includes(nm)) { sideWanted='b'; break; } }
+        }catch{}
+      }
       for (const mv of moves) {
         const fenBefore = game.fen();
         const side = game.turn();
+        if (sideWanted && side !== sideWanted) { game.move({ from: mv.from, to: mv.to, promotion: mv.promotion }); continue; }
         const { cp: cpBefore, bestmove, pv } = await engine.analyze(fenBefore, depth);
         // apply move
         game.move({ from: mv.from, to: mv.to, promotion: mv.promotion });

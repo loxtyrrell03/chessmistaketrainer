@@ -20,13 +20,19 @@
       • Board squish & piece legibility; consistent classic board palette; aspect ratio fixed
       • Red arrow for your move (immediately); green arrow for best (only after Reveal)
       • Import tab (was Analyze) + working game viewer board on Import page
-      • “Analyse mistakes” (green) ↔ “Stop analysis” (red) toggle
+      • “Analyse mistakes” (green) ↔ “Stop analysis” (red) ↔ “Continue analysis” instant toggle
       • “Import PGN” (replaces “Analyze PGN”) — only imports to list for backend analysis
       • Clear imports button removes imported games and mistakes originating from them
       • Set creation de‑duped; “Train” in Sets opens Train tab and auto-starts SRS on that set
       • SAN notation throughout (best/your move)
 
-    MIT-style: extend/adapt freely.
+    New in this patch:
+      • FIX: Best-move green arrow and red arrows (original mistake + your attempt) reliably render on the TRAIN board only.
+      • SHOW: Original mistake is displayed/logged; your attempt is shown separately.
+      • GAME INFO: PGN shows only the first line + Copy PGN button; game link shown where available.
+      • ANALYSIS UX: Stop is instant. You can Continue where it left off. Mistakes found so far are kept.
+      • CREATE SET: A “Create set from found mistakes” button appears under Imported games when you stop/finish.
+      • USER-ONLY: Analysis filters mistakes to your color only (Auto via username, or force White/Black).
   -->
   <style>
     :root{
@@ -264,6 +270,11 @@
             <b>Imported Games</b>
             <span class="tiny muted" id="importHelp">Fetched games will appear here.</span>
             <span style="margin-left:auto"></span>
+            <select id="yourSideSel" title="Only analyze your mistakes" class="ghost" style="max-width:160px">
+              <option value="auto" selected>Your side: Auto</option>
+              <option value="w">White only</option>
+              <option value="b">Black only</option>
+            </select>
             <button id="btnAnalyzeImported" class="btn-green" title="Analyse mistakes (server)">Analyse mistakes</button>
             <button id="btnClearImports" class="ghost" title="Clear imported games & their mistakes">Clear imports</button>
           </div>
@@ -298,6 +309,11 @@
             <div class="board board-mini" style="margin-top:8px">
               <div id="gvBoard" class="grid8" aria-label="game-viewer-board"></div>
             </div>
+          </div>
+
+          <!-- Appears when analysis stopped/finished and at least 1 mistake found -->
+          <div id="createSetFromImportsWrap" style="margin-top:10px; display:none; text-align:right">
+            <button id="btnCreateSetFromImports" class="btn-green">Create set from found mistakes</button>
           </div>
         </div>
 
@@ -399,7 +415,7 @@
       <div class="card">
         <h2>Board</h2>
         <div class="board-wrap" style="margin-top:10px">
-          <div class="board">
+          <div class="board" id="trainBoard">
             <div id="board" class="grid8" aria-label="chessboard"></div>
           </div>
           <div style="flex:1;min-width:260px">
@@ -413,7 +429,8 @@
               <div class="tiny muted" id="mInfo">—</div>
               <div class="tiny" style="margin-top:6px"><b>Goal:</b> find the best move from this position.</div>
               <div class="tiny"><b>Side to move:</b> <span id="sideToMove">—</span></div>
-              <div class="tiny"><b>Your move:</b> <span id="yourMove">—</span></div>
+              <div class="tiny"><b>Your move (in game):</b> <span id="origYourMove">—</span></div>
+              <div class="tiny"><b>Your attempt:</b> <span id="yourMove">—</span></div>
               <div class="tiny"><b>Feedback:</b> <span id="feedback">—</span></div>
               <div class="row" style="margin-top:8px">
                 <button id="btnReveal" class="secondary">Reveal best</button>
@@ -553,10 +570,10 @@
         aSnap.forEach(d => batch.delete(doc(aCol, d.id)));
         await batch.commit();
       },
-      async logAttemptRemote(mId, correct, ts){
+      async logAttemptRemote(mId, correct, ts, move){
         if(!api.user) return;
         const aCol = collection(db, 'users', api.user.uid, 'attempts');
-        await addDoc(aCol, { id:mId, correct:!!correct, ts:ts||Date.now() });
+        await addDoc(aCol, { id:mId, correct:!!correct, ts:ts||Date.now(), move: move||null });
       },
       async getAttemptsRemote(){
         if(!api.user) return [];
@@ -649,11 +666,11 @@
       if(fb()) fb().clearAllRemote().catch(()=>{});
       renderMistakeList(); renderStats();
     }
-    function logAttempt(mId, correct){
+    function logAttempt(mId, correct, moveUCI){
       const arr = JSON.parse(localStorage.getItem(LS_ATTEMPTS)||'[]');
-      const rec = { id:mId, ts:nowTs(), correct:!!correct };
+      const rec = { id:mId, ts:nowTs(), correct:!!correct, move: moveUCI||null };
       arr.push(rec); localStorage.setItem(LS_ATTEMPTS, JSON.stringify(arr));
-      if(fb()) fb().logAttemptRemote(mId, correct, rec.ts).catch(()=>{});
+      if(fb()) fb().logAttemptRemote(mId, correct, rec.ts, moveUCI).catch(()=>{});
       renderStats();
     }
     function getAttempts(){
@@ -1010,7 +1027,7 @@
     }
 
     /********************************************************************
-     * SAN helper for UI (UCI -> SAN)
+     * SAN/PGN helpers for UI
      ********************************************************************/
     function uciToSAN(fen, uci){
       if(!fen || !uci) return uci || '—';
@@ -1036,7 +1053,7 @@
           else disamb = mv.from;
         }
       }
-      const isCapture = !!mv.captured;
+      const isCapture = !!mv.captured; // our generator doesn't detect captures; left as-is
       let san = '';
       if(isPawn){ san = (isCapture ? (mv.from[0] + 'x') : '') + mv.to; }
       else { san = pieceLetter + disamb + (isCapture?'x':'') + mv.to; }
@@ -1045,6 +1062,17 @@
       const opp = tmp.turn(); const inCheck = tmp.inCheck(opp); const hasReply = tmp.moves().length>0;
       if(inCheck) san += hasReply ? '+' : '#';
       return san;
+    }
+    function sanToUCI(fen, san){
+      if(!fen || !san) return null;
+      const cl = ChessLite(); cl.loadFEN(fen);
+      return cl.parseSANtoMove(san);
+    }
+    function firstPGNLine(pgn){
+      try{
+        const line = (pgn||'').split('\n').find(l=>l.trim().length>0) || '';
+        return line.trim();
+      }catch{return '—'}
     }
 
     /********************************************************************
@@ -1121,9 +1149,19 @@
       const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pgns,depth:12,thresholds:thr})});
       if(!res.ok) throw new Error(`analyzePGNs failed ${res.status}`);
       const json=await res.json();
-      // ensure PGN carried through for later clearing/filtering
-      (json.mistakes||[]).forEach(m=>{ if(!m.pgn && pgns.length===1) m.pgn=pgns[0]; });
-      return json.mistakes||[];
+      const mistakes=(json.mistakes||[]);
+
+      // attach pgn and gameUrl for each resulting mistake
+      for(const m of mistakes){
+        // If single PGN we can copy; otherwise backend includes per-record pgn association
+        if(!m.pgn && pgns.length===1) m.pgn = pgns[0];
+        try{
+          const h = parsePGNHeaders(m.pgn || '');
+          const urlHdr = h.Site || h.Link || '';
+          if(urlHdr && /^https?:\/\//i.test(urlHdr)) m.gameUrl = urlHdr;
+        }catch{}
+      }
+      return mistakes;
     }
     async function analyzeOnServer(pgn, depth=12){
       const base=(window.SF_BACKEND_URL||'').replace(/\/$/,''); if(!base) throw new Error('SF_BACKEND_URL not set');
@@ -1132,43 +1170,119 @@
       const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pgn,depth,thresholds:thr})});
       if(!res.ok) throw new Error(`Stockfish backend error ${res.status}`);
       const data=await res.json(); const mistakes=data.mistakes||[];
-      try{ const h=parsePGNHeaders(pgn); const urlHdr=h.Site||h.Link||''; mistakes.forEach(m=>{m.pgn=pgn; if(urlHdr && /^https?:\/\//i.test(urlHdr)) m.gameUrl=urlHdr;}); }catch{}
+      try{
+        const h=parsePGNHeaders(pgn); const urlHdr=h.Site||h.Link||'';
+        mistakes.forEach(m=>{ m.pgn=pgn; if(urlHdr && /^https?:\/\//i.test(urlHdr)) m.gameUrl=urlHdr; });
+      }catch{}
       return mistakes;
     }
 
-    async function analyzeImportedWithBackendAbortable(state){
-      const info=window.lastFetchedPGNs;
-      const list = info && Array.isArray(info.pgns) ? info.pgns : [];
-      if(!list.length){ alert('No imported games found. Import games first.'); return; }
-      const all=[];
-      let i=0;
-      for(const pgn of list){
-        if(state.stop) break;
-        setStatus(`Analyzing ${++i}/${list.length}…`);
-        try{
-          if(window.SF_BACKEND_URL){ const ms=await analyzeOnServer(pgn,12); all.push(...ms); }
-          else if(window.FN_BASE){ const ms=await analyzeOnBackend([pgn]); all.push(...ms); }
-          else{
-            // Local fallback: very slow; avoid on large batches
-            const ms = await analyzeManualLocal(pgn); all.push(...ms);
-          }
-        }catch(e){ console.warn('Analyze failed:', e); }
-      }
-      if(all.length) addMistakes(all);
-      if(!state.stop){
-        const tag=(info && info.source) ? info.source : 'Imported';
-        const set=createSetFromMistakes(all, `${tag} ${new Date().toLocaleString()}`);
-        setActiveSet(set); renderActiveSetInfo();
-        setStatus(`Done. Added ${all.length} mistakes.`);
-      }else{
-        setStatus('Analysis stopped.');
-      }
+    /* ---------- User-only filtering ---------- */
+    function inferUsernames(){
+      const names=[];
+      const u1=$('#lichessUser')?.value.trim(); if(u1) names.push(u1.toLowerCase());
+      const u2=$('#chesscomUser')?.value.trim(); if(u2) names.push(u2.toLowerCase());
+      window.LAST_USERNAMES = new Set(names);
+    }
+    function userSideForPGN(pgn){
+      try{
+        const pref = ($('#yourSideSel')?.value)||'auto';
+        if(pref==='w' || pref==='b') return pref;
+        const h=parsePGNHeaders(pgn||''); const w=(h.White||'').toLowerCase(); const b=(h.Black||'').toLowerCase();
+        const us = window.LAST_USERNAMES || new Set();
+        for(const name of us){
+          if(!name) continue;
+          if(w===name || w.includes(name)) return 'w';
+          if(b===name || b.includes(name)) return 'b';
+        }
+        return null; // unknown in auto mode
+      }catch{return null;}
     }
 
-    // Very last-resort local analysis (slow); keep minimal
+    function filterMistakesToUserOnly(ms){
+      if(!ms || !ms.length) return [];
+      const out=[];
+      for(const m of ms){
+        const pgn = m.pgn || '';
+        const side = userSideForPGN(pgn);
+        if(side===null){
+          // Auto but couldn't resolve — skip to ensure we only keep user's mistakes
+          continue;
+        }
+        if(m.side === side) out.push(m);
+      }
+      return out;
+    }
+
+    /* ---------- Abortable, resumable analysis state ---------- */
+    let ANALYZE_STATE = { status:'idle', stop:false, idx:0, results:[], list:[], source:'' };
+
+    function updateAnalyzeButtonsUI(){
+      const btn = $('#btnAnalyzeImported'); if(!btn) return;
+      if(ANALYZE_STATE.status==='running'){
+        btn.textContent='Stop analysis';
+        btn.classList.add('btn-red'); btn.classList.remove('btn-green');
+        btn.dataset.state='running';
+      }else if(ANALYZE_STATE.status==='paused'){
+        btn.textContent='Continue analysis';
+        btn.classList.remove('btn-red'); btn.classList.add('btn-green');
+        btn.dataset.state='paused';
+      }else{
+        btn.textContent='Analyse mistakes';
+        btn.classList.remove('btn-red'); btn.classList.add('btn-green');
+        btn.dataset.state='idle';
+      }
+    }
+    function updateCreateSetFromImportsVisibility(){
+      const wrap = $('#createSetFromImportsWrap'); if(!wrap) return;
+      wrap.style.display = (ANALYZE_STATE.results && ANALYZE_STATE.results.length && (ANALYZE_STATE.status==='paused' || ANALYZE_STATE.status==='done')) ? 'block' : 'none';
+    }
+
+    async function runAnalysisLoop(){
+      const info = window.lastFetchedPGNs;
+      if(!info || !Array.isArray(info.pgns) || !info.pgns.length){ setStatus('No imported games found.'); ANALYZE_STATE.status='idle'; updateAnalyzeButtonsUI(); return; }
+
+      const list = ANALYZE_STATE.list;
+      for(; ANALYZE_STATE.idx < list.length; ANALYZE_STATE.idx++){
+        if(ANALYZE_STATE.stop || ANALYZE_STATE.status!=='running'){ ANALYZE_STATE.status='paused'; setStatus('Analysis paused.'); updateAnalyzeButtonsUI(); updateCreateSetFromImportsVisibility(); return; }
+
+        const cur = list[ANALYZE_STATE.idx];
+        setStatus(`Analyzing ${ANALYZE_STATE.idx+1}/${list.length}…`);
+
+        try{
+          let ms = [];
+          if(window.SF_BACKEND_URL) ms = await analyzeOnServer(cur,12);
+          else if(window.FN_BASE) { const chunk = await analyzeOnBackend([cur]); ms = chunk.filter(x=>x && (x.pgn ? x.pgn===cur : true)); }
+          else { const chunk = await analyzeManualLocal(cur); ms = chunk; }
+
+          // ensure pgn/gameUrl attached & filter to user-only
+          ms = ms.map(m => { if(!m.pgn) m.pgn = cur; try{ const h=parsePGNHeaders(cur); const urlHdr=h.Site||h.Link||''; if(urlHdr && /^https?:\/\//i.test(urlHdr)) m.gameUrl=urlHdr; }catch{} return m; });
+          ms = filterMistakesToUserOnly(ms);
+
+          if(ms.length){
+            ANALYZE_STATE.results.push(...ms);
+            addMistakes(ms); // persist incrementally
+          }
+        }catch(e){
+          console.warn('Analyze failed:', e);
+        }
+      }
+      ANALYZE_STATE.status='done';
+      setStatus(`Done. Added ${ANALYZE_STATE.results.length} mistake(s).`);
+      updateAnalyzeButtonsUI();
+      updateCreateSetFromImportsVisibility();
+    }
+
     async function analyzeManualLocal(pgn){
       const cl=ChessLite(); const seq=cl.loadPGN(pgn).filter(x=>x.san);
       const mistakes=[]; const cl2=ChessLite(); cl2.reset();
+
+      // Determine which side is user for this PGN; if unknown -> skip recording mistakes entirely
+      const sideWanted = userSideForPGN(pgn);
+      if(sideWanted===null){
+        console.info('User side could not be inferred in AUTO mode; skipping mistakes for this PGN.');
+      }
+
       for(const mv of seq){
         const fenBefore=cl2.fen(); const sideToMove=cl2.turn();
         const { cp:cpBefore, bestmove } = await Engine.analyze(fenBefore,12);
@@ -1176,8 +1290,10 @@
         cl2.moveUci(uci); const fenAfter=cl2.fen();
         const { cp:cpAfter } = await Engine.analyze(fenAfter,12);
         const drop=Math.max(0, cpBefore + cpAfter); const sev=severityFromDrop(drop);
-        if(sev){
-          mistakes.push({ id:uid(), fen:fenBefore, side:sideToMove, played:mv.san, best:bestmove, deltaCp:drop, severity:sev, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn });
+
+        // Only keep if this move belongs to the user's side
+        if(sev && (sideWanted ? (sideToMove===sideWanted) : false)){
+          mistakes.push({ id:uid(), fen:fenBefore, side:sideToMove, played:mv.san, best:bestmove, deltaCp:drop, severity:sev, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn, gameUrl: (parsePGNHeaders(pgn).Site||'') });
         }
       }
       return mistakes;
@@ -1278,8 +1394,8 @@
       }
       function startSRS(){ queue = pickDueSRS(); mode='srs'; next(); }
       function next(){
-        $('#yourMove').textContent='—'; $('#feedback').textContent='—';
-        BOARD.arrows.user=null; BOARD.arrows.showBest=false; renderArrows();
+        $('#yourMove').textContent='—'; $('#origYourMove').textContent='—'; $('#feedback').textContent='—';
+        BOARD.arrows.userOrig=null; BOARD.arrows.userAttempt=null; BOARD.arrows.showBest=false; renderArrows();
         if(queue.length===0){
           if(mode==='srs'){ queue = pickDueSRS(); if(queue.length===0){ $('#mInfo').textContent='No SRS items due now. 🎉'; active=null; drawBoardMain(null); return; } }
           else { $('#mInfo').textContent='Woodpecker set complete. ✅'; active=null; drawBoardMain(null); return; }
@@ -1292,19 +1408,19 @@
         const yourSan = uciToSAN(active.fen, moveUci);
         $('#yourMove').textContent = yourSan || moveUci || '—';
 
-        // show your move arrow (red) immediately
-        BOARD.arrows.user = moveUci || null; BOARD.arrows.showBest=false; renderArrows();
+        // show your attempt arrow (red, solid) immediately
+        BOARD.arrows.userAttempt = moveUci || null; BOARD.arrows.showBest=false; renderArrows();
 
         if(correct){
           $('#feedback').innerHTML = '✔️ Correct (best move)';
           const list = loadMistakes(); const idx=list.findIndex(m=>m.id===active.id);
           if(idx>=0){ const q=(mode==='srs') ? (pendingFirstTry?5:3) : (pendingFirstTry?5:4); sm2Update(list[idx], q); saveMistakes(list); }
-          logAttempt(active.id, true);
+          logAttempt(active.id, true, moveUci);
           next();
         }else{
           const bestSan = uciToSAN(active.fen, active.best);
           $('#feedback').innerHTML = `❌ Not the best. <span class="mono">Best = ${bestSan || active.best}</span>`;
-          logAttempt(active.id, false);
+          logAttempt(active.id, false, moveUci);
           pendingFirstTry=false;
           if(mode==='woodpecker') queue.push(active);
         }
@@ -1316,16 +1432,16 @@
      * Board rendering + arrows
      ********************************************************************/
     const PIECES = {'P':'♙','N':'♘','B':'♗','R':'♖','Q':'♕','K':'♔','p':'♟','n':'♞','b':'♝','r':'♜','q':'♛','k':'♚'};
-    const BOARD = { current:null, selected:null, highlights:new Set(), chess:ChessLite(), arrows:{ user:null, best:null, showBest:false } };
+    const BOARD = { current:null, selected:null, highlights:new Set(), chess:ChessLite(), arrows:{ userOrig:null, userAttempt:null, best:null, showBest:false } };
 
     function ensureArrowCanvas(){
-      const outer = document.querySelector('.board'); if(!outer) return null;
+      const outer = document.getElementById('trainBoard'); if(!outer) return null;
       let cv = document.getElementById('boardArrows');
       if(!cv){ cv=document.createElement('canvas'); cv.id='boardArrows'; Object.assign(cv.style,{position:'absolute', inset:'0', pointerEvents:'none'}); outer.appendChild(cv); }
       const rect = outer.getBoundingClientRect();
       const dpr = Math.min(2, (window.devicePixelRatio || 1));
-      cv.width = Math.floor(rect.width*dpr); cv.height = Math.floor(rect.height*dpr); cv.style.width=rect.width+'px'; cv.style.height=rect.height+'px';
-      return { cv, dpr };
+      cv.width = Math.max(1, Math.floor(rect.width*dpr)); cv.height = Math.max(1, Math.floor(rect.height*dpr)); cv.style.width=rect.width+'px'; cv.style.height=rect.height+'px';
+      return { cv, dpr, rect };
     }
     function sqCenterPx(sq, rectW, rectH, dpr){
       const files='abcdefgh'; const f=files.indexOf(sq[0]); const r=parseInt(sq[1],10)-1;
@@ -1333,11 +1449,14 @@
       if(!ORIENT_WHITE_BOTTOM){ col=7-col; row=7-row; }
       const cellW=rectW/8, cellH=rectH/8; return { x:dpr*((col+0.5)*cellW), y:dpr*((row+0.5)*cellH) };
     }
-    function drawArrow(ctx,dpr,from,to,color){
-      const outer=document.querySelector('.board'); if(!outer) return;
+    function drawArrow(ctx,dpr,from,to,color, dashed){
+      const outer=document.getElementById('trainBoard'); if(!outer) return;
       const rect=outer.getBoundingClientRect();
       const a=sqCenterPx(from, rect.width, rect.height, dpr);
       const b=sqCenterPx(to, rect.width, rect.height, dpr);
+      ctx.save();
+      if(dashed && ctx.setLineDash) ctx.setLineDash([10*dpr, 8*dpr]);
+      ctx.globalAlpha = dashed ? 0.8 : 1;
       ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=6*dpr; ctx.lineCap='round';
       ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
       const ang=Math.atan2(b.y-a.y,b.x-a.x); const size=12*dpr;
@@ -1345,12 +1464,16 @@
       ctx.lineTo(b.x-size*Math.cos(ang-Math.PI/6), b.y-size*Math.sin(ang-Math.PI/6));
       ctx.lineTo(b.x-size*Math.cos(ang+Math.PI/6), b.y-size*Math.sin(ang+Math.PI/6));
       ctx.closePath(); ctx.fill();
+      ctx.restore();
     }
     function renderArrows(){
       const info=ensureArrowCanvas(); if(!info) return;
       const {cv,dpr}=info; const ctx=cv.getContext('2d'); if(!ctx) return; ctx.clearRect(0,0,cv.width,cv.height);
-      const u=BOARD.arrows.user; if(u){ drawArrow(ctx,dpr,u.slice(0,2),u.slice(2,4),getComputedStyle(document.documentElement).getPropertyValue('--arrow-user').trim()||'#ff5c5c'); }
-      const b=BOARD.arrows.best; if(b && BOARD.arrows.showBest){ drawArrow(ctx,dpr,b.slice(0,2),b.slice(2,4),getComputedStyle(document.documentElement).getPropertyValue('--arrow-best').trim()||'#2ecc71'); }
+      const red = getComputedStyle(document.documentElement).getPropertyValue('--arrow-user').trim()||'#ff5c5c';
+      const green = getComputedStyle(document.documentElement).getPropertyValue('--arrow-best').trim()||'#2ecc71';
+      const uo=BOARD.arrows.userOrig; if(uo){ drawArrow(ctx,dpr,uo.slice(0,2),uo.slice(2,4),red,true); }   // dashed = original mistake
+      const ua=BOARD.arrows.userAttempt; if(ua){ drawArrow(ctx,dpr,ua.slice(0,2),ua.slice(2,4),red,false); } // solid = current attempt
+      const b=BOARD.arrows.best; if(b && BOARD.arrows.showBest){ drawArrow(ctx,dpr,b.slice(0,2),b.slice(2,4),green,false); }
     }
 
     function drawBoardInto(rootId, fen, whiteBottom){
@@ -1433,19 +1556,55 @@
       }
     }
 
+    function playedUCIFromMistake(m){
+      if(!m) return null;
+      const val = m.played || '';
+      if(/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(val)) return val;            // already UCI
+      const u = sanToUCI(m.fen, val); if(u) return u;                       // convert SAN to UCI
+      return null;
+    }
+
     function loadMistakeOnBoard(m){
       if(!m){ drawBoardMain(null); return; }
       gvHide();
       $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> · <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · Δcp ${Math.round(m.deltaCp)}`;
       $('#yourMove').textContent='—'; $('#feedback').textContent='—';
-      ORIENT_WHITE_BOTTOM = (m.side==='w'); drawBoardMain(m.fen);
-      BOARD.arrows.best = m.best || null; BOARD.arrows.user = null; BOARD.arrows.showBest = false; renderArrows();
 
-      // Update info
+      ORIENT_WHITE_BOTTOM = (m.side==='w'); drawBoardMain(m.fen);
+
+      // Arrows: original mistake (red dashed), best (green after Reveal)
+      const origUci = playedUCIFromMistake(m);
+      BOARD.arrows.userOrig = origUci || null;
+      BOARD.arrows.userAttempt = null;
+      BOARD.arrows.best = m.best || null;
+      BOARD.arrows.showBest = false;
+      renderArrows();
+
+      // Update info (FEN/PGN/link + original move text)
       try{
         const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent=`FEN: ${m.fen}`;
-        const pgnEl=$('#trainPgn'); if(pgnEl) pgnEl.textContent=`PGN: ${m.pgn ? m.pgn : '—'}`;
-        const linkEl=$('#trainLink'); if(linkEl){ if(m.gameUrl){ linkEl.textContent='Open game'; linkEl.href=m.gameUrl; } else { linkEl.textContent='—'; linkEl.href='#'; } }
+
+        // Original move text
+        let origText = m.played || '—';
+        if(/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(origText)){ origText = uciToSAN(m.fen, origText); }
+        $('#origYourMove').textContent = origText;
+
+        // PGN: first line only + Copy button
+        const pgnLine = firstPGNLine(m.pgn||'—');
+        const pgnEl=$('#trainPgn');
+        if(pgnEl){
+          pgnEl.innerHTML = `PGN: <span class="mono">${pgnLine}</span> <button id="copyPgnBtn" class="ghost tiny" style="margin-left:8px">Copy PGN</button>`;
+          window.CURRENT_PGN = m.pgn || '';
+          $('#copyPgnBtn')?.addEventListener('click', async () => {
+            try{ await navigator.clipboard.writeText(window.CURRENT_PGN||''); setStatus('PGN copied to clipboard.'); }catch{ setStatus('Copy failed'); }
+          });
+        }
+
+        const linkEl=$('#trainLink');
+        if(linkEl){
+          if(m.gameUrl){ linkEl.textContent='Open game'; linkEl.href=m.gameUrl; }
+          else { linkEl.textContent='—'; linkEl.href='#'; }
+        }
       }catch{}
     }
 
@@ -1476,7 +1635,7 @@
           <td class="mono tiny">${bestSan}</td>
           <td class="mono tiny">${Math.round(m.deltaCp||0)}</td>
           <td class="tiny">${tsToDate(m.nextReview)}</td>`;
-        tr.addEventListener('click', ()=>{ loadMistakeOnBoard(m); });
+        tr.addEventListener('click', ()=>{ loadMistakeOnBoard(m); showSection('train'); });
         tb.appendChild(tr);
       });
       $('#statTotal').textContent=list.length;
@@ -1499,23 +1658,40 @@
     /********************************************************************
      * Import controls & toggles
      ********************************************************************/
-    let ANALYZE_STATE = { stop:false };
     const btnAnalyze = $('#btnAnalyzeImported');
     btnAnalyze?.addEventListener('click', async () => {
-      if(btnAnalyze.dataset.state!=='running'){
-        // start analysis
-        btnAnalyze.dataset.state='running';
-        btnAnalyze.textContent='Stop analysis';
-        btnAnalyze.classList.remove('btn-green'); btnAnalyze.classList.add('btn-red');
-        ANALYZE_STATE={stop:false};
-        try{ await analyzeImportedWithBackendAbortable(ANALYZE_STATE); }catch(e){ setStatus('Error: '+(e?.message||e)); }
-        btnAnalyze.dataset.state='idle';
-        btnAnalyze.textContent='Analyse mistakes';
-        btnAnalyze.classList.remove('btn-red'); btnAnalyze.classList.add('btn-green');
-      }else{
-        // stop analysis
+      inferUsernames();
+      const info=window.lastFetchedPGNs;
+      if(!info || !Array.isArray(info.pgns) || !info.pgns.length) { alert('No imported games found. Import games first.'); return; }
+
+      if(ANALYZE_STATE.status==='idle' || ANALYZE_STATE.status==='done'){
+        ANALYZE_STATE = { status:'running', stop:false, idx:0, results:[], list:[...info.pgns], source: (info.source||'Imported') };
+        updateAnalyzeButtonsUI();
+        updateCreateSetFromImportsVisibility();
+        try{ await runAnalysisLoop(); }catch(e){ setStatus('Error: '+(e?.message||e)); ANALYZE_STATE.status='paused'; updateAnalyzeButtonsUI(); updateCreateSetFromImportsVisibility(); }
+      }else if(ANALYZE_STATE.status==='running'){
+        // stop immediately (instant UI change)
         ANALYZE_STATE.stop=true;
+        ANALYZE_STATE.status='paused';
+        setStatus('Stopping after current game…');
+        updateAnalyzeButtonsUI();
+        updateCreateSetFromImportsVisibility();
+      }else if(ANALYZE_STATE.status==='paused'){
+        ANALYZE_STATE.stop=false;
+        ANALYZE_STATE.status='running';
+        updateAnalyzeButtonsUI();
+        updateCreateSetFromImportsVisibility();
+        try{ await runAnalysisLoop(); }catch(e){ setStatus('Error: '+(e?.message||e)); ANALYZE_STATE.status='paused'; updateAnalyzeButtonsUI(); updateCreateSetFromImportsVisibility(); }
       }
+    });
+
+    $('#btnCreateSetFromImports')?.addEventListener('click', () => {
+      if(!ANALYZE_STATE.results || !ANALYZE_STATE.results.length){ alert('No mistakes found yet.'); return; }
+      const def = `${ANALYZE_STATE.source||'Imported'} ${new Date().toLocaleString()}`;
+      const name = prompt('Set name', def) || def;
+      const set = createSetFromMistakes(ANALYZE_STATE.results, name);
+      setActiveSet(set); renderActiveSetInfo();
+      setStatus(`Set “${set.name}” created with ${set.keys.length} unique position(s).`);
     });
 
     $('#btnClearImports')?.addEventListener('click', () => {
@@ -1531,6 +1707,9 @@
       const tb=$('#importTBody'); if(tb) tb.innerHTML='';
       const help=$('#importHelp'); if(help) help.textContent='Imported games cleared.';
       window.lastFetchedPGNs = { source:'', pgns:[] };
+      ANALYZE_STATE = { status:'idle', stop:false, idx:0, results:[], list:[], source:'' };
+      updateAnalyzeButtonsUI();
+      updateCreateSetFromImportsVisibility();
       gvHide();
     });
 
@@ -1605,6 +1784,8 @@
       document.getElementById('navAnalyze')?.classList.toggle('active', which==='analyze');
       document.getElementById('navSets')?.classList.toggle('active', which==='sets');
       document.getElementById('navTrain')?.classList.toggle('active', which==='train');
+      // Recompute arrows when showing Train (sizes change)
+      if(which==='train'){ setTimeout(renderArrows, 50); }
     }
     document.getElementById('navHome')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('home'); });
     document.getElementById('navAnalyze')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('analyze'); });

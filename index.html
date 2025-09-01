@@ -104,7 +104,7 @@
     .board-wrap{display:flex;gap:14px;align-items:flex-start}
     .board{
       width:min(84vw, 520px);height:min(84vw, 520px);
-      background:#ddd;border-radius:12px;overflow:hidden;border:1px solid #c7cdd8
+      background:#ddd;border-radius:12px;overflow:hidden;border:1px solid #c7cdd8;position:relative
     }
     .grid8{
       display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);width:100%;height:100%;
@@ -1429,6 +1429,13 @@ window.addEventListener('unhandledrejection', (e) => {
     }
 
     async function analyzeLichessPGN(pgn){
+      // Prefer server-side analysis if available
+      try{
+        if(window.FN_BASE){
+          const out = await analyzeOnBackend([pgn]);
+          if(out && out.length) return out;
+        }
+      }catch{}
       const cl = ChessLite();
       const mixed = cl.loadPGN(pgn);
       const seq = parseLichessEvalsFromMoves(mixed).filter(m => m.san); // only moves
@@ -1473,6 +1480,13 @@ window.addEventListener('unhandledrejection', (e) => {
     }
 
     async function analyzeManualOrChesscomPGN(pgn){
+      // Prefer server-side analysis if available
+      try{
+        if(window.FN_BASE){
+          const out = await analyzeOnBackend([pgn]);
+          if(out && out.length) return out;
+        }
+      }catch{}
       // depth-12 on every ply: compute cp_before (stm) and cp_after (opp stm),
       // drop for mover = max(0, cp_before + cp_after)
       const cl = ChessLite();
@@ -1508,6 +1522,16 @@ window.addEventListener('unhandledrejection', (e) => {
         }
       }
       return mistakes;
+    }
+
+    // Call backend analyze function with a list of PGNs
+    async function analyzeOnBackend(pgns){
+      const url = `${window.FN_BASE}/analyzePGNs`;
+      const thr = getSev();
+      const res = await fetch(url, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ pgns, depth: 12, thresholds: thr }) });
+      if(!res.ok) throw new Error(`analyzePGNs failed ${res.status}`);
+      const json = await res.json();
+      return json.mistakes || [];
     }
 
     /********************************************************************
@@ -1716,6 +1740,53 @@ window.addEventListener('unhandledrejection', (e) => {
       'p':'♟','n':'♞','b':'♝','r':'♜','q':'♛','k':'♚'
     };
     const BOARD = { current: null, selected: null, highlights: new Set(), chess: ChessLite() };
+    BOARD.activeArrow = null; // UCI like e2e4
+    function ensureArrowCanvas(){
+      const outer = document.querySelector('.board'); if(!outer) return null;
+      let cv = document.getElementById('boardArrows');
+      if(!cv){
+        cv = document.createElement('canvas');
+        cv.id = 'boardArrows';
+        Object.assign(cv.style, { position:'absolute', inset:'0', pointerEvents:'none' });
+        outer.appendChild(cv);
+      }
+      const rect = outer.getBoundingClientRect();
+      const dpr = Math.min(2, (window.devicePixelRatio || 1));
+      cv.width = Math.floor(rect.width*dpr);
+      cv.height = Math.floor(rect.height*dpr);
+      cv.style.width = rect.width+'px';
+      cv.style.height = rect.height+'px';
+      return { cv, dpr };
+    }
+    function sqCenterPx(sq, rectW, rectH, dpr){
+      const files = 'abcdefgh'; const f = files.indexOf(sq[0]); const r = parseInt(sq[1],10)-1; // 0..7
+      let col = f; let row = 7-r; // white bottom
+      if(!ORIENT_WHITE_BOTTOM){ col = 7-col; row = 7-row; }
+      const cellW = rectW/8, cellH = rectH/8;
+      return { x: dpr*((col+0.5)*cellW), y: dpr*((row+0.5)*cellH) };
+    }
+    function renderArrows(){
+      const ctxInfo = ensureArrowCanvas(); if(!ctxInfo) return;
+      const { cv, dpr } = ctxInfo; const ctx = cv.getContext('2d');
+      if(!ctx) return; ctx.clearRect(0,0,cv.width,cv.height);
+      const uci = BOARD.activeArrow;
+      if(!uci) return;
+      const outer = document.querySelector('.board'); if(!outer) return; const rect = (outer).getBoundingClientRect();
+      const from = uci.slice(0,2); const to = uci.slice(2,4);
+      const a = sqCenterPx(from, rect.width, rect.height, dpr);
+      const b = sqCenterPx(to, rect.width, rect.height, dpr);
+      ctx.strokeStyle = '#4f8cff'; ctx.fillStyle = '#4f8cff'; ctx.lineWidth = 6*dpr; ctx.lineCap='round';
+      // line
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      // arrow head
+      const ang = Math.atan2(b.y-a.y, b.x-a.x);
+      const size = 12*dpr;
+      ctx.beginPath();
+      ctx.moveTo(b.x, b.y);
+      ctx.lineTo(b.x - size*Math.cos(ang - Math.PI/6), b.y - size*Math.sin(ang - Math.PI/6));
+      ctx.lineTo(b.x - size*Math.cos(ang + Math.PI/6), b.y - size*Math.sin(ang + Math.PI/6));
+      ctx.closePath(); ctx.fill();
+    }
 
     function drawBoard(fen){
       const root = $('#board');
@@ -1784,6 +1855,7 @@ window.addEventListener('unhandledrejection', (e) => {
       BOARD.selected = null;
       BOARD.highlights.clear();
       showHints();
+      renderArrows();
     }
 
     function showHints(fromUciFrom=null){
@@ -1858,10 +1930,18 @@ window.addEventListener('unhandledrejection', (e) => {
       $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> · <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · Δcp ${Math.round(m.deltaCp)}`;
       $('#yourMove').textContent = '—';
       $('#feedback').textContent = '—';
+      // Show best line if available
+      if(m.pvUci && Array.isArray(m.pvUci) && m.pvUci.length){
+        const pvTxt = (m.pvUci||[]).join(' ');
+        $('#mInfo').innerHTML += ` · PV <span class="mono">${pvTxt}</span>`;
+      }
       drawBoard(m.fen);
       // Auto-orient to side to move
       ORIENT_WHITE_BOTTOM = (m.side==='w');
       drawBoard(m.fen);
+      // Draw best arrow
+      BOARD.activeArrow = m.best || null;
+      renderArrows();
     }
 
     // Reveal & Next buttons

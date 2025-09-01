@@ -8,58 +8,53 @@
     Personal Chess Mistake Trainer (single-file app)
 
     ✅ Single HTML file: all HTML, CSS, and JS are inline (one file only).
-    ✅ Only external script used is Stockfish WASM (for analysis).
     ✅ Works offline once loaded (except for fetching online games).
     ✅ No frameworks used.
 
     Core:
-      • Import last 5 games from Lichess or Chess.com, or paste PGN manually
-      • Parse PGN (in-app chess engine ChessLite for PGN & legality)
-      • Detect mistakes:
-          - Lichess: use [%eval …] comments to detect drops by thresholds
-          - Chess.com & manual PGN: use local/remote Stockfish to detect drops
-      • Store mistakes in localStorage with at least:
-          { fen, side, played, best, deltaCp, severity, nextReview }
-        (we also store extra SRS fields as needed).
-      • Trainer:
-          - Woodpecker Mode — cycle until first-try correct
-          - Spaced Repetition (SM‑2 scheduling)
-      • Stats: accuracy %, #reviews, and severity distribution bar chart
+      • Import last N games from Lichess or Chess.com, or paste PGN to import
+      • Detect mistakes with Stockfish backend (preferred) or local WASM fallback
+      • Store mistakes in localStorage (and Firestore) and train them (Woodpecker or SM‑2)
 
-    Notes for developers:
-      - The embedded lightweight chess engine "ChessLite" supports FEN, SAN parsing,
-        legal move generation, castling, en passant, promotions, and check detection.
-      - Stockfish integration is queued (one analysis at a time) and returns cp & bestmove.
-      - The board is a simple CSS Grid with click‑to‑move (mobile friendly).
-      - The board now renders:
-          • A red arrow for the user's attempted move (always shown after they move)
-          • A green arrow for the best move (only after pressing "Reveal best")
-      - Best/UI move text displayed in SAN (e.g., f3, Nf3), not long UCI.
+    This build addresses:
+      • Board squish & piece legibility; consistent classic board palette; aspect ratio fixed
+      • Red arrow for your move (immediately); green arrow for best (only after Reveal)
+      • Import tab (was Analyze) + working game viewer board on Import page
+      • “Analyse mistakes” (green) ↔ “Stop analysis” (red) toggle
+      • “Import PGN” (replaces “Analyze PGN”) — only imports to list for backend analysis
+      • Clear imports button removes imported games and mistakes originating from them
+      • Set creation de‑duped; “Train” in Sets opens Train tab and auto-starts SRS on that set
+      • SAN notation throughout (best/your move)
 
-    MIT-style: you’re free to extend/adapt.
+    MIT-style: extend/adapt freely.
   -->
   <style>
     :root{
+      /* Layout */
       --bg:#0f1115;
       --panel:#171a21;
-      --muted:#9aa4b2;
+      --card:#1b1f27;
       --text:#e6edf3;
+      --muted:#9aa4b2;
       --acc:#4f8cff;
       --good:#2ecc71;
       --bad:#ff5c5c;
       --warn:#f1c40f;
-      --card:#1b1f27;
 
-      /* Classic board palette (clearer contrast, consistent look) */
+      /* Board look */
       --sq-light:#f0d9b5;
       --sq-dark:#b58863;
       --sq-hl:#ffd54f;
       --sq-sel:#7bdff6;
-
-      /* Arrow colors */
       --arrow-user:#ff5c5c; /* red */
       --arrow-best:#2ecc71; /* green */
+
+      /* Train sizing (user adjustable) */
+      --board-size: 520px;           /* px, user can change */
+      --train-left-fr: 1.1;          /* grid fraction */
+      --train-right-fr: 0.9;         /* grid fraction */
     }
+
     *{box-sizing:border-box}
     html,body{height:100%}
     body{
@@ -72,14 +67,20 @@
     a{color:var(--acc);text-decoration:none}
     .wrap{max-width:1100px;margin:0 auto;padding:18px}
 
-    /* Two-column layout sized to keep board area tidy (no odd stretching) */
     .grid{
       display:grid;
-      grid-template-columns: minmax(320px, 560px) 1fr;
+      grid-template-columns: 1.1fr .9fr;
       gap:18px;
     }
+    /* Train page grid with adjustable pane widths */
+    .train-grid{
+      display:grid;
+      grid-template-columns: var(--train-left-fr)fr var(--train-right-fr)fr;
+      gap:18px;
+    }
+
     @media (max-width:1000px){
-      .grid{grid-template-columns:1fr}
+      .grid, .train-grid{grid-template-columns:1fr}
     }
 
     .card{
@@ -92,11 +93,13 @@
     .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
     .row > *{flex:1}
     label{display:block;margin:.25rem 0 .35rem;color:var(--muted);font-size:.85rem}
-    input[type="text"], textarea, select, input[type="number"]{
+    input[type="text"], textarea, select, input[type="number"], input[type="range"]{
       width:100%;background:#11141a;border:1px solid #2a3142;color:var(--text);
       border-radius:10px;padding:10px 12px;font-size:14px;outline:none;
     }
+    input[type="range"]{padding:6px 8px}
     textarea{min-height:120px;resize:vertical}
+
     button{
       appearance:none;border:0;background:var(--acc);color:white;
       padding:10px 14px;border-radius:10px;font-weight:600;cursor:pointer;
@@ -104,6 +107,8 @@
     }
     button.secondary{background:#30374a;box-shadow:none}
     button.ghost{background:transparent;border:1px solid #2a3142;color:var(--text)}
+    .btn-green{background:var(--good)}
+    .btn-red{background:var(--bad)}
     .muted{color:var(--muted)}
     .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace}
     .small{font-size:.9rem}
@@ -116,9 +121,12 @@
     /* Board */
     .board-wrap{display:flex;gap:14px;align-items:flex-start}
     .board{
-      width:min(84vw, 520px);height:min(84vw, 520px);
+      width:min(var(--board-size), 100%);
+      aspect-ratio:1/1; /* Never squish the board */
       background:#ddd;border-radius:12px;overflow:hidden;border:1px solid #c7cdd8;position:relative
     }
+    .board-mini{ --board-size: 360px; } /* used on Import page game viewer */
+
     .grid8{
       display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);width:100%;height:100%;
     }
@@ -129,9 +137,7 @@
     }
     .sq.light{background:var(--sq-light)}
     .sq.dark{background:var(--sq-dark)}
-    .sq.coord{
-      position:absolute;left:6px;bottom:6px;font-size:10px;color:#000a
-    }
+    .sq.coord{ position:absolute;left:6px;bottom:6px;font-size:10px;color:#000a }
     .sq.hint::after{
       content:"";position:absolute;width:26%;height:26%;border-radius:50%;
       background:rgba(0,0,0,.25)
@@ -139,8 +145,8 @@
     .sq.sel{outline:3px solid var(--sq-sel);z-index:2}
     .sq.hl{outline:3px solid var(--sq-hl)}
 
-    .piece{filter:drop-shadow(0 2px 2px rgba(0,0,0,.25));
-      opacity:1 !important;font-weight:900;letter-spacing:0}
+    /* Crisp readable pieces */
+    .piece{filter:drop-shadow(0 2px 2px rgba(0,0,0,.25)); opacity:1 !important; font-weight:900; letter-spacing:0}
     .piece.w{color:#ffffff;text-shadow:0 1px 0 #000, 0 0 4px rgba(0,0,0,.5)}
     .piece.b{color:#0a0f1a;text-shadow:0 1px 0 #fff, 0 0 4px rgba(255,255,255,.35)}
 
@@ -165,12 +171,6 @@
     .pill.mist{background:#5b4a27;color:#ffe8a1;border:1px solid #f2c94c}
     .pill.blun{background:#4f1e24;color:#ffb3bd;border:1px solid #ff6b6b}
     .stroke{border:1px dashed #2a3142;border-radius:10px;padding:10px}
-
-    /* Modal */
-    .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:999}
-    .modal{background:var(--panel);border:1px solid #2a3142;border-radius:12px;padding:16px;max-width:420px;width:92%}
-    .hidden{display:none}
-    .modal h3{margin:0 0 10px}
   </style>
   <style>
     .topnav{background:#11141a;border-bottom:1px solid #232836;position:sticky;top:0;z-index:5}
@@ -186,7 +186,7 @@
     <div class="navwrap">
       <div style="font-weight:700;color:#e6edf3">♟️ PMT</div>
       <a href="#" data-sec="home" id="navHome" class="active">Home</a>
-      <a href="#" data-sec="analyze" id="navAnalyze">Analyze</a>
+      <a href="#" data-sec="analyze" id="navAnalyze">Import</a>
       <a href="#" data-sec="sets" id="navSets">Sets</a>
       <a href="#" data-sec="train" id="navTrain">Train</a>
       <div style="margin-left:auto"></div>
@@ -196,25 +196,25 @@
   <!-- Home -->
   <div class="wrap section active" id="homeSection">
     <h1>Welcome to Personal Chess Mistake Trainer</h1>
-    <p class="muted small">Import games from Lichess/Chess.com, extract mistakes with Stockfish, and train them using Woodpecker or SM-2 spaced repetition.</p>
+    <p class="muted small">Import games from Lichess/Chess.com, extract mistakes with Stockfish, and train them using Woodpecker or SM‑2 spaced repetition.</p>
     <div class="card" style="margin-top:12px">
       <h2>Get Started</h2>
       <ul>
-        <li>Go to Analyze to fetch your recent games.</li>
-        <li>We analyze moves and create a Set from detected mistakes.</li>
+        <li>Go to <b>Import</b> to fetch your recent games.</li>
+        <li>Analyse mistakes to create a Set automatically.</li>
         <li>Open Sets to rename or start training a set.</li>
       </ul>
-      <button id="btnGoAnalyze">Go to Analyze</button>
+      <button id="btnGoAnalyze">Go to Import</button>
     </div>
   </div>
 
-  <!-- Analyze -->
+  <!-- Import (was Analyze) -->
   <div class="wrap section" id="analyzeSection">
-    <h1>♟️ Personal Chess Mistake Trainer</h1>
-    <p class="muted small">Import games → extract mistakes → train them with Woodpecker or Spaced Repetition (SM‑2). All data stays in your browser (localStorage).</p>
+    <h1>Import games & prepare analysis</h1>
+    <p class="muted small">Import games → then press <b>Analyse mistakes</b> to run Stockfish (server) and extract mistakes. All data stays in your browser (plus Firestore sync).</p>
 
     <div class="grid" style="margin-top:14px">
-      <!-- LEFT COLUMN: Import + Trainer -->
+      <!-- LEFT COLUMN -->
       <div class="card">
         <h2>1) Import Games</h2>
         <div class="row" style="margin-top:6px">
@@ -248,10 +248,9 @@
         </div>
         <div style="margin-top:10px">
           <label>Or paste PGN manually (one or more games)</label>
-          <textarea id="pgnInput" placeholder="[Event \"...\"] … moves …"></textarea>
+          <textarea id="pgnInput" placeholder="[Event &quot;...&quot;] … moves …"></textarea>
           <div class="row" style="margin-top:8px">
-            <button id="btnAnalyzePGN">Analyze PGN (Stockfish depth 12)</button>
-            <button id="btnClearAll" class="ghost">Clear ALL mistakes</button>
+            <button id="btnImportPGN" class="ghost">Import PGN</button>
           </div>
         </div>
 
@@ -261,9 +260,14 @@
         </div>
 
         <div class="stroke tiny" id="importedBox" style="margin-top:10px">
-          <div><b>Imported Games (last fetch)</b></div>
-          <div class="tiny muted" id="importHelp">Fetched games will appear here.</div>
-          <div style="max-height:180px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:6px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <b>Imported Games</b>
+            <span class="tiny muted" id="importHelp">Fetched games will appear here.</span>
+            <span style="margin-left:auto"></span>
+            <button id="btnAnalyzeImported" class="btn-green" title="Analyse mistakes (server)">Analyse mistakes</button>
+            <button id="btnClearImports" class="ghost" title="Clear imported games & their mistakes">Clear imports</button>
+          </div>
+          <div style="max-height:220px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:6px">
             <table id="importTable" style="width:100%">
               <thead>
                 <tr>
@@ -278,29 +282,28 @@
               <tbody id="importTBody"></tbody>
             </table>
           </div>
-          <div class="row" style="margin-top:8px">
-            <button id="btnAnalyzeImported" class="secondary">Analyze Imported (Backend)</button>
-            <button id="btnCreateSetFromMistakes" class="ghost">Create Set from Current Mistakes</button>
+
+          <!-- Game viewer with its own mini board -->
+          <div id="gameViewer" class="stroke tiny" style="margin-top:10px; display:none">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <b>Game Viewer</b>
+              <span id="gvStatus" class="mono">-</span>
+              <div style="margin-left:auto;display:flex;gap:6px">
+                <button id="gvStart" class="ghost" title="Start">⏮ Start</button>
+                <button id="gvPrev" class="ghost" title="Prev">◀ Prev</button>
+                <button id="gvNext" class="ghost" title="Next">Next ▶</button>
+                <button id="gvEnd" class="ghost" title="End">End ⏭</button>
+              </div>
+            </div>
+            <div class="board board-mini" style="margin-top:8px">
+              <div id="gvBoard" class="grid8" aria-label="game-viewer-board"></div>
+            </div>
           </div>
         </div>
 
         <hr style="border:none;border-top:1px solid #242a39;margin:16px 0">
-
         <div class="stroke tiny" style="margin-top:8px">
-          Trainer has moved to its own page. Use the “Train” tab in the top navigation to start a session.
-        </div>
-        <!-- Lightweight Game Viewer (appears when you click an imported game) -->
-        <div id="gameViewer" class="stroke tiny" style="margin-top:10px; display:none">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <b>Game Viewer</b>
-            <span id="gvStatus" class="mono">-</span>
-            <div style="margin-left:auto;display:flex;gap:6px">
-              <button id="gvStart" class="ghost" title="Start">⏮ Start</button>
-              <button id="gvPrev" class="ghost" title="Prev">◀ Prev</button>
-              <button id="gvNext" class="ghost" title="Next">Next ▶</button>
-              <button id="gvEnd" class="ghost" title="End">End ⏭</button>
-            </div>
-          </div>
+          Trainer has moved to its own page. Use the <b>Train</b> tab in the top navigation to start a session.
         </div>
       </div>
 
@@ -376,7 +379,23 @@
   <!-- Train Page -->
   <div class="wrap section" id="trainSection">
     <h1>Train</h1>
-    <div class="grid" style="margin-top:12px">
+
+    <!-- Sizing controls -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="grid-2">
+        <div>
+          <label>Board size (px)</label>
+          <input id="boardSizeRange" type="range" min="320" max="820" step="10" />
+        </div>
+        <div>
+          <label>Pane split (left %, affects board/info vs sets)</label>
+          <input id="paneSplitRange" type="range" min="30" max="70" step="1" />
+        </div>
+      </div>
+      <div class="tiny muted" style="margin-top:6px">These preferences are saved locally.</div>
+    </div>
+
+    <div class="train-grid" style="margin-top:12px">
       <div class="card">
         <h2>Board</h2>
         <div class="board-wrap" style="margin-top:10px">
@@ -409,27 +428,7 @@
               <div class="tiny">Link: <a id="trainLink" href="#" target="_blank" rel="noopener">—</a></div>
             </div>
 
-            <!-- NEW: Session queue (games & upcoming) -->
-            <div class="stroke tiny" style="margin-top:10px">
-              <div><b>Session queue: games & upcoming</b></div>
-              <div class="tiny muted">This mirrors the Imported Games table and highlights the current game's row.</div>
-              <div style="max-height:220px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:6px">
-                <table style="width:100%">
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>White</th>
-                      <th>Black</th>
-                      <th>Res</th>
-                      <th>Date</th>
-                      <th>Source</th>
-                    </tr>
-                  </thead>
-                  <tbody id="trainQueueTBody"></tbody>
-                </table>
-              </div>
-            </div>
-
+            <!-- Session queue (optional) could be added here if needed -->
           </div>
         </div>
       </div>
@@ -450,7 +449,7 @@
               <label>Mode</label>
               <select id="modeSel">
                 <option value="woodpecker">Woodpecker</option>
-                <option value="srs">Spaced Repetition (SM-2)</option>
+                <option value="srs" selected>Spaced Repetition (SM-2)</option>
               </select>
             </div>
             <div id="wpCountWrap">
@@ -468,24 +467,10 @@
     </div>
   </div>
 
-  <!-- Set Name Modal -->
-  <div id="setModalBackdrop" class="modal-backdrop hidden">
-    <div class="modal">
-      <h3>Name your set</h3>
-      <div class="tiny muted" style="margin-bottom:6px">Give your set a clear name (e.g., "Rapid Blunders Sep").</div>
-      <input id="setNameInput" type="text" placeholder="My Set" />
-      <div class="row" style="margin-top:10px">
-        <button id="setModalSave">Save</button>
-        <button id="setModalCancel" class="ghost">Cancel</button>
-      </div>
-    </div>
-  </div>
-
   <!-- Firebase (App + Analytics) -->
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js';
 
-    // Your web app's Firebase configuration
     const firebaseConfig = {
       apiKey: "AIzaSyB_VkTkQXOgc4Q0jithJk9iwzRv2OLLIE0",
       authDomain: "chessmistaketrainer.firebaseapp.com",
@@ -496,39 +481,24 @@
       measurementId: "G-86S4RMVDR3"
     };
 
-    // Initialize Firebase
     const app = initializeApp(firebaseConfig);
     window.firebaseApp = app;
-    // Derive Functions base for proxies (region must match functions config)
     const REGION = 'europe-west2';
     const PROJECT_ID = firebaseConfig.projectId || (app && app.options && app.options.projectId) || 'chessmistaketrainer';
     window.FN_BASE = `https://${REGION}-${PROJECT_ID}.cloudfunctions.net`;
-    // Allow explicit override with fully-qualified function URLs if needed
-    // (Paste from Firebase Console triggers if you use custom domains.)
     window.FN_LICHESS_URL = window.FN_LICHESS_URL || `${window.FN_BASE}/fetchLichess`;
     window.FN_CHESSCOM_URL = window.FN_CHESSCOM_URL || `${window.FN_BASE}/fetchChessCom`;
-    // Configure Cloud Run Stockfish backend (update if you redeploy)
     window.SF_BACKEND_URL = window.SF_BACKEND_URL || 'https://sf-backend-283045516917.europe-west2.run.app';
 
-    // Initialize Analytics only where supported
+    // Analytics (best-effort)
     (async () => {
       try {
         const mod = await import('https://www.gstatic.com/firebasejs/10.12.4/firebase-analytics.js');
         const supported = await mod.isSupported();
         if (supported) {
-          try {
-            const analytics = mod.getAnalytics(app);
-            window.firebaseAnalytics = analytics;
-            console.log('Firebase Analytics initialized');
-          } catch (err) {
-            console.warn('Analytics init failed:', err);
-          }
-        } else {
-          console.log('Firebase Analytics not supported in this environment');
+          mod.getAnalytics(app);
         }
-      } catch (err) {
-        console.warn('Analytics dynamic import failed:', err);
-      }
+      } catch {}
     })();
   </script>
 
@@ -537,59 +507,41 @@
     import { getAuth, onAuthStateChanged, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js';
     import {
       getFirestore, enableIndexedDbPersistence,
-      collection, doc, getDocs, onSnapshot, writeBatch, setDoc, deleteDoc, addDoc, query, orderBy
+      collection, doc, getDocs, onSnapshot, writeBatch, addDoc, query, orderBy
     } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js';
 
     const fbApp = window.firebaseApp;
     const auth = getAuth(fbApp);
     const db = getFirestore(fbApp);
 
-    // Enable offline persistence (best-effort)
-    enableIndexedDbPersistence(db).catch(err => console.warn('Firestore persistence disabled:', err?.code || err));
+    enableIndexedDbPersistence(db).catch(()=>{});
 
-    // Utility: stable doc id for a mistake (fen|played)
     const mistakeId = (m) => {
       const key = `${m.fen}|${m.played}`;
-      try {
-        return btoa(unescape(encodeURIComponent(key))).replace(/=+$/,'');
-      } catch { return key.replace(/[^a-zA-Z0-9_-]/g,'_'); }
+      try { return btoa(unescape(encodeURIComponent(key))).replace(/=+$/,''); }
+      catch { return key.replace(/[^a-zA-Z0-9_-]/g,'_'); }
     };
 
-    // Expose a small API to classic script
     const api = {
-      ready: false,
-      user: null,
-      db,
-      // Write full replacement of mistakes
+      ready:false, user:null, db,
       async saveAllMistakes(arr){
         if(!api.user) return;
         const col = collection(db, 'users', api.user.uid, 'mistakes');
-        // fetch existing to delete removed ones
         const snap = await getDocs(col);
         const curIds = new Set(); snap.forEach(d => curIds.add(d.id));
         const nextIds = new Set(arr.map(m => mistakeId(m)));
         const batch = writeBatch(db);
-        // upsert
-        for(const m of arr){
-          batch.set(doc(col, mistakeId(m)), m, { merge: true });
-        }
-        // delete removed
-        for(const id of curIds){
-          if(!nextIds.has(id)) batch.delete(doc(col, id));
-        }
+        for(const m of arr){ batch.set(doc(col, mistakeId(m)), m, { merge:true }); }
+        for(const id of curIds){ if(!nextIds.has(id)) batch.delete(doc(col, id)); }
         await batch.commit();
       },
-      // Add/merge new mistakes
       async addMistakesRemote(newOnes){
-        if(!api.user) return;
+        if(!api.user || !newOnes.length) return;
         const col = collection(db, 'users', api.user.uid, 'mistakes');
         const batch = writeBatch(db);
-        for(const m of newOnes){
-          batch.set(doc(col, mistakeId(m)), m, { merge: true });
-        }
+        for(const m of newOnes){ batch.set(doc(col, mistakeId(m)), m, { merge:true }); }
         await batch.commit();
       },
-      // Clear everything for this user
       async clearAllRemote(){
         if(!api.user) return;
         const mCol = collection(db, 'users', api.user.uid, 'mistakes');
@@ -604,61 +556,46 @@
       async logAttemptRemote(mId, correct, ts){
         if(!api.user) return;
         const aCol = collection(db, 'users', api.user.uid, 'attempts');
-        await addDoc(aCol, { id: mId, correct: !!correct, ts: ts || Date.now() });
+        await addDoc(aCol, { id:mId, correct:!!correct, ts:ts||Date.now() });
       },
       async getAttemptsRemote(){
         if(!api.user) return [];
         const aCol = collection(db, 'users', api.user.uid, 'attempts');
         const q = query(aCol, orderBy('ts','asc'));
         const snap = await getDocs(q);
-        const arr = [];
-        snap.forEach(d => arr.push(d.data()));
-        return arr;
+        const arr=[]; snap.forEach(d=>arr.push(d.data())); return arr;
       },
     };
 
     window.firebaseAPI = api;
 
-    // Sign in anonymously by default
-    signInAnonymously(auth).catch(err => console.warn('Anonymous auth failed:', err));
+    signInAnonymously(auth).catch(()=>{});
     onAuthStateChanged(auth, async (user) => {
-      api.user = user || null;
-      api.ready = !!user;
-      window.firebaseUser = user || null;
+      api.user = user || null; api.ready = !!user; window.firebaseUser = user || null;
       if(!user) return;
 
-      // Live sync: mistakes snapshot → localStorage + notify
+      // live sync mistakes -> local
       const mCol = collection(db, 'users', user.uid, 'mistakes');
       onSnapshot(mCol, (snap) => {
-        const arr = [];
-        snap.forEach(d => arr.push(d.data()));
-        try { localStorage.setItem('pmtt_mistakes', JSON.stringify(arr)); } catch {}
-        // Notify app to re-render if needed
+        const arr=[]; snap.forEach(d=>arr.push(d.data()));
+        try{ localStorage.setItem('pmtt_mistakes', JSON.stringify(arr)); }catch{}
         window.dispatchEvent(new CustomEvent('firebase:mMistakesUpdated'));
       });
 
-      // Prime attempts (on demand in app; no live listener by default)
-      try {
+      try{
         const attempts = await api.getAttemptsRemote();
         localStorage.setItem('pmtt_attempts', JSON.stringify(attempts));
         window.dispatchEvent(new CustomEvent('firebase:attemptsUpdated'));
-      } catch (e) {
-        console.warn('Attempts preload failed:', e);
-      }
+      }catch{}
     });
   </script>
 
   <!-- Stockfish WASM (allowed external) -->
-  <script src="https://unpkg.com/stockfish.wasm/stockfish.js">window.addEventListener('error', (e) => {
-  try { setStatus('JS error: ' + (e.message || (e.error && e.error.message) || 'unknown')); } catch {}
-});
-window.addEventListener('unhandledrejection', (e) => {
-  try { setStatus('Promise error: ' + ((e.reason && (e.reason.message || e.reason)) || 'unknown')); } catch {}
-});</script>
+  <script src="https://unpkg.com/stockfish.wasm/stockfish.js"></script>
 
   <script>
     /********************************************************************
-     * Utility helpers
+     * Utils
      ********************************************************************/
     const $ = sel => document.querySelector(sel);
     const $$ = sel => Array.from(document.querySelectorAll(sel));
@@ -667,146 +604,78 @@ window.addEventListener('unhandledrejection', (e) => {
     const days = n => n * 24 * 60 * 60 * 1000;
     const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
     const uid = () => 'm_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-
-    function formatDelta(cp){
-      const sign = cp >= 0 ? '' : '-';
-      return sign + Math.abs(Math.round(cp)).toString();
-    }
-    function tsToDate(ts){
-      if(!ts) return '-';
-      try{
-        const d = new Date(ts);
-        return d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
-      }catch{ return '-' }
-    }
-
-    // Trigger a client-side download of text content
-    function downloadText(filename, text){
-      try{
-        const blob = new Blob([text==null?'':String(text)], { type: 'application/x-chess-pgn' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename || 'games.pgn';
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
-      }catch(e){ console.warn('downloadText failed', e); }
-    }
+    function tsToDate(ts){ try{ const d=new Date(ts); return d.toLocaleDateString()+' '+d.toLocaleTimeString(); }catch{return '-';} }
+    function setStatus(msg){ const s=$('#status'); if(s) s.textContent = msg; }
 
     /********************************************************************
-     * Simple game viewer (click an imported game row)
+     * Game viewer (Import page)
      ********************************************************************/
     const GAMEVIEW = { fens: [], idx: 0, total: 0, pgn: '' };
-    function gvHide(){ const el = document.getElementById('gameViewer'); if(el) el.style.display = 'none'; }
-    function gvShow(){ const el = document.getElementById('gameViewer'); if(el) el.style.display = 'block'; }
+    function gvHide(){ const el = $('#gameViewer'); if(el) el.style.display = 'none'; }
+    function gvShow(){ const el = $('#gameViewer'); if(el) el.style.display = 'block'; }
     function gvUpdate(){
-      const lbl = document.getElementById('gvStatus');
+      const lbl = $('#gvStatus');
       if(!lbl) return;
       const total = GAMEVIEW.total;
       const idx = GAMEVIEW.idx;
       lbl.textContent = total ? `Move ${idx}/${total}` : '-';
     }
-    function gvDraw(){
-      if(!GAMEVIEW.fens.length){ gvHide(); return; }
-      const fen = GAMEVIEW.fens[GAMEVIEW.idx] || GAMEVIEW.fens[0];
-      drawBoard(fen);
-      gvUpdate();
-    }
-    function loadGameOnBoard(pgn){
-      try{
-        // Build fen list: start position + fen after each move
-        const clTmp = ChessLite(); clTmp.reset();
-        const startFen = clTmp.fen();
-        const mixed = clTmp.loadPGN(pgn);
-        const fens = [startFen, ...mixed.filter(x=>x.san).map(x=>x.fenAfter)];
-        GAMEVIEW.fens = fens; GAMEVIEW.idx = 0; GAMEVIEW.total = fens.length-1; GAMEVIEW.pgn = pgn;
-        gvShow();
-        gvDraw();
-        setStatus('Game loaded on board. Use viewer controls below.');
-      }catch(e){ console.warn('loadGameOnBoard failed', e); }
-    }
 
     /********************************************************************
-     * Storage layer (Firebase sync + local cache)
+     * Storage (local + remote)
      ********************************************************************/
     const LS_MISTAKES = 'pmtt_mistakes';
     const LS_ATTEMPTS = 'pmtt_attempts';
     const LS_SETS = 'pmtt_sets';
-
     const fb = () => (window.firebaseAPI && window.firebaseAPI.ready) ? window.firebaseAPI : null;
 
-    function loadMistakes(){
-      // Always return cached immediately; Firebase listener will keep it fresh
-      try{
-        const arr = JSON.parse(localStorage.getItem(LS_MISTAKES) || '[]');
-        if(fb()){
-          // Live snapshot keeps cache fresh
-        }
-        return arr;
-      }catch{ return [] }
-    }
-    function saveMistakes(arr){
-      localStorage.setItem(LS_MISTAKES, JSON.stringify(arr));
-      if(fb()) fb().saveAllMistakes(arr).catch(e => console.warn('saveAllMistakes failed', e));
-      renderMistakeList();
-      renderStats();
-    }
+    function loadMistakes(){ try{ return JSON.parse(localStorage.getItem(LS_MISTAKES)||'[]'); }catch{return [];} }
+    function saveMistakes(arr){ localStorage.setItem(LS_MISTAKES, JSON.stringify(arr)); if(fb()) fb().saveAllMistakes(arr).catch(()=>{}); renderMistakeList(); renderStats(); }
     function addMistakes(newOnes){
       const cur = loadMistakes();
-      // Simple de-dupe: key by fen + played
       const seen = new Set(cur.map(m => m.fen + '|' + m.played));
       const merged = [...cur];
-      const toUpload = [];
+      const toUpload=[];
       for(const m of newOnes){
-        if(!seen.has(m.fen + '|' + m.played)){
-          merged.push(m);
-          toUpload.push(m);
-        }
+        if(!seen.has(m.fen + '|' + m.played)){ merged.push(m); toUpload.push(m); }
       }
       localStorage.setItem(LS_MISTAKES, JSON.stringify(merged));
-      if(fb() && toUpload.length) fb().addMistakesRemote(toUpload).catch(e => console.warn('addMistakes failed', e));
-      renderMistakeList();
-      renderStats();
+      if(fb() && toUpload.length) fb().addMistakesRemote(toUpload).catch(()=>{});
+      renderMistakeList(); renderStats();
     }
-    function clearAll(){
+    function clearAllLocal(){
       localStorage.removeItem(LS_MISTAKES);
       localStorage.removeItem(LS_ATTEMPTS);
-      if(fb()) fb().clearAllRemote().catch(e => console.warn('clearAllRemote failed', e));
-      renderMistakeList();
-      renderStats();
+      if(fb()) fb().clearAllRemote().catch(()=>{});
+      renderMistakeList(); renderStats();
     }
     function logAttempt(mId, correct){
-      const arr = JSON.parse(localStorage.getItem(LS_ATTEMPTS) || '[]');
-      const rec = { id: mId, ts: nowTs(), correct: !!correct };
-      arr.push(rec);
-      localStorage.setItem(LS_ATTEMPTS, JSON.stringify(arr));
-      if(fb()) fb().logAttemptRemote(mId, correct, rec.ts).catch(e => console.warn('logAttemptRemote failed', e));
+      const arr = JSON.parse(localStorage.getItem(LS_ATTEMPTS)||'[]');
+      const rec = { id:mId, ts:nowTs(), correct:!!correct };
+      arr.push(rec); localStorage.setItem(LS_ATTEMPTS, JSON.stringify(arr));
+      if(fb()) fb().logAttemptRemote(mId, correct, rec.ts).catch(()=>{});
       renderStats();
     }
     function getAttempts(){
       try{
-        const cached = JSON.parse(localStorage.getItem(LS_ATTEMPTS) || '[]');
+        const cached = JSON.parse(localStorage.getItem(LS_ATTEMPTS)||'[]');
         if(fb()){
-          fb().getAttemptsRemote().then(arr => {
-            localStorage.setItem(LS_ATTEMPTS, JSON.stringify(arr));
-            renderStats();
-          }).catch(()=>{});
+          fb().getAttemptsRemote().then(arr => { localStorage.setItem(LS_ATTEMPTS, JSON.stringify(arr)); renderStats(); }).catch(()=>{});
         }
         return cached;
-      }catch{ return [] }
+      }catch{return []}
     }
 
-    // Re-render on remote updates
-    window.addEventListener('firebase:mMistakesUpdated', () => { try{ renderMistakeList(); renderStats(); }catch{} });
-    window.addEventListener('firebase:attemptsUpdated', () => { try{ renderStats(); }catch{} });
+    window.addEventListener('firebase:mMistakesUpdated', ()=>{ try{renderMistakeList();renderStats();}catch{} });
+    window.addEventListener('firebase:attemptsUpdated', ()=>{ try{renderStats();}catch{} });
 
     /********************************************************************
-     * Sets (collections of mistake keys) + modal
+     * Sets (de-duped)
      ********************************************************************/
     const keyOf = (m) => (m.fen + '|' + m.played);
-    function loadSets(){ try{ return JSON.parse(localStorage.getItem(LS_SETS) || '[]'); }catch{ return []; } }
+    function loadSets(){ try{ return JSON.parse(localStorage.getItem(LS_SETS)||'[]'); }catch{return [];} }
     function saveSets(arr){ localStorage.setItem(LS_SETS, JSON.stringify(arr)); renderSets(); }
+
     function findExistingSetByNameAndKeys(name, keys){
       const sets = loadSets();
       const keySet = new Set(keys);
@@ -814,13 +683,14 @@ window.addEventListener('unhandledrejection', (e) => {
     }
     function createSetFromMistakes(mistakes, name){
       const keys = Array.from(new Set(mistakes.map(keyOf)));
-      const maybe = findExistingSetByNameAndKeys(name || '', keys);
-      if(maybe) return maybe; // prevent duplicates
+      const existing = findExistingSetByNameAndKeys(name||'', keys);
+      if(existing) return existing; // avoid duplicates
       const set = { id: uid(), name: name || `Set ${new Date().toLocaleString()}`, keys, created: nowTs() };
       const sets = loadSets(); sets.unshift(set); saveSets(sets); return set;
     }
+
     function renderSets(){
-      const tb = document.getElementById('setsTBody'); if(!tb) return;
+      const tb = $('#setsTBody'); if(!tb) return;
       const sets = loadSets(); tb.innerHTML = '';
       let i=0; for(const s of sets){
         const tr = document.createElement('tr');
@@ -835,7 +705,6 @@ window.addEventListener('unhandledrejection', (e) => {
           </td>`;
         tb.appendChild(tr);
       }
-      // hook actions
       tb.querySelectorAll('button[data-act="delete"]').forEach(btn => btn.addEventListener('click', () => {
         const id = btn.getAttribute('data-id');
         const sets = loadSets().filter(x => x.id!==id); saveSets(sets);
@@ -844,7 +713,12 @@ window.addEventListener('unhandledrejection', (e) => {
         const id = btn.getAttribute('data-id');
         const s = loadSets().find(x => x.id===id); if(!s) return;
         setActiveSet(s);
-        showSection('analyze');
+        // jump to Train and start SRS
+        showSection('train');
+        renderSetsForTrain();
+        renderActiveSetInfo();
+        $('#modeSel').value = 'srs';
+        Session.startSRS();
       }));
       tb.querySelectorAll('input.setNameInput').forEach(inp => inp.addEventListener('change', () => {
         const id = inp.getAttribute('data-setid'); const sets = loadSets();
@@ -853,10 +727,10 @@ window.addEventListener('unhandledrejection', (e) => {
     }
     let ACTIVE_SET = null; let ACTIVE_SET_KEYS = new Set();
     function setActiveSet(s){ ACTIVE_SET = s; ACTIVE_SET_KEYS = new Set((s&&s.keys)||[]); setStatus(`Active set: ${s?.name||'-'}`); }
-    function renderActiveSetInfo(){ const el = document.getElementById('activeSetInfo'); if(el) el.textContent = `Active set: ${ACTIVE_SET?ACTIVE_SET.name:'—'}`; }
+    function renderActiveSetInfo(){ const el = $('#activeSetInfo'); if(el) el.textContent = `Active set: ${ACTIVE_SET?ACTIVE_SET.name:'—'}`; }
 
     function renderSetsForTrain(){
-      const tb = document.getElementById('trainSetsTBody'); if(!tb) return;
+      const tb = $('#trainSetsTBody'); if(!tb) return;
       tb.innerHTML = '';
       const sets = loadSets();
       let i=0; for(const s of sets){
@@ -869,552 +743,294 @@ window.addEventListener('unhandledrejection', (e) => {
     }
 
     /********************************************************************
-     * Lightweight chess engine: ChessLite
-     *  - Supports FEN, SAN parsing, move generation, checks
-     *  - Enough for PGN parsing and training interactions
+     * ChessLite engine (FEN, legal moves, SAN parsing)
      ********************************************************************/
-    function ChessLite(fen){
-      const FILES = 'abcdefgh';
-      const PIECES = { w:{p:'P',n:'N',b:'B',r:'R',q:'Q',k:'K'}, b:{p:'p',n:'n',b:'b',r:'r',q:'q',k:'k'} };
-      let board = new Array(64).fill(null); // each cell: piece char or null
-      let side = 'w';
-      let castling = {K:true,Q:true,k:true,q:true};
-      let ep = -1; // en passant target index or -1
-      let halfmove = 0;
-      let fullmove = 1;
+    function ChessLite(){
+      const FILES='abcdefgh';
+      let board = new Array(64).fill(null);
+      let side='w';
+      let castling={K:true,Q:true,k:true,q:true};
+      let ep=-1, halfmove=0, fullmove=1;
 
-      function idx(file, rank){ return (7 - (rank - 1)) * 8 + file; } // rank 1..8, file 0..7
-      function sqToIdx(sq){ const f = FILES.indexOf(sq[0]); const r = parseInt(sq[1],10); return idx(f, r); }
-      function idxToSq(i){ const r = 8 - Math.floor(i/8); const f = i % 8; return FILES[f] + r; }
-      function pieceColor(pc){ if(!pc) return null; return pc === pc.toUpperCase() ? 'w' : 'b'; }
-      function cloneState(){
-        return {
-          board: board.slice(), side, castling: {...castling}, ep, halfmove, fullmove
-        };
-      }
-      function restoreState(s){
-        board = s.board.slice(); side = s.side; castling = {...s.castling}; ep = s.ep; halfmove = s.halfmove; fullmove = s.fullmove;
-      }
-      function reset(){
-        load('startpos');
-      }
-      function load(f){
-        if(!f || f === 'startpos'){
-          const start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-          return loadFEN(start);
-        }
-        return loadFEN(f);
-      }
-      function loadFEN(fenStr){
+      function idx(file, rank){ return (7-(rank-1))*8+file; }
+      function sqToIdx(sq){ const f=FILES.indexOf(sq[0]); const r=parseInt(sq[1],10); return idx(f,r); }
+      function idxToSq(i){ const r=8-Math.floor(i/8); const f=i%8; return FILES[f]+r; }
+      function pieceColor(pc){ return pc===pc?.toUpperCase()?'w':'b'; }
+      function reset(){ loadFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"); }
+      function loadFEN(f){
         board.fill(null);
-        const parts = fenStr.trim().split(/\s+/);
-        if(parts.length < 4) throw new Error('Invalid FEN');
-        // placement
-        const rows = parts[0].split('/');
+        const parts=f.trim().split(/\s+/);
+        const rows=parts[0].split('/');
         for(let r=0;r<8;r++){
           let file=0;
           for(const ch of rows[r]){
-            if(/[1-8]/.test(ch)) file += parseInt(ch,10);
-            else{
-              const i = r*8 + file;
-              board[i] = ch;
-              file++;
-            }
+            if(/[1-8]/.test(ch)) file+=parseInt(ch,10);
+            else{ board[r*8+file]=ch; file++; }
           }
         }
-        // side
-        side = parts[1] || 'w';
-        // castling
-        castling = {K:false,Q:false,k:false,q:false};
-        if(parts[2] && parts[2] !== '-'){
-          for(const c of parts[2]) if(castling.hasOwnProperty(c)) castling[c]=true;
-        }
-        // en passant
-        ep = (parts[3] && parts[3] !== '-') ? sqToIdx(parts[3]) : -1;
-        // optional halfmove/fullmove
-        halfmove = parts[4] ? parseInt(parts[4],10) : 0;
-        fullmove = parts[5] ? parseInt(parts[5],10) : 1;
+        side=parts[1]||'w';
+        castling={K:false,Q:false,k:false,q:false};
+        if(parts[2]&&parts[2]!=='-'){ for(const c of parts[2]) if(castling.hasOwnProperty(c)) castling[c]=true; }
+        ep=(parts[3]&&parts[3]!=='-')?sqToIdx(parts[3]):-1;
+        halfmove=parts[4]?parseInt(parts[4],10):0;
+        fullmove=parts[5]?parseInt(parts[5],10):1;
         return true;
       }
       function fen(){
-        // placement
-        let s = '';
+        let s='';
         for(let r=0;r<8;r++){
           let empty=0;
           for(let f=0;f<8;f++){
-            const p = board[r*8 + f];
-            if(!p){ empty++; }
-            else{
-              if(empty){ s += empty; empty=0; }
-              s += p;
-            }
+            const p=board[r*8+f];
+            if(!p) empty++;
+            else{ if(empty){s+=empty;empty=0;} s+=p; }
           }
-          if(empty) s += empty;
-          if(r<7) s += '/';
+          if(empty) s+=empty;
+          if(r<7) s+='/';
         }
-        s += ' ' + side + ' ';
-        let cstr = '';
-        if(castling.K) cstr+='K';
-        if(castling.Q) cstr+='Q';
-        if(castling.k) cstr+='k';
-        if(castling.q) cstr+='q';
-        s += cstr || '-';
-        s += ' ' + (ep>=0 ? idxToSq(ep) : '-');
-        s += ' ' + halfmove + ' ' + fullmove;
+        s+=' '+side+' ';
+        let cstr=''; if(castling.K)cstr+='K'; if(castling.Q)cstr+='Q'; if(castling.k)cstr+='k'; if(castling.q)cstr+='q';
+        s+=(cstr||'-');
+        s+=' '+(ep>=0?idxToSq(ep):'-');
+        s+=' '+halfmove+' '+fullmove;
         return s;
       }
-      function inBounds(r,c){ return r>=0 && r<8 && c>=0 && c<8; }
-      function rcOf(i){ return { r: Math.floor(i/8), c: i%8 }; }
-      function kingIndex(color){
-        const K = (color==='w')?'K':'k';
-        for(let i=0;i<64;i++) if(board[i]===K) return i;
-        return -1;
-      }
-      function squareAttacked(i, byColor){
-        // Pawns
-        const {r,c} = rcOf(i);
-        if(byColor==='w'){
-          const rr = r+1;
-          if(inBounds(rr,c-1) && board[rr*8 + (c-1)]==='P') return true;
-          if(inBounds(rr,c+1) && board[rr*8 + (c+1)]==='P') return true;
-        }else{
-          const rr = r-1;
-          if(inBounds(rr,c-1) && board[rr*8 + (c-1)]==='p') return true;
-          if(inBounds(rr,c+1) && board[rr*8 + (c+1)]==='p') return true;
-        }
-        // Knights
-        const nn = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
-        for(const [dr,dc] of nn){
-          const r2=r+dr, c2=c+dc;
-          if(!inBounds(r2,c2)) continue;
-          const p = board[r2*8 + c2];
-          if(p && pieceColor(p)===byColor && /[Nn]/.test(p)) return true;
-        }
-        // Bishops/Queens (diagonals)
-        const diags = [[-1,-1],[-1,1],[1,-1],[1,1]];
-        for(const [dr,dc] of diags){
-          let rr=r+dr, cc=c+dc;
-          while(inBounds(rr,cc)){
-            const p = board[rr*8 + cc];
-            if(p){
-              if(pieceColor(p)===byColor && (/[Bb]/.test(p) || /[Qq]/.test(p))) return true;
-              break;
-            }
-            rr+=dr; cc+=dc;
-          }
-        }
-        // Rooks/Queens (orthogonals)
-        const orth = [[-1,0],[1,0],[0,-1],[0,1]];
-        for(const [dr,dc] of orth){
-          let rr=r+dr, cc=c+dc;
-          while(inBounds(rr,cc)){
-            const p = board[rr*8 + cc];
-            if(p){
-              if(pieceColor(p)===byColor && (/[Rr]/.test(p) || /[Qq]/.test(p))) return true;
-              break;
-            }
-            rr+=dr; cc+=dc;
-          }
-        }
-        // King
-        for(let dr=-1;dr<=1;dr++){
-          for(let dc=-1;dc<=1;dc++){
-            if(dr===0 && dc===0) continue;
-            const r2=r+dr,c2=c+dc;
-            if(!inBounds(r2,c2)) continue;
-            const p = board[r2*8 + c2];
-            if(p && pieceColor(p)===byColor && /[Kk]/.test(p)) return true;
-          }
-        }
+      function rcOf(i){ return { r:Math.floor(i/8), c:i%8 }; }
+      function inBounds(r,c){ return r>=0&&r<8&&c>=0&&c<8; }
+      function kingIndex(color){ const K=(color==='w')?'K':'k'; for(let i=0;i<64;i++) if(board[i]===K) return i; return -1; }
+      function squareAttacked(i, by){
+        const {r,c}=rcOf(i);
+        // pawns
+        if(by==='w'){ const rr=r+1; if(inBounds(rr,c-1)&&board[rr*8+c-1]==='P')return true; if(inBounds(rr,c+1)&&board[rr*8+c+1]==='P')return true;}
+        else{ const rr=r-1; if(inBounds(rr,c-1)&&board[rr*8+c-1]==='p')return true; if(inBounds(rr,c+1)&&board[rr*8+c+1]==='p')return true;}
+        // knights
+        const nn=[[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
+        for(const [dr,dc] of nn){ const rr=r+dr,cc=c+dc; if(!inBounds(rr,cc))continue; const p=board[rr*8+cc]; if(p && ((by==='w'&&p==='N')||(by==='b'&&p==='n'))) return true; }
+        // bishops/queens
+        const di=[[-1,-1],[-1,1],[1,-1],[1,1]];
+        for(const [dr,dc] of di){ let rr=r+dr,cc=c+dc; while(inBounds(rr,cc)){ const p=board[rr*8+cc]; if(p){ if((by==='w'&&('BQ'.includes(p)))||(by==='b'&&('bq'.includes(p)))) return true; break;} rr+=dr; cc+=dc; } }
+        // rooks/queens
+        const or=[[-1,0],[1,0],[0,-1],[0,1]];
+        for(const [dr,dc] of or){ let rr=r+dr,cc=c+dc; while(inBounds(rr,cc)){ const p=board[rr*8+cc]; if(p){ if((by==='w'&&('RQ'.includes(p)))||(by==='b'&&('rq'.includes(p)))) return true; break;} rr+=dr; cc+=dc; } }
+        // king
+        for(let dr=-1;dr<=1;dr++){ for(let dc=-1;dc<=1;dc++){ if(dr===0&&dc===0)continue; const rr=r+dr,cc=c+dc; if(!inBounds(rr,cc))continue; const p=board[rr*8+cc]; if(p && ((by==='w'&&p==='K')||(by==='b'&&p==='k'))) return true; } }
         return false;
       }
-      function inCheck(color){
-        const ki = kingIndex(color);
-        return squareAttacked(ki, color==='w'?'b':'w');
-      }
-      function makeMoveObj(from, to, promotion){
-        const m = {
-          from, to, promotion: promotion||null,
-          piece: board[from], captured: board[to],
-          flags: ''
-        };
-        const p = board[from];
-        const pc = pieceColor(p);
-        // special: castling
-        if(/[Kk]/.test(p)){
-          const {c:cf} = rcOf(from);
-          const {c:ct} = rcOf(to);
-          const diff = ct - cf;
-          if(Math.abs(diff)===2){
-            m.flags += 'k'; // castle
-            // move rook too
-            if(pc==='w'){
-              if(diff===2){ // O-O
-                board[sqToIdx('h1')] = null;
-                board[sqToIdx('f1')] = 'R';
-              }else{
-                board[sqToIdx('a1')] = null;
-                board[sqToIdx('d1')] = 'R';
-              }
-            }else{
-              if(diff===2){
-                board[sqToIdx('h8')] = null;
-                board[sqToIdx('f8')] = 'r';
-              }else{
-                board[sqToIdx('a8')] = null;
-                board[sqToIdx('d8')] = 'r';
-              }
-            }
-          }
-        }
+      function inCheck(color){ const ki=kingIndex(color); return squareAttacked(ki, color==='w'?'b':'w'); }
+
+      function clone(){ return { board:board.slice(), side, castling:{...castling}, ep, halfmove, fullmove }; }
+      function restore(s){ board=s.board.slice(); side=s.side; castling={...s.castling}; ep=s.ep; halfmove=s.halfmove; fullmove=s.fullmove; }
+
+      function makeMove(from, to, promotion){
+        const prev=clone();
+        const p=board[from];
+        const pc=pieceColor(p);
+        const cap=board[to];
+
         // en passant capture
-        if(/[Pp]/.test(p)){
-          const {r:rf,c:cf} = rcOf(from);
-          const {r:rt,c:ct} = rcOf(to);
-          if(cf!==ct && !m.captured){
-            // diagonal move to empty square => en passant
-            const capIdx = pc==='w' ? (to+8) : (to-8);
-            m.captured = board[capIdx];
-            board[capIdx] = null;
-            m.flags += 'e'; // en-passant
-          }
+        if((p==='P'||p==='p')){
+          const {r:rf,c:cf}=rcOf(from); const {r:rt,c:ct}=rcOf(to);
+          if(cf!==ct && !cap){ const capIdx = pc==='w' ? to+8 : to-8; board[capIdx]=null; }
         }
         // move piece
-        board[to] = board[from];
-        board[from] = null;
+        board[to]=board[from]; board[from]=null;
 
         // promotion
-        if(m.promotion){
-          board[to] = (pc==='w' ? m.promotion.toUpperCase(): m.promotion.toLowerCase());
-          m.flags += 'p';
-        }
-        // update ep target
-        ep = -1;
-        // double pawn push
-        if(/[Pp]/.test(m.piece)){
-          const {r:rf} = rcOf(from);
-          const {r:rt} = rcOf(to);
-          if(Math.abs(rt - rf)===2){
-            ep = pc==='w' ? (to+8) : (to-8);
-          }
-        }
-        // update castling rights
-        const fromSq = idxToSq(from), toSq = idxToSq(to);
-        if(m.piece==='K'){ castling.K=false; castling.Q=false; }
-        if(m.piece==='k'){ castling.k=false; castling.q=false; }
-        if(fromSq==='h1' || toSq==='h1') castling.K=false;
-        if(fromSq==='a1' || toSq==='a1') castling.Q=false;
-        if(fromSq==='h8' || toSq==='h8') castling.k=false;
-        if(fromSq==='a8' || toSq==='a8') castling.q=false;
+        if(promotion){ board[to] = (pc==='w'?promotion.toUpperCase():promotion.toLowerCase()); }
 
-        // clocks
-        if(/[Pp]/.test(m.piece) || m.captured) halfmove=0; else halfmove++;
+        // castling rook move
+        if(p==='K' && Math.abs(rcOf(to).c - rcOf(from).c)===2){
+          if(rcOf(to).c===6){ board[sqToIdx('f1')]='R'; board[sqToIdx('h1')]=null; }
+          else { board[sqToIdx('d1')]='R'; board[sqToIdx('a1')]=null; }
+          castling.K=false; castling.Q=false;
+        }
+        if(p==='k' && Math.abs(rcOf(to).c - rcOf(from).c)===2){
+          if(rcOf(to).c===6){ board[sqToIdx('f8')]='r'; board[sqToIdx('h8')]=null; }
+          else { board[sqToIdx('d8')]='r'; board[sqToIdx('a8')]=null; }
+          castling.k=false; castling.q=false;
+        }
+
+        // update ep
+        ep=-1;
+        if(p==='P' || p==='p'){
+          const {r:rf,c:cf}=rcOf(from); const {r:rt}=rcOf(to);
+          if(Math.abs(rt-rf)===2) ep = pc==='w' ? (to+8) : (to-8);
+        }
+
+        // castling rights (move rook/king)
+        const fromSq=idxToSq(from), toSq=idxToSq(to);
+        if(p==='K'){ castling.K=false; castling.Q=false; }
+        if(p==='k'){ castling.k=false; castling.q=false; }
+        if(fromSq==='h1'||toSq==='h1') castling.K=false;
+        if(fromSq==='a1'||toSq==='a1') castling.Q=false;
+        if(fromSq==='h8'||toSq==='h8') castling.k=false;
+        if(fromSq==='a8'||toSq==='a8') castling.q=false;
+
+        if((p==='P'||p==='p') || cap) halfmove=0; else halfmove++;
         if(side==='b') fullmove++;
+        side = side==='w'?'b':'w';
 
-        // switch side
-        side = (side==='w'?'b':'w');
-        return m;
+        return prev;
       }
-      function undoMoveObj(prev){
-        restoreState(prev);
-      }
-      function addMove(moves, from, to, promotion){
-        // simulate for legality
-        const prev = cloneState();
-        const cap = board[to];
-        const p = board[from];
-        const pc = pieceColor(p);
-        // handle castle rook displacement in simulation inside makeMoveObj
-        makeMoveObj(from, to, promotion);
-        const legal = !inCheck(pc);
-        const res = cloneState();
-        undoMoveObj(prev);
-        if(legal){
-          moves.push({from, to, promotion: promotion || null, piece: p, captured: cap || null, flags: ''});
-        }
-      }
-      function generateMoves(){
-        const moves = [];
-        const us = side;
+
+      function generate(){
+        const moves=[];
+        const us=side, them=side==='w'?'b':'w';
         for(let i=0;i<64;i++){
-          const p = board[i];
-          if(!p || pieceColor(p)!==us) continue;
-          const {r,c} = rcOf(i);
-          const ours = us;
-          const them = us==='w'?'b':'w';
+          const p=board[i]; if(!p||pieceColor(p)!==us) continue;
+          const {r,c}=rcOf(i);
 
-          if(/[Pp]/.test(p)){
-            const forward = (ours==='w') ? -1 : 1;
-            const startRank = (ours==='w') ? 6 : 1;
-            const promoRank = (ours==='w') ? 0 : 7;
-            const oneR = r + forward;
-            if(inBounds(oneR,c) && !board[oneR*8 + c]){
-              // promotion?
-              if(oneR===promoRank){
-                for(const pr of ['q','r','b','n']) addMove(moves, i, oneR*8+c, pr);
-              }else addMove(moves, i, oneR*8+c);
-              // double
-              const twoR = r + 2*forward;
-              if(r===startRank && !board[twoR*8 + c]) addMove(moves, i, twoR*8 + c);
+          const add=(from,to,promotion)=>{
+            const prev=clone(); makeMove(from,to,promotion);
+            const legal=!inCheck(us); restore(prev);
+            if(legal){ moves.push({from, to, promotion:promotion||null, piece:p, captured:null}); }
+          };
+
+          if(p==='P'||p==='p'){
+            const forward=(us==='w')?-1:1; const start=(us==='w')?6:1; const promo=(us==='w')?0:7;
+            const oneR=r+forward;
+            if(inBounds(oneR,c) && !board[oneR*8+c]){
+              if(oneR===promo){ for(const pr of ['q','r','b','n']) add(i, oneR*8+c, pr); }
+              else add(i, oneR*8+c);
+              const twoR=r+2*forward;
+              if(r===start && !board[twoR*8+c]) add(i, twoR*8+c);
             }
-            // captures
             for(const dc of [-1,1]){
-              const rr = r + forward, cc = c + dc;
-              if(!inBounds(rr,cc)) continue;
-              const tIdx = rr*8 + cc;
-              if(board[tIdx] && pieceColor(board[tIdx])===them){
-                if(rr===promoRank){
-                  for(const pr of ['q','r','b','n']) addMove(moves, i, tIdx, pr);
-                }else addMove(moves, i, tIdx);
-              }else if(tIdx===ep){
-                // en passant
-                const prev = cloneState();
-                makeMoveObj(i, tIdx);
-                const legal = !inCheck(ours);
-                undoMoveObj(prev);
-                if(legal) moves.push({from:i, to:tIdx, promotion:null, piece:p, captured:(ours==='w'?'p':'P'), flags:'e'});
-              }
+              const rr=r+forward, cc=c+dc; if(!inBounds(rr,cc)) continue;
+              const t=rr*8+cc;
+              if(board[t] && pieceColor(board[t])===them){
+                if(rr===promo){ for(const pr of ['q','r','b','n']) add(i,t,pr); }
+                else add(i,t);
+              }else if(t===ep){ add(i,t); }
             }
-          }else if(/[Nn]/.test(p)){
-            const nn = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
-            for(const [dr,dc] of nn){
-              const rr=r+dr, cc=c+dc;
-              if(!inBounds(rr,cc)) continue;
-              const tIdx = rr*8+cc;
-              if(!board[tIdx] || pieceColor(board[tIdx])!==ours){
-                addMove(moves, i, tIdx);
-              }
+          }else if(p==='N'||p==='n'){
+            const NN=[[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
+            for(const [dr,dc] of NN){ const rr=r+dr,cc=c+dc; if(!inBounds(rr,cc)) continue; const t=rr*8+cc; if(!board[t]||pieceColor(board[t])!==us) add(i,t); }
+          }else if(p==='B'||p==='b'){
+            const D=[[-1,-1],[-1,1],[1,-1],[1,1]];
+            for(const [dr,dc] of D){ let rr=r+dr,cc=c+dc; while(inBounds(rr,cc)){ const t=rr*8+cc; if(board[t]){ if(pieceColor(board[t])!==us) add(i,t); break; } add(i,t); rr+=dr; cc+=dc; } }
+          }else if(p==='R'||p==='r'){
+            const D=[[-1,0],[1,0],[0,-1],[0,1]];
+            for(const [dr,dc] of D){ let rr=r+dr,cc=c+dc; while(inBounds(rr,cc)){ const t=rr*8+cc; if(board[t]){ if(pieceColor(board[t])!==us) add(i,t); break; } add(i,t); rr+=dr; cc+=dc; } }
+          }else if(p==='Q'||p==='q'){
+            const D=[[-1,-1],[-1,1],[1,-1],[1,1],[-1,0],[1,0],[0,-1],[0,1]];
+            for(const [dr,dc] of D){ let rr=r+dr,cc=c+dc; while(inBounds(rr,cc)){ const t=rr*8+cc; if(board[t]){ if(pieceColor(board[t])!==us) add(i,t); break; } add(i,t); rr+=dr; cc+=dc; } }
+          }else if(p==='K'||p==='k'){
+            for(let dr=-1;dr<=1;dr++){ for(let dc=-1;dc<=1;dc++){ if(dr===0&&dc===0)continue; const rr=r+dr,cc=c+dc; if(!inBounds(rr,cc))continue; const t=rr*8+cc; if(!board[t]||pieceColor(board[t])!==us) add(i,t); } }
+            if(us==='w' && r===7 && c===4){
+              if(castling.K && !board[sqToIdx('f1')] && !board[sqToIdx('g1')] && !inCheck('w') && !squareAttacked(sqToIdx('f1'),'b') && !squareAttacked(sqToIdx('g1'),'b')) add(i,sqToIdx('g1'));
+              if(castling.Q && !board[sqToIdx('d1')] && !board[sqToIdx('c1')] && !board[sqToIdx('b1')] && !inCheck('w') && !squareAttacked(sqToIdx('d1'),'b') && !squareAttacked(sqToIdx('c1'),'b')) add(i,sqToIdx('c1'));
             }
-          }else if(/[Bb]/.test(p)){
-            const dirs=[[-1,-1],[-1,1],[1,-1],[1,1]];
-            for(const [dr,dc] of dirs){
-              let rr=r+dr, cc=c+dc;
-              while(inBounds(rr,cc)){
-                const tIdx = rr*8+cc;
-                if(board[tIdx]){
-                  if(pieceColor(board[tIdx])!==ours) addMove(moves, i, tIdx);
-                  break;
-                }
-                addMove(moves, i, tIdx);
-                rr+=dr; cc+=dc;
-              }
-            }
-          }else if(/[Rr]/.test(p)){
-            const dirs=[[-1,0],[1,0],[0,-1],[0,1]];
-            for(const [dr,dc] of dirs){
-              let rr=r+dr, cc=c+dc;
-              while(inBounds(rr,cc)){
-                const tIdx = rr*8+cc;
-                if(board[tIdx]){
-                  if(pieceColor(board[tIdx])!==ours) addMove(moves, i, tIdx);
-                  break;
-                }
-                addMove(moves, i, tIdx);
-                rr+=dr; cc+=dc;
-              }
-            }
-          }else if(/[Qq]/.test(p)){
-            const dirs=[[-1,-1],[-1,1],[1,-1],[1,1],[-1,0],[1,0],[0,-1],[0,1]];
-            for(const [dr,dc] of dirs){
-              let rr=r+dr, cc=c+dc;
-              while(inBounds(rr,cc)){
-                const tIdx = rr*8+cc;
-                if(board[tIdx]){
-                  if(pieceColor(board[tIdx])!==ours) addMove(moves, i, tIdx);
-                  break;
-                }
-                addMove(moves, i, tIdx);
-                rr+=dr; cc+=dc;
-              }
-            }
-          }else if(/[Kk]/.test(p)){
-            for(let dr=-1;dr<=1;dr++){
-              for(let dc=-1;dc<=1;dc++){
-                if(dr===0 && dc===0) continue;
-                const rr=r+dr, cc=c+dc;
-                if(!inBounds(rr,cc)) continue;
-                const tIdx=rr*8+cc;
-                if(!board[tIdx] || pieceColor(board[tIdx])!==ours) addMove(moves, i, tIdx);
-              }
-            }
-            // castling
-            if(ours==='w' && r===7 && c===4){
-              if(castling.K && !board[sqToIdx('f1')] && !board[sqToIdx('g1')] && !inCheck('w') && !squareAttacked(sqToIdx('f1'),'b') && !squareAttacked(sqToIdx('g1'),'b')){
-                addMove(moves, i, sqToIdx('g1'));
-              }
-              if(castling.Q && !board[sqToIdx('d1')] && !board[sqToIdx('c1')] && !board[sqToIdx('b1')] && !inCheck('w') && !squareAttacked(sqToIdx('d1'),'b') && !squareAttacked(sqToIdx('c1'),'b')){
-                addMove(moves, i, sqToIdx('c1'));
-              }
-            }
-            if(ours==='b' && r===0 && c===4){
-              if(castling.k && !board[sqToIdx('f8')] && !board[sqToIdx('g8')] && !inCheck('b') && !squareAttacked(sqToIdx('f8'),'w') && !squareAttacked(sqToIdx('g8'),'w')){
-                addMove(moves, i, sqToIdx('g8'));
-              }
-              if(castling.q && !board[sqToIdx('d8')] && !board[sqToIdx('c8')] && !board[sqToIdx('b8')] && !inCheck('b') && !squareAttacked(sqToIdx('d8'),'w') && !squareAttacked(sqToIdx('c8'),'w')){
-                addMove(moves, i, sqToIdx('c8'));
-              }
+            if(us==='b' && r===0 && c===4){
+              if(castling.k && !board[sqToIdx('f8')] && !board[sqToIdx('g8')] && !inCheck('b') && !squareAttacked(sqToIdx('f8'),'w') && !squareAttacked(sqToIdx('g8'),'w')) add(i,sqToIdx('g8'));
+              if(castling.q && !board[sqToIdx('d8')] && !board[sqToIdx('c8')] && !board[sqToIdx('b8')] && !inCheck('b') && !squareAttacked(sqToIdx('d8'),'w') && !squareAttacked(sqToIdx('c8'),'w')) add(i,sqToIdx('c8'));
             }
           }
         }
-        return moves;
+        return moves.map(m=>({
+          from: idxToSq(m.from), to: idxToSq(m.to),
+          uci: idxToSq(m.from)+idxToSq(m.to)+(m.promotion?m.promotion:''),
+          piece: m.piece, promotion: m.promotion||null,
+          captured: null
+        }));
       }
+
       function moveUci(uci){
-        const from = sqToIdx(uci.slice(0,2));
-        const to = sqToIdx(uci.slice(2,4));
-        const promotion = uci.length>4 ? uci[4] : null;
-        const moves = generateMoves().filter(m => m.from===from && m.to===to && ((promotion && m.promotion===promotion) || (!promotion && !m.promotion)));
-        if(moves.length){
-          const prev = cloneState();
-          const result = makeMoveObj(from, to, promotion);
-          return {ok:true, prev, result};
+        const from = sqToIdx(uci.slice(0,2)), to = sqToIdx(uci.slice(2,4));
+        const promo = uci.length>4 ? uci[4] : null;
+        const legal = generate().filter(m => m.uci === (uci));
+        if(legal.length){
+          const prev = makeMove(from,to,promo);
+          return {ok:true, prev};
         }
         return {ok:false};
       }
-      function movesVerbose(){
-        return generateMoves().map(m => ({
-          from: idxToSq(m.from), to: idxToSq(m.to),
-          uci: idxToSq(m.from)+idxToSq(m.to)+(m.promotion?m.promotion:''),
-          piece: m.piece, captured: m.captured || null, promotion: m.promotion || null
-        }));
-      }
+
       function parseSANtoMove(san){
-        san = san.trim();
-        // castles
-        if(/^O-O-O/.test(san) || /^0-0-0/.test(san)){
-          const target = (side==='w') ? 'c1' : 'c8';
-          const from = (side==='w') ? 'e1' : 'e8';
-          return from+target;
-        }
-        if(/^O-O/.test(san) || /^0-0/.test(san)){
-          const target = (side==='w') ? 'g1' : 'g8';
-          const from = (side==='w') ? 'e1' : 'e8';
-          return from+target;
-        }
-        // strip check/mate and NAGs
+        san=san.trim();
+        if(/^O-O-O|^0-0-0/.test(san)){ return (side==='w'?'e1c1':'e8c8'); }
+        if(/^O-O|^0-0/.test(san)){ return (side==='w'?'e1g1':'e8g8'); }
         san = san.replace(/[+#]|!!|\?\?|!\?|\?!/g, '');
-        // promotion (e.g. e8=Q or exd8=Q)
-        let promo = null;
-        const pm = san.match(/=([NBRQ])/);
-        if(pm){ promo = pm[1].toLowerCase(); san = san.replace(/=([NBRQ])/, ''); }
-        // destination square is last [a-h][1-8]
-        const dm = san.match(/([a-h][1-8])$/);
-        if(!dm) return null;
-        const dest = dm[1];
-        san = san.slice(0, san.length - dest.length);
-        // piece letter if any
-        let pieceLetter = 'P';
-        if(/^[NBRQK]/.test(san)){ pieceLetter = san[0]; san = san.slice(1); }
-        // capture marker
-        san = san.replace('x','');
-        // disambiguation
-        let disFile = null, disRank = null;
-        if(san.length===2){
-          if(/[a-h]/.test(san[0])) disFile = san[0];
-          if(/[1-8]/.test(san[0])) disRank = san[0];
-          if(/[a-h]/.test(san[1])) disFile = san[1];
-          if(/[1-8]/.test(san[1])) disRank = san[1];
-        }else if(san.length===1){
-          if(/[a-h]/.test(san)) disFile = san;
-          if(/[1-8]/.test(san)) disRank = san;
-        }
-        // select matching legal move
-        const legal = movesVerbose();
-        const targets = legal.filter(m => m.to===dest).filter(m=>{
-          const want = pieceLetter;
-          const isPawn = want==='P';
+        let promo=null; const pm=san.match(/=([NBRQ])/); if(pm){ promo=pm[1].toLowerCase(); san=san.replace(/=([NBRQ])/, ''); }
+        const dm=san.match(/([a-h][1-8])$/); if(!dm) return null; const dest=dm[1]; san=san.slice(0, san.length-dest.length);
+        let pieceLetter='P'; if(/^[NBRQK]/.test(san)){ pieceLetter=san[0]; san=san.slice(1); }
+        san=san.replace('x','');
+        let disFile=null, disRank=null;
+        if(san.length===2){ if(/[a-h]/.test(san[0]))disFile=san[0]; if(/[1-8]/.test(san[0]))disRank=san[0]; if(/[a-h]/.test(san[1]))disFile=san[1]; if(/[1-8]/.test(san[1]))disRank=san[1]; }
+        else if(san.length===1){ if(/[a-h]/.test(san))disFile=san; if(/[1-8]/.test(san))disRank=san; }
+
+        const legal=generate().filter(m=>m.to===dest).filter(m=>{
+          const want=pieceLetter; const isPawn=want==='P';
           const okPiece = isPawn ? /[Pp]/.test(m.piece) :
-            (want==='N'?/[Nn]/.test(m.piece):
-             want==='B'?/[Bb]/.test(m.piece):
-             want==='R'?/[Rr]/.test(m.piece):
-             want==='Q'?/[Qq]/.test(m.piece):
-             /[Kk]/.test(m.piece));
+            (want==='N'?/[Nn]/.test(m.piece): want==='B'?/[Bb]/.test(m.piece):
+             want==='R'?/[Rr]/.test(m.piece): want==='Q'?/[Qq]/.test(m.piece): /[Kk]/.test(m.piece));
           if(!okPiece) return false;
           if(disFile && m.from[0]!==disFile) return false;
           if(disRank && m.from[1]!==disRank) return false;
           if(promo && m.promotion!==promo) return false;
           return true;
         });
-        if(targets.length===1){
-          return targets[0].uci;
-        }
-        return targets[0]?.uci || null;
+        return (legal[0] && legal[0].uci) || null;
       }
+
       function loadPGN(pgn){
-        // remove headers
         const text = pgn.replace(/\r/g,'').replace(/\[(.|\n)*?\]\s*/g,' ').trim();
-        // token stream with simple comment capture to attach evals later elsewhere
-        const tokens = [];
-        let i=0;
+        const tokens=[]; let i=0;
         while(i<text.length){
-          const ch = text[i];
-          if(ch==='{' ){
-            let j=i+1;
-            while(j<text.length && text[j]!=='}') j++;
-            tokens.push({type:'comment', value:text.slice(i+1,j)});
-            i=j+1;
-            continue;
-          }
+          const ch=text[i];
+          if(ch==='{' ){ let j=i+1; while(j<text.length&&text[j]!=='}') j++; tokens.push({type:'comment', value:text.slice(i+1,j)}); i=j+1; continue; }
           if(/\s/.test(ch)){ i++; continue; }
-          const num = text.slice(i).match(/^\d+\.(\.\.)?/);
-          if(num){ i += num[0].length; continue; }
-          const res = text.slice(i).match(/^(1-0|0-1|1\/2-1\/2|\*)/);
-          if(res){ i += res[0].length; continue; }
-          const nag = text.slice(i).match(/^\$\d+/);
-          if(nag){ i += nag[0].length; continue; }
-          let j=i;
-          while(j<text.length && !/\s|\{/.test(text[j])) j++;
-          tokens.push({type:'san', value:text.slice(i,j)});
-          i=j;
+          const num=text.slice(i).match(/^\d+\.(\.\.)?/); if(num){ i+=num[0].length; continue; }
+          const res=text.slice(i).match(/^(1-0|0-1|1\/2-1\/2|\*)/); if(res){ i+=res[0].length; continue; }
+          const nag=text.slice(i).match(/^\$\d+/); if(nag){ i+=nag[0].length; continue; }
+          let j=i; while(j<text.length && !/\s|\{/.test(text[j])) j++;
+          tokens.push({type:'san', value:text.slice(i,j)}); i=j;
         }
-        // play moves
         reset();
-        const moves = [];
+        const moves=[];
         for(const t of tokens){
           if(t.type==='san'){
-            const uci = parseSANtoMove(t.value);
+            const uci=parseSANtoMove(t.value);
             if(!uci) continue;
-            const mv = moveUci(uci);
+            const mv=moveUci(uci);
             if(!mv.ok) continue;
-            moves.push({uci, san: t.value, fenAfter: fen()});
+            moves.push({uci, san:t.value, fenAfter:fen()});
           }else{
-            moves.push({comment: t.value});
+            moves.push({comment:t.value});
           }
         }
-        return moves; // mixed array
+        return moves;
       }
+
       return {
-        reset, load, loadFEN, fen, turn:()=>side,
-        moves: movesVerbose,
-        moveUci, parseSANtoMove, loadPGN,
+        reset, loadFEN, fen, turn:()=>side,
+        moves: generate, moveUci, parseSANtoMove, loadPGN,
         idxToSq, sqToIdx, inCheck
       }
     }
 
     /********************************************************************
-     * SAN helper (UCI -> SAN) used for UI (best/your move labels & tables)
+     * SAN helper for UI (UCI -> SAN)
      ********************************************************************/
     function uciToSAN(fen, uci){
       if(!fen || !uci) return uci || '—';
       const cl = ChessLite(); cl.loadFEN(fen);
       const legal = cl.moves();
       const mv = legal.find(m => m.uci === uci);
-      if(!mv){
-        // Fallback: if it's a pawn quiet move, show target only
-        try { return uci.slice(2,4); } catch { return uci; }
-      }
+      if(!mv){ try { return uci.slice(2,4); } catch { return uci; } }
       // Castling
       if((mv.piece==='K' || mv.piece==='k') && ((mv.from==='e1'&& (mv.to==='g1'||mv.to==='c1')) || (mv.from==='e8' && (mv.to==='g8'||mv.to==='c8')))){
         return (mv.to==='g1'||mv.to==='g8') ? 'O-O' : 'O-O-O';
       }
       const isPawn = /[Pp]/.test(mv.piece);
-      const pieceLetter = isPawn ? '' : (mv.piece.toUpperCase());
-      // Disambiguation for pieces (file/rank)
-      let disamb = '';
+      const pieceLetter = isPawn ? '' : mv.piece.toUpperCase();
+      // Disambiguation
+      let disamb='';
       if(!isPawn){
         const competing = legal.filter(x => x.to===mv.to && x.piece===mv.piece && x.uci!==mv.uci);
         if(competing.length){
-          const sameFile = competing.some(x => x.from[0] === mv.from[0]);
-          const sameRank = competing.some(x => x.from[1] === mv.from[1]);
+          const sameFile = competing.some(x => x.from[0]===mv.from[0]);
+          const sameRank = competing.some(x => x.from[1]===mv.from[1]);
           if(!sameFile) disamb = mv.from[0];
           else if(!sameRank) disamb = mv.from[1];
           else disamb = mv.from;
@@ -1422,1177 +1038,586 @@ window.addEventListener('unhandledrejection', (e) => {
       }
       const isCapture = !!mv.captured;
       let san = '';
-      if(isPawn){
-        san = (isCapture ? (mv.from[0] + 'x') : '') + mv.to;
-      }else{
-        san = pieceLetter + disamb + (isCapture?'x':'') + mv.to;
-      }
-      // Promotion
-      if(mv.promotion){
-        san += '=' + mv.promotion.toUpperCase();
-      }
-      // Check / mate
+      if(isPawn){ san = (isCapture ? (mv.from[0] + 'x') : '') + mv.to; }
+      else { san = pieceLetter + disamb + (isCapture?'x':'') + mv.to; }
+      if(mv.promotion){ san += '=' + mv.promotion.toUpperCase(); }
       const tmp = ChessLite(); tmp.loadFEN(fen); tmp.moveUci(uci);
-      const opp = tmp.turn(); // after move, side switches
-      const inCheck = tmp.inCheck(opp);
-      const hasReply = tmp.moves().length > 0;
-      if(inCheck){
-        san += hasReply ? '+' : '#';
-      }
+      const opp = tmp.turn(); const inCheck = tmp.inCheck(opp); const hasReply = tmp.moves().length>0;
+      if(inCheck) san += hasReply ? '+' : '#';
       return san;
     }
 
     /********************************************************************
-     * Stockfish worker wrapper (queued)
+     * Stockfish wrapper
      ********************************************************************/
     const Engine = (() => {
-      let sf = null;
-      let ready = false;
-      let busy = false;
-      let lastScore = { cp: 0, mate: null };
-      let resolvers = [];
-      let initPromise = null;
-
+      let sf=null, ready=false, busy=false, lastScore={cp:0,mate:null}, resolvers=[], initPromise=null;
       function ensure(){
         if(initPromise) return initPromise;
         initPromise = new Promise(async (resolve) => {
-          // If a remote backend is configured, we don't need a local WASM engine.
           try{
-            if(window.SF_BACKEND_URL){
-              ready = true; const el = document.getElementById('engineState'); if(el) el.textContent = 'server';
-              return resolve(true);
-            }
+            if(window.SF_BACKEND_URL){ ready=true; $('#engineState').textContent='server'; return resolve(true); }
           }catch{}
           try{
-            sf = (typeof Stockfish === 'function') ? Stockfish() : null;
-            if(!sf){ $('#engineState').textContent = 'failed to load'; return resolve(false); }
+            sf = (typeof Stockfish==='function') ? Stockfish() : null;
+            if(!sf){ $('#engineState').textContent='failed'; return resolve(false); }
             sf.onmessage = (e) => {
-              const line = (''+(e.data || e)).trim();
-              if(line === 'uciok') { sf.postMessage('isready'); return; }
-              if(line === 'readyok') { ready = true; $('#engineState').textContent = 'ready'; return; }
+              const line=(''+(e.data||e)).trim();
+              if(line==='uciok'){ sf.postMessage('isready'); return; }
+              if(line==='readyok'){ ready=true; $('#engineState').textContent='ready'; return; }
               if(line.startsWith('info')){
-                const mMate = line.match(/score\s+mate\s+(-?\d+)/);
-                const mCp = line.match(/score\s+cp\s+(-?\d+)/);
-                if(mMate){
-                  lastScore = { mate: parseInt(mMate[1],10), cp: (mMate[1][0]==='-'?-10000:10000) };
-                }else if(mCp){
-                  lastScore = { cp: parseInt(mCp[1],10), mate: null };
-                }
+                const mMate=line.match(/score\s+mate\s+(-?\d+)/);
+                const mCp=line.match(/score\s+cp\s+(-?\d+)/);
+                if(mMate){ lastScore={mate:parseInt(mMate[1],10),cp:mMate[1][0]==='-'?-10000:10000}; }
+                else if(mCp){ lastScore={cp:parseInt(mCp[1],10),mate:null}; }
               }
               if(line.startsWith('bestmove')){
-                const bm = line.split(' ')[1];
-                const r = resolvers.shift();
-                busy = false;
-                if(r) r({ bestmove: bm, score: lastScore });
+                const bm=line.split(' ')[1]; const r=resolvers.shift(); busy=false; if(r) r({bestmove:bm, score:lastScore});
               }
             };
             sf.postMessage('uci');
-            const t0 = Date.now();
-            while(!ready && (Date.now()-t0) < 4000){ await sleep(20); }
+            const t0=Date.now(); while(!ready && (Date.now()-t0)<4000){ await sleep(20); }
             $('#engineState').textContent = ready ? 'ready' : 'loading…';
             resolve(true);
-          }catch(err){
-            console.error(err);
-            $('#engineState').textContent = 'error';
-            resolve(false);
-          }
+          }catch(err){ $('#engineState').textContent='error'; resolve(false); }
         });
         return initPromise;
       }
-
       async function analyze(fen, depth=12){
         await ensure();
         while(busy) await sleep(5);
-        if(sf){ // local worker
-          busy = true;
-          lastScore = { cp: 0, mate: null };
+        if(sf){
+          busy=true; lastScore={cp:0,mate:null};
           sf.postMessage('ucinewgame');
           sf.postMessage('position fen ' + fen);
-          const p = new Promise(res => resolvers.push(res));
-          sf.postMessage('go depth ' + depth);
-          const out = await p;
-          return { cp: (out.score.mate!==null ? (out.score.mate>0?10000:-10000) : out.score.cp), bestmove: out.bestmove };
+          const p=new Promise(res=>resolvers.push(res));
+          sf.postMessage('go depth '+depth);
+          const out=await p;
+          return { cp:(out.score.mate!==null?(out.score.mate>0?10000:-10000):out.score.cp), bestmove: out.bestmove };
         }
-        // Remote backend
-        const base = (window.SF_BACKEND_URL || '').replace(/\/$/, '');
-        const url = `${base}/bestmove`;
-        const res = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ fen, depth })});
-        const data = await res.json();
-        return { cp: data.cp ?? 0, bestmove: data.bestmove };
+        // Server (Cloud Run)
+        const base=(window.SF_BACKEND_URL||'').replace(/\/$/,'');
+        const url=`${base}/bestmove`;
+        const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fen,depth})});
+        const data=await res.json(); return { cp:data.cp??0, bestmove:data.bestmove };
       }
-
       return { analyze, ensure };
     })();
 
     /********************************************************************
-     * PGN parsing + mistake extraction
+     * PGN helpers & analysis
      ********************************************************************/
-    const DEFAULT_SEV = { inacc:50, mistake:150, blunder:300 };
-    function getSev(){
-      try{ const o = JSON.parse(localStorage.getItem('pmtt_sev')||'{}'); return { ...DEFAULT_SEV, ...o }; }catch{ return DEFAULT_SEV; }
-    }
-    function setSev(o){ try{ localStorage.setItem('pmtt_sev', JSON.stringify(o)); }catch{} }
+    const DEFAULT_SEV={ inacc:50, mistake:150, blunder:300 };
+    function getSev(){ try{ const o=JSON.parse(localStorage.getItem('pmtt_sev')||'{}'); return {...DEFAULT_SEV, ...o}; }catch{return DEFAULT_SEV;} }
+    function severityFromDrop(cp){ const T=getSev(); const x=Math.abs(Math.round(cp)); if(x>=T.blunder) return 'blunder'; if(x>=T.mistake) return 'mistake'; if(x>=T.inacc) return 'inaccuracy'; return null; }
 
-    function severityFromDrop(cp){
-      const T = getSev();
-      const x = Math.abs(Math.round(cp));
-      if(x >= T.blunder) return 'blunder';
-      if(x >= T.mistake) return 'mistake';
-      if(x >= T.inacc) return 'inaccuracy';
-      return null;
+    function parsePGNHeaders(pgn){
+      const h={}; const re=/\[(\w+)\s+"([^"]*)"\]/g; let m; while((m=re.exec(pgn))) h[m[1]]=m[2]; return h;
     }
 
-    function parseLichessEvalsFromMoves(mixedMoves){
-      let out = [];
-      for(let i=0;i<mixedMoves.length;i++){
-        const t = mixedMoves[i];
-        if(t.san){ out.push({...t, evalW: null}); }
-        else if(t.comment && out.length){
-          const all = [...t.comment.matchAll(/\[%eval\s+([^\]]+)\]/g)];
-          if(all.length){
-            let val = all[all.length-1][1].trim();
-            let cp = null;
-            if(val.startsWith('#')){
-              const n = parseInt(val.slice(1),10);
-              cp = (isNaN(n)? 10000 : (n>0?10000:-10000));
-            }else{
-              cp = Math.round(parseFloat(val.replace('+',''))*100);
-            }
-            out[out.length-1].evalW = cp;
-          }
-        }
-      }
-      return out;
-    }
-
-    async function analyzeLichessPGN(pgn){
-      try{
-        if(window.FN_BASE){
-          const out = await analyzeOnBackend([pgn]);
-          if(out && out.length) return out;
-        }
-      }catch{}
-      const cl = ChessLite();
-      const mixed = cl.loadPGN(pgn);
-      const seq = parseLichessEvalsFromMoves(mixed).filter(m => m.san);
-      const mistakes = [];
-      let prevEvalW = null;
-      const cl2 = ChessLite();
-      cl2.reset();
-      for(const entry of seq){
-        const sideToMove = cl2.turn();
-        const fenBefore = cl2.fen();
-        const evalAfter = entry.evalW;
-        if(prevEvalW!==null && evalAfter!==null){
-          let drop = 0;
-          if(sideToMove==='w'){ drop = Math.max(0, prevEvalW - evalAfter); }
-          else{ drop = Math.max(0, evalAfter - prevEvalW); }
-          const sev = severityFromDrop(drop);
-          if(sev){
-            const { bestmove } = await Engine.analyze(fenBefore, 12);
-            const m = {
-              id: uid(),
-              fen: fenBefore,
-              side: sideToMove,
-              played: entry.san,      // SAN already
-              best: bestmove,         // UCI
-              deltaCp: drop,
-              severity: sev,
-              nextReview: nowTs(),
-              ef: 2.5, reps: 0, interval: 0
-            };
-            // Attach PGN + link from headers if present
-            try{
-              const h = parsePGNHeaders(pgn); m.pgn = pgn; if(h.Site && /^https?:\/\//i.test(h.Site)) m.gameUrl = h.Site;
-            }catch{}
-            mistakes.push(m);
-          }
-        }
-        const uci = cl2.parseSANtoMove(entry.san);
-        if(uci) cl2.moveUci(uci);
-        prevEvalW = (entry.evalW!==null) ? entry.evalW : prevEvalW;
-      }
-      return mistakes;
-    }
-
-    async function analyzeManualOrChesscomPGN(pgn){
-      try{
-        if(window.FN_BASE){
-          const out = await analyzeOnBackend([pgn]);
-          if(out && out.length) return out;
-        }
-      }catch{}
-      const cl = ChessLite();
-      const seq = cl.loadPGN(pgn).filter(x => x.san);
-      const mistakes = [];
-      const cl2 = ChessLite();
-      cl2.reset();
-      for(const mv of seq){
-        const fenBefore = cl2.fen();
-        const sideToMove = cl2.turn();
-        const { cp:cpBefore, bestmove } = await Engine.analyze(fenBefore, 12);
-        const uci = cl2.parseSANtoMove(mv.san);
-        if(!uci){ continue; }
-        cl2.moveUci(uci);
-        const fenAfter = cl2.fen();
-        const { cp:cpAfter } = await Engine.analyze(fenAfter, 12);
-        const drop = Math.max(0, cpBefore + cpAfter);
-        const sev = severityFromDrop(drop);
-        if(sev){
-          const m = {
-            id: uid(),
-            fen: fenBefore,
-            side: sideToMove,
-            played: mv.san,       // SAN
-            best: bestmove,       // UCI
-            deltaCp: drop,
-            severity: sev,
-            nextReview: nowTs(),
-            ef: 2.5, reps: 0, interval: 0
-          };
-          try{
-            const h = parsePGNHeaders(pgn); m.pgn = pgn; if(h.Site && /^https?:\/\//i.test(h.Site)) m.gameUrl = h.Site;
-          }catch{}
-          mistakes.push(m);
-        }
-      }
-      return mistakes;
-    }
-
-    // Call backend analyze function with a list of PGNs
     async function analyzeOnBackend(pgns){
-      const url = `${window.FN_BASE}/analyzePGNs`;
-      const thr = getSev();
-      const res = await fetch(url, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ pgns, depth: 12, thresholds: thr }) });
+      const url=`${window.FN_BASE}/analyzePGNs`;
+      const thr=getSev();
+      const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pgns,depth:12,thresholds:thr})});
       if(!res.ok) throw new Error(`analyzePGNs failed ${res.status}`);
-      const json = await res.json();
-      // Ensure we attach PGN + URL metadata per item if present in headers
-      const items = json.mistakes || [];
-      items.forEach(m => {
-        if(!m.pgn && Array.isArray(pgns) && pgns.length===1){ m.pgn = pgns[0]; }
-        if(m.pgn){
-          try{
-            const h = parsePGNHeaders(m.pgn);
-            if(h.Site && /^https?:\/\//i.test(h.Site)) m.gameUrl = h.Site;
-          }catch{}
-        }
-      });
-      return items;
+      const json=await res.json();
+      // ensure PGN carried through for later clearing/filtering
+      (json.mistakes||[]).forEach(m=>{ if(!m.pgn && pgns.length===1) m.pgn=pgns[0]; });
+      return json.mistakes||[];
     }
-
-    // Cloud Run Stockfish service (one PGN per call)
     async function analyzeOnServer(pgn, depth=12){
-      const base = (window.SF_BACKEND_URL || '').replace(/\/$/, '');
-      if(!base) throw new Error('SF_BACKEND_URL not set');
-      const url = `${base}/analyze`;
-      const thr = getSev();
-      const res = await fetch(url, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ pgn, depth, thresholds: thr }) });
+      const base=(window.SF_BACKEND_URL||'').replace(/\/$/,''); if(!base) throw new Error('SF_BACKEND_URL not set');
+      const url=`${base}/analyze`;
+      const thr=getSev();
+      const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pgn,depth,thresholds:thr})});
       if(!res.ok) throw new Error(`Stockfish backend error ${res.status}`);
-      const data = await res.json();
-      const mistakes = data.mistakes || [];
-      try{
-        const h = parsePGNHeaders(pgn);
-        const urlHdr = h.Site || h.Link || '';
-        mistakes.forEach(m => { m.pgn = pgn; if(urlHdr && /^https?:\/\//i.test(urlHdr)) m.gameUrl = urlHdr; });
-      }catch{}
+      const data=await res.json(); const mistakes=data.mistakes||[];
+      try{ const h=parsePGNHeaders(pgn); const urlHdr=h.Site||h.Link||''; mistakes.forEach(m=>{m.pgn=pgn; if(urlHdr && /^https?:\/\//i.test(urlHdr)) m.gameUrl=urlHdr;}); }catch{}
       return mistakes;
     }
 
-    // Analyze all imported PGNs (prefer server)
-    async function analyzeImportedWithBackend(){
-      const info = window.lastFetchedPGNs;
+    async function analyzeImportedWithBackendAbortable(state){
+      const info=window.lastFetchedPGNs;
       const list = info && Array.isArray(info.pgns) ? info.pgns : [];
-      if(!list.length){ alert('No imported games found. Fetch games first.'); return; }
-      const all = [];
+      if(!list.length){ alert('No imported games found. Import games first.'); return; }
+      const all=[];
       let i=0;
       for(const pgn of list){
-        setStatus(`Backend analyze ${++i}/${list.length}…`);
+        if(state.stop) break;
+        setStatus(`Analyzing ${++i}/${list.length}…`);
         try{
-          if(window.SF_BACKEND_URL){
-            const ms = await analyzeOnServer(pgn, 12);
-            all.push(...ms);
-          }else if(window.FN_BASE){
-            const ms = await analyzeOnBackend([pgn]);
-            all.push(...ms);
-          }else{
-            const ms = await analyzeManualOrChesscomPGN(pgn);
-            all.push(...ms);
+          if(window.SF_BACKEND_URL){ const ms=await analyzeOnServer(pgn,12); all.push(...ms); }
+          else if(window.FN_BASE){ const ms=await analyzeOnBackend([pgn]); all.push(...ms); }
+          else{
+            // Local fallback: very slow; avoid on large batches
+            const ms = await analyzeManualLocal(pgn); all.push(...ms);
           }
-        }catch(e){ console.warn('Analyze failed for a game', e); }
+        }catch(e){ console.warn('Analyze failed:', e); }
       }
-      addMistakes(all);
-      const tag = (info && info.source) ? info.source : 'Imported';
-      const set = createSetFromMistakes(all, `${tag} ${new Date().toLocaleString()}`);
-      setActiveSet(set); renderActiveSetInfo();
-      setStatus(`Done. Added ${all.length} mistakes (${tag}).`);
+      if(all.length) addMistakes(all);
+      if(!state.stop){
+        const tag=(info && info.source) ? info.source : 'Imported';
+        const set=createSetFromMistakes(all, `${tag} ${new Date().toLocaleString()}`);
+        setActiveSet(set); renderActiveSetInfo();
+        setStatus(`Done. Added ${all.length} mistakes.`);
+      }else{
+        setStatus('Analysis stopped.');
+      }
+    }
+
+    // Very last-resort local analysis (slow); keep minimal
+    async function analyzeManualLocal(pgn){
+      const cl=ChessLite(); const seq=cl.loadPGN(pgn).filter(x=>x.san);
+      const mistakes=[]; const cl2=ChessLite(); cl2.reset();
+      for(const mv of seq){
+        const fenBefore=cl2.fen(); const sideToMove=cl2.turn();
+        const { cp:cpBefore, bestmove } = await Engine.analyze(fenBefore,12);
+        const uci=cl2.parseSANtoMove(mv.san); if(!uci) continue;
+        cl2.moveUci(uci); const fenAfter=cl2.fen();
+        const { cp:cpAfter } = await Engine.analyze(fenAfter,12);
+        const drop=Math.max(0, cpBefore + cpAfter); const sev=severityFromDrop(drop);
+        if(sev){
+          mistakes.push({ id:uid(), fen:fenBefore, side:sideToMove, played:mv.san, best:bestmove, deltaCp:drop, severity:sev, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn });
+        }
+      }
+      return mistakes;
     }
 
     /********************************************************************
-     * Fetchers (Lichess & Chess.com)
+     * Importers
      ********************************************************************/
-    function parsePGNHeaders(pgn){
-      const h = {};
-      const re = /\[(\w+)\s+"([^"]*)"\]/g;
-      let m;
-      while((m = re.exec(pgn))){ h[m[1]] = m[2]; }
-      return h;
-    }
-
     function renderImportedGames(pgns, source){
       try{
-        const tb = document.querySelector('#importTBody');
-        if(!tb) return;
-        tb.innerHTML = '';
+        const tb = $('#importTBody'); if(!tb) return;
+        tb.innerHTML='';
         let i=0;
         for(const pgn of pgns){
           const h = parsePGNHeaders(pgn);
-          const tr = document.createElement('tr');
+          const tr=document.createElement('tr');
           tr.innerHTML = `
             <td>${++i}</td>
-            <td>${(h.White||'-')}</td>
-            <td>${(h.Black||'-')}</td>
-            <td>${(h.Result||'-')}</td>
-            <td>${(h.Date||h.UTCDate||'-')}</td>
-            <td>${source}</td>
-          `;
-          tr.style.cursor = 'pointer';
+            <td>${h.White||'-'}</td>
+            <td>${h.Black||'-'}</td>
+            <td>${h.Result||'-'}</td>
+            <td>${h.Date||h.UTCDate||'-'}</td>
+            <td>${source}</td>`;
+          tr.style.cursor='pointer';
           tr.addEventListener('click', () => {
-            Array.from(tb.querySelectorAll('tr')).forEach(r => r.classList.remove('selected'));
+            Array.from(tb.querySelectorAll('tr')).forEach(r=>r.classList.remove('selected'));
             tr.classList.add('selected');
-            loadGameOnBoard(pgn);
+            // load game into viewer (mini-board)
+            try{
+              const cl = ChessLite(); cl.reset();
+              const startFen = cl.fen();
+              const mixed = cl.loadPGN(pgn);
+              const fens = [startFen, ...mixed.filter(x=>x.san).map(x=>x.fenAfter)];
+              GAMEVIEW.fens=fens; GAMEVIEW.idx=0; GAMEVIEW.total=fens.length-1; GAMEVIEW.pgn=pgn;
+              gvShow(); drawBoardInto('gvBoard', fens[0], true); gvUpdate();
+              setStatus('Game loaded in viewer.');
+            }catch(e){ console.warn('viewer load failed', e); }
           });
           tb.appendChild(tr);
         }
-        const help = document.querySelector('#importHelp');
-        if(help) help.textContent = `${pgns.length} game(s) listed below. Click a row to preview the game.`;
+        const help = $('#importHelp');
+        if(help) help.textContent = `${pgns.length} game(s) listed. Click a row to preview.`;
         window.lastFetchedPGNs = { source, pgns };
       }catch(e){ console.warn('renderImportedGames failed', e); }
     }
 
     async function fetchLichess(user, maxN){
-      const n = Math.max(1, Math.min(50, parseInt(maxN,10) || 5));
-      const baseUrl = (window.FN_LICHESS_URL || `${window.FN_BASE||''}/fetchLichess`).replace(/\/$/, '');
-      const url = `${baseUrl}?username=${encodeURIComponent(user)}&max=${n}`;
-      console.log('[fetchLichess] GET', url);
-      const res = await fetch(url, { headers:{ 'Accept':'application/json' } });
-      if(!res.ok) throw new Error(`Lichess proxy failed (${res.status})`);
-      const json = await res.json();
-      const games = (json.games || []).filter(g => g && g.pgn);
-      const out = games.map(g => g.pgn);
-      renderImportedGames(out, 'Lichess');
-      return out;
+      const n=Math.max(1, Math.min(50, parseInt(maxN,10)||5));
+      const base=(window.FN_LICHESS_URL||`${window.FN_BASE||''}/fetchLichess`).replace(/\/$/,'');
+      const url=`${base}?username=${encodeURIComponent(user)}&max=${n}`;
+      const res=await fetch(url,{headers:{'Accept':'application/json'}}); if(!res.ok) throw new Error(`Lichess proxy failed (${res.status})`);
+      const json=await res.json(); const games=(json.games||[]).filter(g=>g&&g.pgn); const out=games.map(g=>g.pgn);
+      renderImportedGames(out,'Lichess'); return out;
     }
-    function fetchLichessLast5(user){ return fetchLichess(user, 5); }
 
-    /**
-     * Chess.com last-N fetcher
-     *
-     * Chess.com API is month-based. We must fetch the archives index first,
-     * then walk BACKWARD month-by-month collecting games until we have N.
-     *
-     * Always call:
-     *   GET https://api.chess.com/pub/player/{username}/games/archives
-     * Then for each archive URL (e.g. .../games/2025/08):
-     *   GET https://api.chess.com/pub/player/{username}/games/{year}/{month}
-     *
-     * We aggregate PGNs across months, sort within each month by end_time desc,
-     * and stop once we have N games. Returns a flat array of PGN strings.
-     */
-    async function fetchLastNGamesChesscom(username, n){
-      const user = encodeURIComponent(username.trim());
-      const need = Math.max(1, Math.min(50, parseInt(n,10) || 5));
-      const idxUrl = `https://api.chess.com/pub/player/${user}/games/archives`;
-      const idxRes = await fetch(idxUrl, { headers:{ 'Accept':'application/json' } });
-      if(!idxRes.ok) throw new Error(`Chess.com archives failed (${idxRes.status})`);
-      const idx = await idxRes.json();
-      const archives = (idx.archives||[]).slice().reverse(); // newest first
-      const out = [];
-      for(const monthUrl of archives){
-        const r = await fetch(monthUrl, { headers:{ 'Accept':'application/json' } });
-        if(!r.ok) continue;
-        const j = await r.json();
-        const games = (j.games||[]).filter(g => g && g.pgn);
-        // sort newest first if timestamps exist
-        games.sort((a,b) => (b.end_time||0) - (a.end_time||0));
-        for(const g of games){
-          out.push(g.pgn);
-          if(out.length >= need) break;
-        }
-        if(out.length >= need) break;
-      }
-      return out.slice(0, need);
+    async function fetchChesscom(user, maxN){
+      const n=Math.max(1, Math.min(50, parseInt(maxN,10)||5));
+      const base=(window.FN_CHESSCOM_URL||`${window.FN_BASE||''}/fetchChessCom`).replace(/\/$/,'');
+      const url=`${base}?username=${encodeURIComponent(user)}&limit=${n}`;
+      const res=await fetch(url,{headers:{'Accept':'application/json'}}); if(!res.ok) throw new Error(`Chess.com proxy failed (${res.status})`);
+      const json=await res.json(); const games=(json.games||[]).filter(g=>g&&g.pgn); const out=games.map(g=>g.pgn);
+      renderImportedGames(out,'Chess.com'); return out;
     }
 
     /********************************************************************
-     * Trainer session + SM-2 scheduling
+     * Trainer session + SM-2
      ********************************************************************/
     let ORIENT_WHITE_BOTTOM = true;
 
     function pickDueSRS(){
       let list = loadMistakes();
       if(ACTIVE_SET_KEYS && ACTIVE_SET_KEYS.size){ list = list.filter(m => ACTIVE_SET_KEYS.has(keyOf(m))); }
-      const now = nowTs();
-      return list.filter(m => (m.nextReview || 0) <= now);
+      const now = nowTs(); return list.filter(m => (m.nextReview||0) <= now);
     }
 
-    function sm2Update(mistake, quality){
-      mistake.ef = mistake.ef ?? 2.5;
-      mistake.reps = mistake.reps ?? 0;
-      mistake.interval = mistake.interval ?? 0;
-
+    function sm2Update(m, quality){
+      m.ef = m.ef ?? 2.5; m.reps = m.reps ?? 0; m.interval = m.interval ?? 0;
       const q = clamp(quality, 0, 5);
-      mistake.ef = mistake.ef + (0.1 - (5-q) * (0.08 + (5-q)*0.02));
-      mistake.ef = Math.max(1.3, mistake.ef);
-
-      if(q < 3){
-        mistake.reps = 0;
-        mistake.interval = 1;
-      }else{
-        mistake.reps += 1;
-        if(mistake.reps === 1) mistake.interval = 1;
-        else if(mistake.reps === 2) mistake.interval = 6;
-        else mistake.interval = Math.round(mistake.interval * mistake.ef);
-      }
-      mistake.nextReview = nowTs() + days(mistake.interval || 1);
+      m.ef = m.ef + (0.1 - (5-q)*(0.08 + (5-q)*0.02)); m.ef = Math.max(1.3, m.ef);
+      if(q<3){ m.reps=0; m.interval=1; }
+      else{ m.reps+=1; if(m.reps===1)m.interval=1; else if(m.reps===2)m.interval=6; else m.interval=Math.round(m.interval*m.ef); }
+      m.nextReview = nowTs() + days(m.interval||1);
     }
 
     const Session = (() => {
-      let queue = [];
-      let mode = 'woodpecker';
-      let active = null; // current mistake
-      let pendingFirstTry = true;
+      let queue=[]; let mode='srs'; let active=null; let pendingFirstTry=true;
 
       function startWoodpecker(N){
         let list = loadMistakes().slice();
         if(ACTIVE_SET_KEYS && ACTIVE_SET_KEYS.size){ list = list.filter(m => ACTIVE_SET_KEYS.has(keyOf(m))); }
-        // pick N by severity desc, then by largest delta
         list.sort((a,b) => {
-          const sevRank = s => s==='blunder'?3:(s==='mistake'?2:(s==='inaccuracy'?1:0));
-          const d = sevRank(b.severity) - sevRank(a.severity);
-          if(d) return d;
+          const rank = s => s==='blunder'?3 : s==='mistake'?2 : s==='inaccuracy'?1 : 0;
+          const d = rank(b.severity) - rank(a.severity); if(d) return d;
           return (b.deltaCp||0) - (a.deltaCp||0);
         });
-        queue = list.slice(0, Math.max(1, N)).map(m => ({...m}));
-        mode = 'woodpecker';
-        next();
+        queue = list.slice(0, Math.max(1,N)).map(m=>({...m}));
+        mode='woodpecker'; next();
       }
-
-      function startSRS(){
-        queue = pickDueSRS();
-        mode = 'srs';
-        next();
-      }
-
+      function startSRS(){ queue = pickDueSRS(); mode='srs'; next(); }
       function next(){
-        $('#yourMove').textContent = '—';
-        $('#feedback').textContent = '—';
-        BOARD.arrows.user = null;
-        BOARD.arrows.showBest = false;
-        renderArrows();
-        if(queue.length === 0){
-          if(mode==='srs'){
-            queue = pickDueSRS();
-            if(queue.length===0){
-              $('#mInfo').innerHTML = 'No SRS items due now. 🎉';
-              active = null; drawBoard(null); renderTrainQueue(); return;
-            }
-          }else{
-            $('#mInfo').innerHTML = 'Woodpecker set complete. ✅';
-            active = null; drawBoard(null); renderTrainQueue(); return;
-          }
+        $('#yourMove').textContent='—'; $('#feedback').textContent='—';
+        BOARD.arrows.user=null; BOARD.arrows.showBest=false; renderArrows();
+        if(queue.length===0){
+          if(mode==='srs'){ queue = pickDueSRS(); if(queue.length===0){ $('#mInfo').textContent='No SRS items due now. 🎉'; active=null; drawBoardMain(null); return; } }
+          else { $('#mInfo').textContent='Woodpecker set complete. ✅'; active=null; drawBoardMain(null); return; }
         }
-        active = queue.shift();
-        pendingFirstTry = true;
-        loadMistakeOnBoard(active);
-        renderTrainQueue(active);
+        active = queue.shift(); pendingFirstTry=true; loadMistakeOnBoard(active);
       }
-
       function answer(moveUci){
         if(!active) return;
-        const correct = (moveUci === (active.best || ''));
+        const correct = (moveUci === (active.best||''));
         const yourSan = uciToSAN(active.fen, moveUci);
-        $('#yourMove').textContent = yourSan || (moveUci || '—');
+        $('#yourMove').textContent = yourSan || moveUci || '—';
 
-        // draw red arrow for your move (always)
-        BOARD.arrows.user = moveUci || null;
-        BOARD.arrows.showBest = false;
-        renderArrows();
+        // show your move arrow (red) immediately
+        BOARD.arrows.user = moveUci || null; BOARD.arrows.showBest=false; renderArrows();
 
         if(correct){
           $('#feedback').innerHTML = '✔️ Correct (best move)';
-          const list = loadMistakes();
-          const idx = list.findIndex(m => m.id===active.id);
-          if(idx>=0){
-            const q = (mode==='srs') ? (pendingFirstTry?5:3) : (pendingFirstTry?5:4);
-            sm2Update(list[idx], q);
-            saveMistakes(list);
-          }
+          const list = loadMistakes(); const idx=list.findIndex(m=>m.id===active.id);
+          if(idx>=0){ const q=(mode==='srs') ? (pendingFirstTry?5:3) : (pendingFirstTry?5:4); sm2Update(list[idx], q); saveMistakes(list); }
           logAttempt(active.id, true);
           next();
         }else{
           const bestSan = uciToSAN(active.fen, active.best);
           $('#feedback').innerHTML = `❌ Not the best. <span class="mono">Best = ${bestSan || active.best}</span>`;
           logAttempt(active.id, false);
-          pendingFirstTry = false;
+          pendingFirstTry=false;
           if(mode==='woodpecker') queue.push(active);
         }
       }
-
-      function getQueue(){ return queue.slice(); }
-      return { startWoodpecker, startSRS, next, answer, get active(){return active;}, getQueue }
+      return { startWoodpecker, startSRS, next, answer, get active(){return active;} }
     })();
 
     /********************************************************************
-     * Minimal board UI + arrows
+     * Board rendering + arrows
      ********************************************************************/
-    const PIECES = {
-      'P':'♙','N':'♘','B':'♗','R':'♖','Q':'♕','K':'♔',
-      'p':'♟','n':'♞','b':'♝','r':'♜','q':'♛','k':'♚'
-    };
-
-    const BOARD = { current: null, selected: null, highlights: new Set(), chess: ChessLite() };
-    // Two-arrow model: your move (red); best move (green, only after reveal)
-    BOARD.arrows = { user: null, best: null, showBest: false };
+    const PIECES = {'P':'♙','N':'♘','B':'♗','R':'♖','Q':'♕','K':'♔','p':'♟','n':'♞','b':'♝','r':'♜','q':'♛','k':'♚'};
+    const BOARD = { current:null, selected:null, highlights:new Set(), chess:ChessLite(), arrows:{ user:null, best:null, showBest:false } };
 
     function ensureArrowCanvas(){
       const outer = document.querySelector('.board'); if(!outer) return null;
       let cv = document.getElementById('boardArrows');
-      if(!cv){
-        cv = document.createElement('canvas');
-        cv.id = 'boardArrows';
-        Object.assign(cv.style, { position:'absolute', inset:'0', pointerEvents:'none' });
-        outer.appendChild(cv);
-      }
+      if(!cv){ cv=document.createElement('canvas'); cv.id='boardArrows'; Object.assign(cv.style,{position:'absolute', inset:'0', pointerEvents:'none'}); outer.appendChild(cv); }
       const rect = outer.getBoundingClientRect();
       const dpr = Math.min(2, (window.devicePixelRatio || 1));
-      cv.width = Math.floor(rect.width*dpr);
-      cv.height = Math.floor(rect.height*dpr);
-      cv.style.width = rect.width+'px';
-      cv.style.height = rect.height+'px';
+      cv.width = Math.floor(rect.width*dpr); cv.height = Math.floor(rect.height*dpr); cv.style.width=rect.width+'px'; cv.style.height=rect.height+'px';
       return { cv, dpr };
     }
     function sqCenterPx(sq, rectW, rectH, dpr){
-      const files = 'abcdefgh'; const f = files.indexOf(sq[0]); const r = parseInt(sq[1],10)-1;
-      let col = f; let row = 7-r; // white bottom
-      if(!ORIENT_WHITE_BOTTOM){ col = 7-col; row = 7-row; }
-      const cellW = rectW/8, cellH = rectH/8;
-      return { x: dpr*((col+0.5)*cellW), y: dpr*((row+0.5)*cellH) };
+      const files='abcdefgh'; const f=files.indexOf(sq[0]); const r=parseInt(sq[1],10)-1;
+      let col=f, row=7-r;
+      if(!ORIENT_WHITE_BOTTOM){ col=7-col; row=7-row; }
+      const cellW=rectW/8, cellH=rectH/8; return { x:dpr*((col+0.5)*cellW), y:dpr*((row+0.5)*cellH) };
     }
-    function drawArrow(ctx, dpr, from, to, color){
-      const outer = document.querySelector('.board'); if(!outer) return;
-      const rect = outer.getBoundingClientRect();
-      const a = sqCenterPx(from, rect.width, rect.height, dpr);
-      const b = sqCenterPx(to, rect.width, rect.height, dpr);
-      ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 6*dpr; ctx.lineCap='round';
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-      const ang = Math.atan2(b.y-a.y, b.x-a.x);
-      const size = 12*dpr;
-      ctx.beginPath();
-      ctx.moveTo(b.x, b.y);
-      ctx.lineTo(b.x - size*Math.cos(ang - Math.PI/6), b.y - size*Math.sin(ang - Math.PI/6));
-      ctx.lineTo(b.x - size*Math.cos(ang + Math.PI/6), b.y - size*Math.sin(ang + Math.PI/6));
+    function drawArrow(ctx,dpr,from,to,color){
+      const outer=document.querySelector('.board'); if(!outer) return;
+      const rect=outer.getBoundingClientRect();
+      const a=sqCenterPx(from, rect.width, rect.height, dpr);
+      const b=sqCenterPx(to, rect.width, rect.height, dpr);
+      ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=6*dpr; ctx.lineCap='round';
+      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+      const ang=Math.atan2(b.y-a.y,b.x-a.x); const size=12*dpr;
+      ctx.beginPath(); ctx.moveTo(b.x,b.y);
+      ctx.lineTo(b.x-size*Math.cos(ang-Math.PI/6), b.y-size*Math.sin(ang-Math.PI/6));
+      ctx.lineTo(b.x-size*Math.cos(ang+Math.PI/6), b.y-size*Math.sin(ang+Math.PI/6));
       ctx.closePath(); ctx.fill();
     }
     function renderArrows(){
-      const info = ensureArrowCanvas(); if(!info) return;
-      const { cv, dpr } = info; const ctx = cv.getContext('2d');
-      if(!ctx) return; ctx.clearRect(0,0,cv.width,cv.height);
-
-      // User arrow (red) always if exists
-      const u = BOARD.arrows.user;
-      if(u){
-        drawArrow(ctx, dpr, u.slice(0,2), u.slice(2,4), getComputedStyle(document.documentElement).getPropertyValue('--arrow-user').trim() || '#ff5c5c');
-      }
-      // Best arrow (green) only after reveal
-      const b = BOARD.arrows.best;
-      if(b && BOARD.arrows.showBest){
-        drawArrow(ctx, dpr, b.slice(0,2), b.slice(2,4), getComputedStyle(document.documentElement).getPropertyValue('--arrow-best').trim() || '#2ecc71');
-      }
+      const info=ensureArrowCanvas(); if(!info) return;
+      const {cv,dpr}=info; const ctx=cv.getContext('2d'); if(!ctx) return; ctx.clearRect(0,0,cv.width,cv.height);
+      const u=BOARD.arrows.user; if(u){ drawArrow(ctx,dpr,u.slice(0,2),u.slice(2,4),getComputedStyle(document.documentElement).getPropertyValue('--arrow-user').trim()||'#ff5c5c'); }
+      const b=BOARD.arrows.best; if(b && BOARD.arrows.showBest){ drawArrow(ctx,dpr,b.slice(0,2),b.slice(2,4),getComputedStyle(document.documentElement).getPropertyValue('--arrow-best').trim()||'#2ecc71'); }
     }
 
-    function drawBoard(fen){
-      const root = $('#board');
-      root.innerHTML = '';
+    function drawBoardInto(rootId, fen, whiteBottom){
+      const root = document.getElementById(rootId); if(!root) return;
+      root.innerHTML='';
       if(!fen){
-        for(let r=0;r<8;r++){
-          for(let c=0;c<8;c++){
-            const el = document.createElement('div');
-            el.className = 'sq ' + (((r+c)%2) ? 'dark':'light');
-            root.appendChild(el);
-          }
-        }
-        renderArrows();
+        for(let r=0;r<8;r++){ for(let c=0;c<8;c++){ const el=document.createElement('div'); el.className='sq '+(((r+c)%2)?'dark':'light'); root.appendChild(el); } }
         return;
       }
-      BOARD.chess.loadFEN(fen);
-      BOARD.current = fen;
-      const side = BOARD.chess.turn();
-      $('#sideToMove').textContent = side==='w'?'White':'Black';
+      const cl=ChessLite(); cl.loadFEN(fen);
+      const parts=fen.split(' ')[0].split('/'); const cells=[];
+      for(const row of parts){ for(const ch of row){ if(/[1-8]/.test(ch)){ for(let k=0;k<parseInt(ch,10);k++) cells.push(null); } else cells.push(ch); } }
 
-      // Build placement
-      const parts = fen.split(' ')[0].split('/');
-      const cells = [];
-      for(const row of parts){
-        for(const ch of row){
-          if(/[1-8]/.test(ch)){
-            for(let k=0;k<parseInt(ch,10);k++) cells.push(null);
-          }else cells.push(ch);
-        }
+      // orientation
+      const idxOrder=[]; for(let r=0;r<8;r++){ for(let c=0;c<8;c++) idxOrder.push(r*8+c); }
+      const oriented = (whiteBottom ? idxOrder : idxOrder.slice().reverse());
+
+      oriented.forEach(i=>{
+        const r=Math.floor(i/8), c=i%8; const sq=cl.idxToSq(i);
+        const cell=document.createElement('div'); cell.className='sq '+(((r+c)%2)?'dark':'light');
+        const coord=document.createElement('div'); coord.className='coord';
+        if((whiteBottom && (r===7&&c===0)) || (!whiteBottom && (r===0&&c===7))) coord.textContent=sq;
+        cell.appendChild(coord);
+        const piece=cells[i]; if(piece){ const span=document.createElement('div'); span.className='piece'; span.textContent=PIECES[piece]||''; span.classList.add(piece===piece.toUpperCase()?'w':'b'); cell.appendChild(span); }
+        root.appendChild(cell);
+      });
+    }
+
+    function drawBoardMain(fen){
+      const root = $('#board'); root.innerHTML='';
+      if(!fen){
+        for(let r=0;r<8;r++){ for(let c=0;c<8;c++){ const el=document.createElement('div'); el.className='sq '+(((r+c)%2)?'dark':'light'); root.appendChild(el); } }
+        renderArrows(); return;
       }
-      const idxOrder = [];
-      for(let r=0;r<8;r++){
-        for(let c=0;c<8;c++) idxOrder.push(r*8+c);
-      }
+      BOARD.chess.loadFEN(fen); BOARD.current=fen; $('#sideToMove').textContent = BOARD.chess.turn()==='w'?'White':'Black';
+      const parts=fen.split(' ')[0].split('/'); const cells=[];
+      for(const row of parts){ for(const ch of row){ if(/[1-8]/.test(ch)){ for(let k=0;k<parseInt(ch,10);k++) cells.push(null); } else cells.push(ch); } }
+      const idxOrder=[]; for(let r=0;r<8;r++){ for(let c=0;c<8;c++) idxOrder.push(r*8+c); }
       const oriented = ORIENT_WHITE_BOTTOM ? idxOrder : idxOrder.slice().reverse();
 
-      oriented.forEach((i) => {
-        const r = Math.floor(i/8), c = i%8;
-        const sq = BOARD.chess.idxToSq(i);
-        const cell = document.createElement('div');
-        cell.className = 'sq ' + (((r+c)%2)?'dark':'light');
-        cell.dataset.index = i;
-        cell.dataset.square = sq;
-
-        const coord = document.createElement('div');
-        coord.className = 'coord';
-        if((ORIENT_WHITE_BOTTOM && (r===7 && c===0)) || (!ORIENT_WHITE_BOTTOM && (r===0 && c===7))){
-          coord.textContent = sq;
-        }
+      oriented.forEach(i=>{
+        const r=Math.floor(i/8), c=i%8; const sq=BOARD.chess.idxToSq(i);
+        const cell=document.createElement('div'); cell.className='sq '+(((r+c)%2)?'dark':'light');
+        cell.dataset.index=i; cell.dataset.square=sq;
+        const coord=document.createElement('div'); coord.className='coord';
+        if((ORIENT_WHITE_BOTTOM && (r===7&&c===0)) || (!ORIENT_WHITE_BOTTOM && (r===0&&c===7))) coord.textContent=sq;
         cell.appendChild(coord);
-
-        const piece = cells[i];
-        if(piece){
-          const span = document.createElement('div');
-          span.className = 'piece';
-          span.textContent = PIECES[piece] || '';
-          if(piece===piece.toUpperCase()) span.classList.add('w'); else span.classList.add('b');
-          cell.appendChild(span);
-        }
+        const piece=cells[i]; if(piece){ const span=document.createElement('div'); span.className='piece'; span.textContent=PIECES[piece]||''; span.classList.add(piece===piece.toUpperCase()?'w':'b'); cell.appendChild(span); }
         cell.addEventListener('click', onSquareClick);
         root.appendChild(cell);
       });
-      BOARD.selected = null;
-      BOARD.highlights.clear();
-      showHints();
-      renderArrows();
+      BOARD.selected=null; BOARD.highlights.clear(); showHints(); renderArrows();
     }
 
-    function showHints(fromUciFrom=null){
-      $$('#board .sq').forEach(el => { el.classList.remove('sel','hl','hint'); });
+    function showHints(){
+      $$('#board .sq').forEach(el=>el.classList.remove('sel','hl','hint'));
       if(!BOARD.current) return;
-      const legal = BOARD.chess.moves();
-      const fromIdx = BOARD.selected;
-      if(fromIdx!==null){
-        const fromSq = BOARD.chess.idxToSq(fromIdx);
-        $$('#board .sq').forEach(el => {
-          if(parseInt(el.dataset.index,10)===fromIdx) el.classList.add('sel');
-        });
-        for(const m of legal){
-          if(m.from===fromSq){
-            const el = $(`#board .sq[data-square="${m.to}"]`);
-            if(el) el.classList.add('hint');
-          }
-        }
+      const legal=BOARD.chess.moves();
+      if(BOARD.selected!==null){
+        const fromSq=BOARD.chess.idxToSq(BOARD.selected);
+        $$('#board .sq').forEach(el=>{ if(parseInt(el.dataset.index,10)===BOARD.selected) el.classList.add('sel'); });
+        for(const m of legal){ if(m.from===fromSq){ const el=$(`#board .sq[data-square="${m.to}"]`); if(el) el.classList.add('hint'); } }
       }
     }
 
     function onSquareClick(e){
-      const el = e.currentTarget;
-      const idx = parseInt(el.dataset.index,10);
+      const idx=parseInt(e.currentTarget.dataset.index,10);
       if(BOARD.selected===null){
-        const fen = BOARD.current;
-        BOARD.chess.loadFEN(fen);
-        const all = BOARD.chess.moves();
-        const sq = BOARD.chess.idxToSq(idx);
-        const hasMove = all.some(m => m.from===sq);
-        if(hasMove){ BOARD.selected = idx; showHints(); }
-        return;
+        const all=BOARD.chess.moves(); const sq=BOARD.chess.idxToSq(idx);
+        if(all.some(m=>m.from===sq)){ BOARD.selected=idx; showHints(); }
       }else{
-        const from = BOARD.chess.idxToSq(BOARD.selected);
-        const to = el.dataset.square;
+        const from=BOARD.chess.idxToSq(BOARD.selected); const to=e.currentTarget.dataset.square;
         let uci = from+to;
-        const legal = BOARD.chess.moves().filter(m => m.from===from && m.to===to);
-        if(legal.length){
-          let move = legal[0];
-          if(legal.length>1){
-            const q = legal.find(m => m.promotion==='q');
-            if(q) move=q;
-          }
-          if(move.promotion) uci += move.promotion;
-        }
-        // preview on board
-        const tmp = ChessLite();
-        tmp.loadFEN(BOARD.current);
-        const mv = tmp.moveUci(uci);
-        if(mv.ok){
-          drawBoard(tmp.fen());
-        }
+        const legal=BOARD.chess.moves().filter(m=>m.from===from && m.to===to);
+        if(legal.length){ let move=legal[0]; if(legal.length>1){ const q=legal.find(m=>m.promotion==='q'); if(q) move=q; } if(move.promotion) uci+=move.promotion; }
+        const tmp=ChessLite(); tmp.loadFEN(BOARD.current); const mv=tmp.moveUci(uci);
+        if(mv.ok){ drawBoardMain(tmp.fen()); }
         Session.answer(uci);
-        BOARD.selected = null;
-        showHints();
+        BOARD.selected=null; showHints();
       }
     }
 
     function loadMistakeOnBoard(m){
-      if(!m){ drawBoard(null); return; }
+      if(!m){ drawBoardMain(null); return; }
       gvHide();
       $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> · <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · Δcp ${Math.round(m.deltaCp)}`;
-      $('#yourMove').textContent = '—';
-      $('#feedback').textContent = '—';
-      if(m.pvUci && Array.isArray(m.pvUci) && m.pvUci.length){
-        const pvTxt = (m.pvUci||[]).map(u=>uciToSAN(m.fen,u)).join(' ');
-        $('#mInfo').innerHTML += ` · PV <span class="mono">${pvTxt}</span>`;
-      }
-      // orient to side
-      ORIENT_WHITE_BOTTOM = (m.side==='w');
-      drawBoard(m.fen);
-      // Reset arrows: best is known but hidden until reveal; user none yet
-      BOARD.arrows.best = m.best || null;
-      BOARD.arrows.user = null;
-      BOARD.arrows.showBest = false;
-      renderArrows();
+      $('#yourMove').textContent='—'; $('#feedback').textContent='—';
+      ORIENT_WHITE_BOTTOM = (m.side==='w'); drawBoardMain(m.fen);
+      BOARD.arrows.best = m.best || null; BOARD.arrows.user = null; BOARD.arrows.showBest = false; renderArrows();
 
-      // Update Game Info
+      // Update info
       try{
-        const fenEl = document.getElementById('trainFen'); if(fenEl) fenEl.textContent = `FEN: ${m.fen}`;
-        const pgnEl = document.getElementById('trainPgn'); if(pgnEl) pgnEl.textContent = `PGN: ${m.pgn ? m.pgn : '—'}`;
-        const linkEl = document.getElementById('trainLink');
-        if(linkEl){
-          if(m.gameUrl){
-            linkEl.textContent = 'Open game';
-            linkEl.href = m.gameUrl;
-          }else{
-            linkEl.textContent = '—';
-            linkEl.href = '#';
-          }
-        }
+        const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent=`FEN: ${m.fen}`;
+        const pgnEl=$('#trainPgn'); if(pgnEl) pgnEl.textContent=`PGN: ${m.pgn ? m.pgn : '—'}`;
+        const linkEl=$('#trainLink'); if(linkEl){ if(m.gameUrl){ linkEl.textContent='Open game'; linkEl.href=m.gameUrl; } else { linkEl.textContent='—'; linkEl.href='#'; } }
       }catch{}
     }
 
     // Reveal & Next buttons
     $('#btnReveal').addEventListener('click', () => {
-      const a = Session.active;
-      if(a){
-        const bestSan = uciToSAN(a.fen, a.best);
-        $('#feedback').innerHTML = `Best move: <b class="mono">${bestSan || a.best}</b>`;
-        BOARD.arrows.showBest = true;
-        renderArrows();
-      }
+      const a=Session.active; if(!a) return;
+      const bestSan=uciToSAN(a.fen, a.best);
+      $('#feedback').innerHTML = `Best move: <b class="mono">${bestSan || a.best}</b>`;
+      BOARD.arrows.showBest=true; renderArrows();
     });
     $('#btnNext').addEventListener('click', () => Session.next());
-    $('#btnFlip').addEventListener('click', () => {
-      ORIENT_WHITE_BOTTOM = !ORIENT_WHITE_BOTTOM;
-      if(Session.active) drawBoard(Session.active.fen);
-    });
+    $('#btnFlip').addEventListener('click', () => { ORIENT_WHITE_BOTTOM=!ORIENT_WHITE_BOTTOM; if(Session.active) drawBoardMain(Session.active.fen); });
 
     /********************************************************************
-     * Mistake list rendering + Stats
+     * Mistake list + Stats
      ********************************************************************/
     function renderMistakeList(){
-      const tb = $('#mistakeTBody');
-      const list = loadMistakes();
-      tb.innerHTML = '';
-      list.forEach((m, i) => {
+      const tb=$('#mistakeTBody'); if(!tb) return;
+      const list=loadMistakes(); tb.innerHTML='';
+      list.forEach((m,i)=>{
         const bestSan = m.best ? uciToSAN(m.fen, m.best) : '—';
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
+        const tr=document.createElement('tr');
+        tr.innerHTML=`
           <td class="mono tiny">${i+1}</td>
           <td>${m.severity ? `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span>` : '-'}</td>
           <td>${m.side==='w'?'White':'Black'}</td>
           <td class="mono tiny">${m.played}</td>
           <td class="mono tiny">${bestSan}</td>
           <td class="mono tiny">${Math.round(m.deltaCp||0)}</td>
-          <td class="tiny">${tsToDate(m.nextReview)}</td>
-        `;
-        tr.addEventListener('click', () => {
-          loadMistakeOnBoard(m);
-          Session.next = ()=>{}; // harmless override if clicking manually
-        });
+          <td class="tiny">${tsToDate(m.nextReview)}</td>`;
+        tr.addEventListener('click', ()=>{ loadMistakeOnBoard(m); });
         tb.appendChild(tr);
       });
-      $('#statTotal').textContent = list.length;
-      $('#statDue').textContent = pickDueSRS().length;
+      $('#statTotal').textContent=list.length;
+      $('#statDue').textContent=pickDueSRS().length;
     }
 
     function renderStats(){
-      const attempts = getAttempts();
-      const n = attempts.length;
-      const correct = attempts.filter(a => a.correct).length;
-      const acc = n ? Math.round(100 * correct / n) : 0;
+      const att=getAttempts(); const n=att.length; const correct=att.filter(a=>a.correct).length; const acc=n?Math.round(100*correct/n):0;
       $('#statAcc').textContent = n ? `${acc}% (${correct}/${n})` : '—';
       $('#statReviews').textContent = n.toString();
 
-      const list = loadMistakes();
-      const counts = { inaccuracy:0, mistake:0, blunder:0 };
-      list.forEach(m => { if(counts[m.severity]!==undefined) counts[m.severity]++; });
-      const canvas = $('#sevChart');
-      const ctx = canvas.getContext('2d');
-      const W = canvas.width, H = canvas.height;
-      ctx.clearRect(0,0,W,H);
-      ctx.fillStyle = '#0d0f15';
-      ctx.fillRect(0,0,W,H);
-      const labels = ['Inacc','Mistake','Blunder'];
-      const keys = ['inaccuracy','mistake','blunder'];
-      const maxv = Math.max(1, ...keys.map(k => counts[k]));
-      const barW = Math.floor((W-80)/3);
-      for(let i=0;i<3;i++){
-        const x = 40 + i*(barW+20);
-        const v = counts[keys[i]];
-        const h = Math.round((H-40) * (v/maxv));
-        ctx.fillStyle = i===0?'#2f9e44':(i===1?'#f2c94c':'#ff6b6b');
-        ctx.fillRect(x, H-20-h, barW, h);
-        ctx.fillStyle = '#9aa4b2';
-        ctx.font = '12px system-ui';
-        ctx.textAlign = 'center';
-        ctx.fillText(labels[i], x + barW/2, H-6);
-        ctx.fillText(v.toString(), x + barW/2, H-28-h);
-      }
+      const list=loadMistakes(); const counts={inaccuracy:0,mistake:0,blunder:0};
+      list.forEach(m=>{ if(counts[m.severity]!==undefined) counts[m.severity]++; });
+      const canvas=$('#sevChart'); const ctx=canvas.getContext('2d'); const W=canvas.width,H=canvas.height;
+      ctx.clearRect(0,0,W,H); ctx.fillStyle='#0d0f15'; ctx.fillRect(0,0,W,H);
+      const labels=['Inacc','Mistake','Blunder'], keys=['inaccuracy','mistake','blunder']; const maxv=Math.max(1, ...keys.map(k=>counts[k])); const barW=Math.floor((W-80)/3);
+      for(let i=0;i<3;i++){ const x=40+i*(barW+20); const v=counts[keys[i]]; const h=Math.round((H-40)*(v/maxv)); ctx.fillStyle=i===0?'#2f9e44':(i===1?'#f2c94c':'#ff6b6b'); ctx.fillRect(x,H-20-h,barW,h); ctx.fillStyle='#9aa4b2'; ctx.font='12px system-ui'; ctx.textAlign='center'; ctx.fillText(labels[i],x+barW/2,H-6); ctx.fillText(v.toString(),x+barW/2,H-28-h); }
     }
 
     /********************************************************************
-     * Train queue list under the board
+     * Import controls & toggles
      ********************************************************************/
-    function renderTrainQueue(currentMistake = Session.active){
-      const tb = $('#trainQueueTBody'); if(!tb) return;
-      tb.innerHTML = '';
-      const queue = Session.getQueue();
-      // Derive list of games: group by PGN (or gameUrl as key)
-      const rows = [];
-      const pushRow = (pgn, sourceTag, isCurrent=false) => {
-        const h = parsePGNHeaders(pgn||'');
-        rows.push({
-          white: h.White||'-',
-          black: h.Black||'-',
-          res: h.Result||'-',
-          date: h.Date||h.UTCDate||'-',
-          src: sourceTag||'-',
-          pgn
-        });
-      };
-      // Current
-      if(currentMistake && currentMistake.pgn){
-        pushRow(currentMistake.pgn, 'Active', true);
+    let ANALYZE_STATE = { stop:false };
+    const btnAnalyze = $('#btnAnalyzeImported');
+    btnAnalyze?.addEventListener('click', async () => {
+      if(btnAnalyze.dataset.state!=='running'){
+        // start analysis
+        btnAnalyze.dataset.state='running';
+        btnAnalyze.textContent='Stop analysis';
+        btnAnalyze.classList.remove('btn-green'); btnAnalyze.classList.add('btn-red');
+        ANALYZE_STATE={stop:false};
+        try{ await analyzeImportedWithBackendAbortable(ANALYZE_STATE); }catch(e){ setStatus('Error: '+(e?.message||e)); }
+        btnAnalyze.dataset.state='idle';
+        btnAnalyze.textContent='Analyse mistakes';
+        btnAnalyze.classList.remove('btn-red'); btnAnalyze.classList.add('btn-green');
+      }else{
+        // stop analysis
+        ANALYZE_STATE.stop=true;
       }
-      // Upcoming (unique PGNs)
-      const seen = new Set(currentMistake && currentMistake.pgn ? [currentMistake.pgn] : []);
-      for(const item of queue){
-        const pgn = item.pgn || '';
-        if(!pgn || seen.has(pgn)) continue;
-        seen.add(pgn);
-        pushRow(pgn, 'Upcoming');
-      }
-      if(rows.length===0){
-        const tr = document.createElement('tr'); tr.innerHTML = `<td colspan="6" class="tiny muted">No session loaded yet. Start a session to see upcoming games here.</td>`;
-        tb.appendChild(tr); return;
-      }
-      rows.forEach((r, i) => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${i+1}</td>
-          <td>${r.white}</td>
-          <td>${r.black}</td>
-          <td>${r.res}</td>
-          <td>${r.date}</td>
-          <td>${r.src}</td>
-        `;
-        if(i===0) tr.classList.add('selected');
-        tb.appendChild(tr);
-      });
-    }
-
-    /********************************************************************
-     * Import handlers
-     ********************************************************************/
-    function setStatus(msg){ $('#status').textContent = msg; }
-
-    $('#btnClearAll').addEventListener('click', () => {
-      if(confirm('Clear ALL mistakes and attempts?')) clearAll();
     });
 
-    document.getElementById('btnAnalyzeImported')?.addEventListener('click', async () => {
-      try{
-        await analyzeImportedWithBackend();
-      }catch(err){
-        console.error(err);
-        setStatus('Error: '+(err?.message || err));
+    $('#btnClearImports')?.addEventListener('click', () => {
+      const info=window.lastFetchedPGNs || {pgns:[]};
+      // Remove mistakes created from these imports (match by pgn)
+      if(info.pgns && info.pgns.length){
+        const set=new Set(info.pgns);
+        let list=loadMistakes();
+        list=list.filter(m => !set.has(m.pgn));
+        saveMistakes(list);
       }
+      // Clear table + viewer + state
+      const tb=$('#importTBody'); if(tb) tb.innerHTML='';
+      const help=$('#importHelp'); if(help) help.textContent='Imported games cleared.';
+      window.lastFetchedPGNs = { source:'', pgns:[] };
+      gvHide();
     });
 
     $('#btnFetchLichess').addEventListener('click', async () => {
-      console.log('[UI] Lichess fetch button clicked');
-      const u = $('#lichessUser').value.trim();
-      if(!u) return alert('Enter a Lichess username');
-      try{
-        const n = parseInt($('#lichessCount')?.value,10) || 5;
-        setStatus(`Fetching Lichess games (N=${n})…`);
-        const games = await fetchLichess(u, n);
-        if(window.SF_BACKEND_URL || window.FN_BASE){
-          try{
-            setStatus(`Analyzing ${games.length} games (server)…`);
-            const all = [];
-            let idx=0;
-            for(const pgn of games){
-              if(window.SF_BACKEND_URL){
-                setStatus(`Lichess: backend analyze ${++idx}/${games.length}…`);
-                const ms = await analyzeOnServer(pgn, 12);
-                all.push(...ms);
-              }else{
-                setStatus(`Lichess: functions analyze ${++idx}/${games.length}…`);
-                const ms = await analyzeOnBackend([pgn]);
-                all.push(...ms);
-              }
-            }
-            addMistakes(all);
-            const set = createSetFromMistakes(all, `Lichess ${new Date().toLocaleString()}`);
-            setActiveSet(set); renderActiveSetInfo();
-            setStatus(`Done. Added ${all.length} mistakes.`);
-            return;
-          }catch(e){ console.error(e); setStatus('Error: '+(e?.message||e)); return; }
-        }
-        setStatus(`Analyzing ${games.length} games (Lichess)…`);
-        const all = [];
-        let k=0;
-        for(const pgn of games){
-          setStatus(`Lichess: analyzing game ${++k}/${games.length}…`);
-          const ms = await analyzeLichessPGN(pgn);
-          all.push(...ms);
-        }
-        addMistakes(all);
-        const set = createSetFromMistakes(all, `Lichess ${new Date().toLocaleString()}`);
-        setActiveSet(set); renderActiveSetInfo();
-        setStatus(`Done. Added ${all.length} mistakes.`);
-      }catch(err){
-        console.error(err);
-        setStatus('Error: '+err.message);
-      }
+      const u=$('#lichessUser').value.trim(); if(!u) return alert('Enter a Lichess username');
+      try{ const n=parseInt($('#lichessCount')?.value,10)||5; setStatus(`Fetching Lichess games (N=${n})…`); await fetchLichess(u,n); setStatus('Idle'); }catch(e){ setStatus('Error: '+(e?.message||e)); }
     });
 
     $('#btnFetchChesscom').addEventListener('click', async () => {
-      console.log('[UI] Chess.com fetch button clicked');
-      const u = $('#chesscomUser').value.trim();
-      if(!u) return alert('Enter a Chess.com username');
-      try{
-        const n = parseInt($('#chesscomCount')?.value,10) || 5;
-        setStatus(`Fetching Chess.com games (N=${n})…`);
-        // NEW: direct aggregator across months
-        const games = await fetchLastNGamesChesscom(u, n);
-        renderImportedGames(games, 'Chess.com');
-
-        // Analysis pipeline identical to Lichess branch
-        if(window.SF_BACKEND_URL || window.FN_BASE){
-          try{
-            setStatus(`Analyzing ${games.length} games (server)…`);
-            const all = [];
-            let idx=0;
-            for(const pgn of games){
-              if(window.SF_BACKEND_URL){
-                setStatus(`Chess.com: backend analyze ${++idx}/${games.length}…`);
-                const ms = await analyzeOnServer(pgn, 12);
-                all.push(...ms);
-              }else{
-                setStatus(`Chess.com: functions analyze ${++idx}/${games.length}…`);
-                const ms = await analyzeOnBackend([pgn]);
-                all.push(...ms);
-              }
-            }
-            addMistakes(all);
-            const set = createSetFromMistakes(all, `Chess.com ${new Date().toLocaleString()}`);
-            setActiveSet(set); renderActiveSetInfo();
-            setStatus(`Done. Added ${all.length} mistakes.`);
-            return;
-          }catch(e){ console.error(e); setStatus('Error: '+(e?.message||e)); return; }
-        }
-        setStatus(`Analyzing ${games.length} games (depth 12)…`);
-        const all = [];
-        let k=0;
-        for(const pgn of games){
-          setStatus(`Chess.com: analyzing game ${++k}/${games.length}…`);
-          const ms = await analyzeManualOrChesscomPGN(pgn);
-          all.push(...ms);
-        }
-        addMistakes(all);
-        const set = createSetFromMistakes(all, `Chess.com ${new Date().toLocaleString()}`);
-        setActiveSet(set); renderActiveSetInfo();
-        setStatus(`Done. Added ${all.length} mistakes.`);
-      }catch(err){
-        console.error(err);
-        setStatus('Error: '+err.message);
-      }
+      const u=$('#chesscomUser').value.trim(); if(!u) return alert('Enter a Chess.com username');
+      try{ const n=parseInt($('#chesscomCount')?.value,10)||5; setStatus(`Fetching Chess.com games (N=${n})…`); await fetchChesscom(u,n); setStatus('Idle'); }catch(e){ setStatus('Error: '+(e?.message||e)); }
     });
 
-    $('#btnAnalyzePGN').addEventListener('click', async () => {
-      const t = $('#pgnInput').value.trim();
-      if(!t) return alert('Paste one or more PGNs first.');
-      const parts = t.split(/\n(?=\[Event\s)/g).filter(s => s.trim());
-      try{
-        setStatus(`Analyzing ${parts.length} pasted game(s)…`);
-        const all = [];
-        let i=0;
-        for(const pgn of parts){
-          setStatus(`Manual PGN: analyzing ${++i}/${parts.length}…`);
-          const ms = await analyzeManualOrChesscomPGN(pgn);
-          all.push(...ms);
-        }
-        addMistakes(all);
-        setStatus(`Done. Added ${all.length} mistakes.`);
-      }catch(err){
-        console.error(err);
-        setStatus('Error: '+err.message);
-      }
+    $('#btnImportPGN').addEventListener('click', async () => {
+      const t=$('#pgnInput').value.trim(); if(!t) return alert('Paste one or more PGNs first.');
+      // split by [Event ...]
+      const parts=t.split(/\n(?=\[Event\s)/g).filter(s=>s.trim());
+      renderImportedGames(parts, 'Manual');
+      setStatus(`Imported ${parts.length} game(s). You can now press “Analyse mistakes”.`);
     });
 
-    // Create set from current mistakes (modal)
-    const modal = {
-      backdrop: $('#setModalBackdrop'),
-      input: $('#setNameInput'),
-      saveBtn: $('#setModalSave'),
-      cancelBtn: $('#setModalCancel'),
-      open(defaultName){
-        this.input.value = defaultName || `Set ${new Date().toLocaleString()}`;
-        this.backdrop.classList.remove('hidden');
-        setTimeout(()=> this.input.focus(), 0);
-      },
-      close(){ this.backdrop.classList.add('hidden'); }
-    };
-
-    function openCreateSetModal(fromMistakesArray){
-      const list = Array.isArray(fromMistakesArray) ? fromMistakesArray : loadMistakes();
-      const defaultName = `Set ${new Date().toLocaleString()}`;
-      modal.open(defaultName);
-      const once = () => {
-        modal.saveBtn.removeEventListener('click', onSave);
-        modal.cancelBtn.removeEventListener('click', onCancel);
-      };
-      function onSave(){
-        const name = (modal.input.value||'').trim() || defaultName;
-        createSetFromMistakes(list, name);
-        renderSets();
-        modal.close(); once();
-      }
-      function onCancel(){ modal.close(); once(); }
-      modal.saveBtn.addEventListener('click', onSave, { once:true });
-      modal.cancelBtn.addEventListener('click', onCancel, { once:true });
-    }
-
-    $('#btnCreateSetFromMistakes')?.addEventListener('click', () => {
-      const mistakes = loadMistakes();
-      if(!mistakes.length){ alert('No mistakes to include. Analyze games first.'); return; }
-      openCreateSetModal(mistakes);
-    });
+    // Game viewer controls
+    $('#gvPrev')?.addEventListener('click', () => { if(GAMEVIEW.idx>0){ GAMEVIEW.idx--; drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); } });
+    $('#gvNext')?.addEventListener('click', () => { if(GAMEVIEW.idx+1<GAMEVIEW.fens.length){ GAMEVIEW.idx++; drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); } });
+    $('#gvStart')?.addEventListener('click', () => { GAMEVIEW.idx=0; drawBoardInto('gvBoard', GAMEVIEW.fens[0], true); gvUpdate(); });
+    $('#gvEnd')?.addEventListener('click', () => { GAMEVIEW.idx=Math.max(0,GAMEVIEW.fens.length-1); drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); });
 
     /********************************************************************
      * Session start buttons
      ********************************************************************/
     $('#btnStart').addEventListener('click', () => {
-      const mode = $('#modeSel').value;
-      if(mode==='woodpecker'){
-        const N = parseInt($('#wpCount').value,10) || 10;
-        Session.startWoodpecker(N);
-      }else{
-        Session.startSRS();
-      }
-      renderTrainQueue();
+      const mode=$('#modeSel').value;
+      if(mode==='woodpecker'){ const N=parseInt($('#wpCount').value,10)||10; Session.startWoodpecker(N); }
+      else{ Session.startSRS(); }
     });
-
-    // show/hide Woodpecker count
-    $('#modeSel').addEventListener('change', () => {
-      const mode = $('#modeSel').value;
-      $('#wpCountWrap').style.display = (mode==='woodpecker') ? 'block' : 'none';
-    });
+    $('#modeSel').addEventListener('change', () => { $('#wpCountWrap').style.display = ($('#modeSel').value==='woodpecker') ? 'block' : 'none'; });
 
     /********************************************************************
-     * Init
+     * Init + preferences + nav
      ********************************************************************/
     (async function init(){
-      renderMistakeList();
-      renderStats();
-      renderSets();
-      drawBoard(null);
-      renderActiveSetInfo();
-      renderTrainQueue();
-      setStatus('Loading engine…');
-      await Engine.ensure();
-      setStatus('Idle');
-      try{ const t = getSev(); $('#thrInacc')?.value && ($('#thrInacc').value = t.inacc); $('#thrMist')?.value && ($('#thrMist').value = t.mistake); $('#thrBlun')?.value && ($('#thrBlun').value = t.blunder); }catch{}
+      // prefs
+      try{
+        const bs = localStorage.getItem('pmtt_board_size'); if(bs){ document.documentElement.style.setProperty('--board-size', bs+'px'); $('#boardSizeRange').value = bs; }
+        else $('#boardSizeRange').value = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--board-size'))||520;
+        const split = localStorage.getItem('pmtt_pane_split') || '55';
+        $('#paneSplitRange').value = split;
+        document.documentElement.style.setProperty('--train-left-fr', (parseInt(split,10)/10).toFixed(1));
+        document.documentElement.style.setProperty('--train-right-fr', ((100-parseInt(split,10))/10).toFixed(1));
+      }catch{}
+
+      renderMistakeList(); renderStats(); renderSets(); renderSetsForTrain(); renderActiveSetInfo();
+      drawBoardMain(null);
+      setStatus('Loading engine…'); await Engine.ensure(); setStatus('Idle');
+      // keep arrows sized when window resizes or sliders change
+      window.addEventListener('resize', renderArrows);
     })();
 
-    document.getElementById('btnSaveThr')?.addEventListener('click', () => {
-      const tin = parseInt($('#thrInacc')?.value,10) || DEFAULT_SEV.inacc;
-      const tmi = parseInt($('#thrMist')?.value,10) || DEFAULT_SEV.mistake;
-      const tbl = parseInt($('#thrBlun')?.value,10) || DEFAULT_SEV.blunder;
-      setSev({ inacc: tin, mistake: tmi, blunder: tbl });
-      alert('Thresholds saved. New analyses will use them.');
-    });
+    // Pref sliders
+    $('#boardSizeRange')?.addEventListener('input', (e)=>{ const v=parseInt(e.target.value,10)||520; document.documentElement.style.setProperty('--board-size', v+'px'); localStorage.setItem('pmtt_board_size', String(v)); renderArrows(); });
+    $('#paneSplitRange')?.addEventListener('input', (e)=>{ const p=parseInt(e.target.value,10)||55; document.documentElement.style.setProperty('--train-left-fr', (p/10).toFixed(1)); document.documentElement.style.setProperty('--train-right-fr', ((100-p)/10).toFixed(1)); });
 
-    // Game viewer controls
-    document.getElementById('gvPrev')?.addEventListener('click', () => {
-      if(GAMEVIEW.idx>0){ GAMEVIEW.idx--; gvDraw(); }
-    });
-    document.getElementById('gvNext')?.addEventListener('click', () => {
-      if(GAMEVIEW.idx+1 < GAMEVIEW.fens.length){ GAMEVIEW.idx++; gvDraw(); }
-    });
-    document.getElementById('gvStart')?.addEventListener('click', () => {
-      GAMEVIEW.idx = 0; gvDraw();
-    });
-    document.getElementById('gvEnd')?.addEventListener('click', () => {
-      GAMEVIEW.idx = Math.max(0, GAMEVIEW.fens.length-1); gvDraw();
-    });
+  </script>
 
-  window.addEventListener('error', (e) => {
-  try { setStatus('JS error: ' + (e.message || (e.error && e.error.message) || 'unknown')); } catch {}
-});
-window.addEventListener('unhandledrejection', (e) => {
-  try { setStatus('Promise error: ' + ((e.reason && (e.reason.message || e.reason)) || 'unknown')); } catch {}
-});</script>
-
-<script>
-  // Simple SPA nav
-  function showSection(which){
-    const map = { home:'homeSection', analyze:'analyzeSection', sets:'setsSection', train:'trainSection' };
-    for(const id of Object.values(map)){
-      const el = document.getElementById(id); if(el) el.classList.remove('active');
+  <script>
+    // Simple SPA nav
+    function showSection(which){
+      const map = { home:'homeSection', analyze:'analyzeSection', sets:'setsSection', train:'trainSection' };
+      Object.values(map).forEach(id => document.getElementById(id)?.classList.remove('active'));
+      document.getElementById(map[which]||'homeSection')?.classList.add('active');
+      document.getElementById('navHome')?.classList.toggle('active', which==='home');
+      document.getElementById('navAnalyze')?.classList.toggle('active', which==='analyze');
+      document.getElementById('navSets')?.classList.toggle('active', which==='sets');
+      document.getElementById('navTrain')?.classList.toggle('active', which==='train');
     }
-    const target = document.getElementById(map[which]||'homeSection'); if(target) target.classList.add('active');
-    document.getElementById('navHome')?.classList.toggle('active', which==='home');
-    document.getElementById('navAnalyze')?.classList.toggle('active', which==='analyze');
-    document.getElementById('navSets')?.classList.toggle('active', which==='sets');
-    document.getElementById('navTrain')?.classList.toggle('active', which==='train');
-  }
-  document.getElementById('navHome')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('home'); });
-  document.getElementById('navAnalyze')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('analyze'); });
-  document.getElementById('navSets')?.addEventListener('click', (e)=>{ e.preventDefault(); renderSets(); showSection('sets'); });
-  document.getElementById('navTrain')?.addEventListener('click', (e)=>{ e.preventDefault(); renderSetsForTrain(); renderActiveSetInfo(); showSection('train'); });
+    document.getElementById('navHome')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('home'); });
+    document.getElementById('navAnalyze')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('analyze'); });
+    document.getElementById('navSets')?.addEventListener('click', (e)=>{ e.preventDefault(); renderSets(); showSection('sets'); });
+    document.getElementById('navTrain')?.addEventListener('click', (e)=>{ e.preventDefault(); renderSetsForTrain(); renderActiveSetInfo(); showSection('train'); });
+    document.getElementById('btnGoAnalyze')?.addEventListener('click', ()=> showSection('analyze'));
 
-  // Sets page actions — open modal to avoid duplicate accidental multiple-creates
-  document.getElementById('btnCreateEmptySet')?.addEventListener('click', ()=>{
-    const list = []; // empty set
-    const el = document.getElementById('newSetName');
-    const suggested = (el && el.value ? el.value.trim() : '') || `Set ${new Date().toLocaleString()}`;
-    const m = {
-      backdrop: document.getElementById('setModalBackdrop'),
-      input: document.getElementById('setNameInput'),
-      saveBtn: document.getElementById('setModalSave'),
-      cancelBtn: document.getElementById('setModalCancel')
-    };
-    m.input.value = suggested;
-    m.backdrop.classList.remove('hidden');
-    const off = ()=>{
-      m.saveBtn.removeEventListener('click', onSave);
-      m.cancelBtn.removeEventListener('click', onCancel);
-    };
-    function onSave(){
-      const name = (m.input.value||'').trim() || suggested;
-      createSetFromMistakes(list, name);
-      renderSets();
-      m.backdrop.classList.add('hidden'); off();
-    }
-    function onCancel(){ m.backdrop.classList.add('hidden'); off(); }
-    m.saveBtn.addEventListener('click', onSave, { once:true });
-    m.cancelBtn.addEventListener('click', onCancel, { once:true });
-    setTimeout(()=> m.input.focus(), 0);
-  });
-
-  document.getElementById('btnGoAnalyze')?.addEventListener('click', ()=> showSection('analyze'));
-</script>
+    // Sets page actions (create empty set, de-duped by name+content)
+    document.getElementById('btnCreateEmptySet')?.addEventListener('click', ()=>{
+      const el=document.getElementById('newSetName');
+      const name=(el && el.value ? el.value.trim() : '') || `Set ${new Date().toLocaleString()}`;
+      createSetFromMistakes([], name); renderSets();
+    });
+  </script>
 </body>
 </html>

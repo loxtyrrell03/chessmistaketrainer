@@ -255,6 +255,9 @@
               <tbody id="importTBody"></tbody>
             </table>
           </div>
+          <div class="row" style="margin-top:8px">
+            <button id="btnAnalyzeImported" class="secondary">Analyze Imported (Backend)</button>
+          </div>
         </div>
 
         <hr style="border:none;border-top:1px solid #242a39;margin:16px 0">
@@ -1534,6 +1537,52 @@ window.addEventListener('unhandledrejection', (e) => {
       return json.mistakes || [];
     }
 
+    // Cloud Run Stockfish service (one PGN per call)
+    async function analyzeOnServer(pgn, depth=12){
+      const base = (window.SF_BACKEND_URL || '').replace(/\/$/, '');
+      if(!base) throw new Error('SF_BACKEND_URL not set');
+      const url = `${base}/analyze`;
+      const thr = getSev();
+      const res = await fetch(url, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ pgn, depth, thresholds: thr }) });
+      if(!res.ok) throw new Error(`Stockfish backend error ${res.status}`);
+      const data = await res.json();
+      return data.mistakes || [];
+    }
+
+    // Analyze all imported PGNs using backend first (Cloud Run), then fallbacks
+    async function analyzeImportedWithBackend(){
+      const info = window.lastFetchedPGNs;
+      const list = info && Array.isArray(info.pgns) ? info.pgns : [];
+      if(!list.length){ alert('No imported games found. Fetch games first.'); return; }
+      const all = [];
+      let i=0;
+      for(const pgn of list){
+        setStatus(`Backend analyze ${++i}/${list.length}…`);
+        try{
+          // Prefer Cloud Run per-PGN
+          if(window.SF_BACKEND_URL){
+            const ms = await analyzeOnServer(pgn, 12);
+            all.push(...ms);
+            continue;
+          }
+          // Fallback to Functions batch endpoint (single-item array)
+          if(window.FN_BASE){
+            const ms = await analyzeOnBackend([pgn]);
+            all.push(...ms);
+            continue;
+          }
+          // Last resort: local analysis
+          const ms = await analyzeManualOrChesscomPGN(pgn);
+          all.push(...ms);
+        }catch(e){ console.warn('Analyze failed for a game', e); }
+      }
+      addMistakes(all);
+      const tag = (info && info.source) ? info.source : 'Imported';
+      const set = createSetFromMistakes(all, `${tag} ${new Date().toLocaleString()}`);
+      setActiveSet(set); renderActiveSetInfo();
+      setStatus(`Done. Added ${all.length} mistakes (${tag}).`);
+    }
+
     /********************************************************************
      * Fetchers (Lichess & Chess.com)
      ********************************************************************/
@@ -2029,6 +2078,15 @@ window.addEventListener('unhandledrejection', (e) => {
 
     $('#btnClearAll').addEventListener('click', () => {
       if(confirm('Clear ALL mistakes and attempts?')) clearAll();
+    });
+
+    document.getElementById('btnAnalyzeImported')?.addEventListener('click', async () => {
+      try{
+        await analyzeImportedWithBackend();
+      }catch(err){
+        console.error(err);
+        setStatus('Error: '+(err?.message || err));
+      }
     });
 
     $('#btnFetchLichess').addEventListener('click', async () => {

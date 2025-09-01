@@ -145,8 +145,6 @@
       border:1px solid #2a3142; cursor: nwse-resize; z-index:6; opacity:.9;
       box-shadow:0 2px 8px rgba(0,0,0,.25);
     }
-    /* Hide handle UI but keep resizing via edges/corner */
-    #resizeHandle{ display:none !important; }
     /* Game Viewer mini board: fills available width responsively (no cramping) */
     .board-mini{
       width:100%;
@@ -2045,7 +2043,7 @@
       const boardEl = document.getElementById('trainBoard');
       if(!handle || !boardEl) return;
       let startRect=null, active=false, mode='corner';
-      const THRESH=60; // px from edges/corner considered resizable zone (fullscreen friendly)
+      const CORNER=12; // px inside bottom-right corner considered resizable zone
 
       const onMove = (ev)=>{
         if(!active) return;
@@ -2089,31 +2087,17 @@
         try{ document.body.style.userSelect='none'; document.body.style.cursor='nwse-resize'; }catch{}
       }, {passive:false});
 
-      // Allow grabbing from the very corner or the right/bottom edges
+      // Only allow grabbing from the very bottom-right corner
       const zoneAt = (clientX, clientY)=>{
         const r = boardEl.getBoundingClientRect();
-        const inRight = clientX >= r.right-THRESH && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
-        const inBottom = clientY >= r.bottom-THRESH && clientY <= r.bottom && clientX >= r.left && clientX <= r.right;
-        const inCorner = clientX >= r.right-THRESH && clientY >= r.bottom-THRESH;
-        if(inCorner) return 'corner';
-        if(inRight && inBottom) return 'corner';
-        if(inRight) return 'right';
-        if(inBottom) return 'bottom';
+        const nearRight = (r.right - clientX) >= 0 && (r.right - clientX) <= CORNER;
+        const nearBottom = (r.bottom - clientY) >= 0 && (r.bottom - clientY) <= CORNER;
+        const inside = clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom;
+        if(inside && nearRight && nearBottom) return 'corner';
         return null;
       };
-      // Extended zone: allow starting just outside the board (useful when pointer is at the exact corner of the window)
-      const zoneAtExtended = (clientX, clientY)=>{
-        const r = boardEl.getBoundingClientRect();
-        const slack = 14; // px outside
-        const inRight = clientX > r.right && clientX <= r.right+slack && clientY >= r.top && clientY <= r.bottom+slack;
-        const inBottom = clientY > r.bottom && clientY <= r.bottom+slack && clientX >= r.left && clientX <= r.right+slack;
-        const inCorner = (clientX > r.right && clientY > r.bottom && clientX <= r.right+slack && clientY <= r.bottom+slack);
-        if(inCorner) return 'corner';
-        if(inRight && inBottom) return 'corner';
-        if(inRight) return 'right';
-        if(inBottom) return 'bottom';
-        return null;
-      };
+      // Disable outside-board initiation
+      const zoneAtExtended = (_x, _y)=> null;
       const hoverCheck = (ev)=>{
         if(active) return;
         const cx = ev.clientX ?? 0, cy = ev.clientY ?? 0;

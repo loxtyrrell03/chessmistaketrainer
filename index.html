@@ -311,7 +311,7 @@
 
         <div class="stroke tiny" id="statusBox" style="margin-top:10px">
           <b>Status:</b> <span id="status">Idle</span>
-          <span class="right" id="engineWrap" style="display:none"><span id="engineState"></span></span>
+          <span class="right" id="engineWrap" style="display:none"><span id="engineStateServer"></span></span>
         </div>
 
         <div class="stroke tiny" id="importedBox" style="margin-top:10px">
@@ -527,7 +527,7 @@
           <div class="row" style="align-items:center; justify-content:space-between">
             <div>
               <b>Engine Analysis</b>
-              <span id="engineState" class="tiny muted" style="margin-left:6px">off</span>
+              <span id="engineStateLive" class="tiny muted" style="margin-left:6px">off</span>
             </div>
             <label class="switch" title="Toggle engine analysis">
               <input type="checkbox" id="engineToggle">
@@ -1192,7 +1192,7 @@
         if(initPromise) return initPromise;
         initPromise = new Promise(async (resolve) => {
           try{
-            if(window.SF_BACKEND_URL){ ready=true; $('#engineState').textContent='server'; return resolve(true); }
+            if(window.SF_BACKEND_URL){ ready=true; $('#engineStateServer').textContent='server'; return resolve(true); }
           }catch{}
           try{
             if(typeof Stockfish==='function'){
@@ -1205,7 +1205,7 @@
             sf.onmessage = (e) => {
               const line=(''+(e.data||e)).trim();
               if(line==='uciok'){ sf.postMessage('isready'); return; }
-              if(line==='readyok'){ ready=true; $('#engineState').textContent='ready'; return; }
+              if(line==='readyok'){ ready=true; $('#engineStateServer').textContent='ready'; return; }
               if(line.startsWith('info')){
                 const mMate=line.match(/score\s+mate\s+(-?\d+)/);
                 const mCp=line.match(/score\s+cp\s+(-?\d+)/);
@@ -1218,7 +1218,7 @@
             };
             sf.postMessage('uci');
             const t0=Date.now(); while(!ready && (Date.now()-t0)<4000){ await sleep(20); }
-            $('#engineState').textContent = ready ? 'ready' : 'loading…';
+            $('#engineStateServer').textContent = ready ? 'ready' : 'loading…';
             resolve(true);
           }catch(err){ /* suppress Engine:error in UI */ resolve(false); }
         });
@@ -1271,67 +1271,154 @@
     }
 
     /********************************************************************
-     * Live Engine (WASM) analysis for Train board
+     * Live Engine (WASM) analysis for Train board (Worker-based)
      ********************************************************************/
     const EngineLive = (() => {
-      let sf=null, ready=false, active=false, pending=false;
-      let curFen=null, analyzeTimer=null;
-      let lines = new Map(); // multipv -> {scoreStr, pvUci:[], pvSan:[]}
-      function setState(txt){ try{ const s=$('#engineState'); if(s) s.textContent=txt; }catch{}
+      let sf = null, ready = false, active = false, pending = false;
+      let curFen = null, analyzeTimer = null;
+      const lines = new Map(); // multipv -> {scoreStr, pvUci:[], pvSan:[]}
+
+      function setState(txt){
+        try{ const s = $('#engineStateLive'); if(s) s.textContent = txt; }catch{}
       }
       function clearUI(){ try{ const el=$('#engineLines'); if(el) el.textContent=''; }catch{} }
       function formatScore(line){
         const mMate=line.match(/score\s+mate\s+(-?\d+)/);
         if(mMate){ const n=parseInt(mMate[1],10); return (n>0?`#${n}`:`#-${Math.abs(n)}`); }
-        const mCp=line.match(/score\s+cp\s+(-?\d+)/); const cp = mCp? parseInt(mCp[1],10):0; const pawns = (cp/100).toFixed(2); return (cp>=0?`+${pawns}`:pawns);
+        const mCp=line.match(/score\s+cp\s+(-?\d+)/);
+        const cp = mCp? parseInt(mCp[1],10):0;
+        const pawns = (cp/100).toFixed(2);
+        return (cp>=0?`+${pawns}`:pawns);
       }
       function pvToSANs(fen, pvUci){
         try{
-          const out=[]; let curFen = fen; const cl=ChessLite(); cl.loadFEN(curFen);
+          const out=[]; let cur = fen; const cl=ChessLite(); cl.loadFEN(cur);
           for(const u of pvUci){
-            out.push(uciToSAN(curFen, u));
-            const mv=cl.moveUci(u); if(!mv.ok) break; curFen = cl.fen();
+            out.push(uciToSAN(cur, u));
+            const mv=cl.moveUci(u); if(!mv.ok) break; cur = cl.fen();
           }
           return out;
         }catch{ return pvUci; }
       }
       function updateUI(){
-        const el=$('#engineLines'); if(!el) return; const keys=[1,2,3]; const parts=[]; for(const k of keys){ const ln=lines.get(k); if(!ln) continue; const san = (ln.pvSan||[]).slice(0,6).join(' '); parts.push(`${k}. ${ln.scoreStr}  ${san}`); } el.textContent = parts.join("\n");
+        const el=$('#engineLines'); if(!el) return;
+        const keys=[1,2,3];
+        const parts=[];
+        for(const k of keys){
+          const ln=lines.get(k); if(!ln) continue;
+          const san = (ln.pvSan||[]).slice(0,6).join(' ');
+          parts.push(`${k}. ${ln.scoreStr}  ${san}`);
+        }
+        el.textContent = parts.join("\n");
       }
+
       function ensure(){
         if(sf || ready) return true;
+
+        // Create dedicated worker that loads stockfish.js and resolves wasm locally
         try{
-          if(typeof Stockfish==='function'){
-            try{ Stockfish.locateFile = (path, prefix)=> 'engine/' + path; }catch{}
-            sf=Stockfish();
-          }
-        }catch{}
-        if(!sf){ setState('not loaded'); return false; }
-        sf.onmessage = (e)=>{
-          const line=(''+(e.data||e)).trim();
-          if(line==='uciok'){ sf.postMessage('setoption name Threads value 1'); sf.postMessage('setoption name MultiPV value 3'); sf.postMessage('isready'); return; }
-          if(line==='readyok'){ ready=true; setState('ready'); return; }
+          sf = new Worker('engine/stockfish-worker.js');
+        }catch(err){
+          setState('worker error');
+          try{
+            const el=$('#engineLines');
+            if(el) el.textContent = 'Failed to create Stockfish worker: ' + (err && err.message ? err.message : String(err));
+          }catch{}
+          return false;
+        }
+
+        sf.onmessage = (e) => {
+          const line = (''+(e.data||e)).trim();
+
+          if(line === 'uciok'){ sf.postMessage('isready'); return; }
+          if(line === 'readyok'){ ready=true; setState('ready'); return; }
+
           if(line.startsWith('info')){
             if(!active) return;
-            const m=line.match(/multipv\s+(\d+)/); const idx = m?parseInt(m[1],10):1;
+            const m=line.match(/multipv\s+(\d+)/);
+            const idx = m?parseInt(m[1],10):1;
             const scoreStr = formatScore(line);
             const pvIdx=line.indexOf(' pv ');
             const pvUci = pvIdx>=0 ? line.slice(pvIdx+4).trim().split(/\s+/) : [];
             const pvSan = curFen ? pvToSANs(curFen, pvUci) : pvUci;
             lines.set(idx, { scoreStr, pvUci, pvSan });
-            // Arrow from first move of PV #1
-            if(idx===1 && pvUci.length){ BOARD.arrows.engine = pvUci[0]; renderArrows(); }
+
+            // Draw the first PV arrow
+            if(idx===1 && pvUci.length){
+              BOARD.arrows.engine = pvUci[0];
+              renderArrows();
+            }
             updateUI();
           }
-          if(line.startsWith('bestmove')){ pending=false; }
+
+          if(line.startsWith('bestmove')){
+            pending=false;
+          }
+
+          // Emit loader errors to UI as text
+          if(/^stockfish importScripts error:/.test(line)){
+            try{
+              const el=$('#engineLines');
+              if(el) el.textContent = line + '\nCheck that /engine/stockfish.wasm is present and COOP/COEP headers are enabled.';
+            }catch{}
+            setState('error');
+          }
         };
-        sf.postMessage('uci'); setState('loading');
+
+        sf.onmessageerror = () => {
+          setState('messageerror');
+          try{ const el=$('#engineLines'); if(el) el.textContent = 'Stockfish worker messageerror.'; }catch{}
+        };
+
+        sf.onerror = (ev) => {
+          setState('error');
+          try{
+            const el=$('#engineLines');
+            if(el) el.textContent = 'Stockfish worker error: ' + (ev && ev.message ? ev.message : (ev && ev.filename ? ev.filename : 'unknown'));
+          }catch{}
+        };
+
+        sf.postMessage('uci');
+        setState('loading');
         return true;
       }
-      function go(fen){ if(!active) return; if(!ensure()) return; curFen=fen; lines.clear(); clearUI(); BOARD.arrows.engine=null; renderArrows(); pending=true; sf.postMessage('stop'); sf.postMessage('ucinewgame'); sf.postMessage('position fen '+fen); sf.postMessage('go depth 16'); }
-      function analyzeDebounced(fen){ if(!active) return; curFen=fen; clearTimeout(analyzeTimer); analyzeTimer=setTimeout(()=>go(fen), 200); }
-      function enable(){ active=true; setState('on'); if(BOARD.current) analyzeDebounced(BOARD.current); }
-      function disable(){ active=false; setState('off'); lines.clear(); clearUI(); if(sf){ try{ sf.postMessage('stop'); }catch{} } BOARD.arrows.engine=null; renderArrows(); }
+
+      function go(fen){
+        if(!active) return;
+        if(!ensure()) return;
+        curFen=fen; lines.clear(); clearUI();
+        BOARD.arrows.engine=null; renderArrows();
+        pending=true;
+        try{ sf.postMessage('stop'); }catch{}
+        sf.postMessage('ucinewgame');
+        sf.postMessage('position fen '+fen);
+        sf.postMessage('setoption name Threads value 1');
+        sf.postMessage('setoption name MultiPV value 3');
+        sf.postMessage('go depth 16');
+      }
+
+      function analyzeDebounced(fen){
+        if(!active) return;
+        curFen=fen;
+        clearTimeout(analyzeTimer);
+        analyzeTimer=setTimeout(()=>go(fen), 200);
+      }
+
+      function enable(){
+        active=true;
+        setState('on');
+        if(BOARD.current) analyzeDebounced(BOARD.current);
+      }
+
+      function disable(){
+        active=false;
+        setState('off');
+        lines.clear();
+        clearUI();
+        try{ sf && sf.postMessage('stop'); }catch{}
+        BOARD.arrows.engine=null; renderArrows();
+      }
+
       return { enable, disable, analyzeDebounced };
     })();
     async function analyzeOnServer(pgn, depth=12){

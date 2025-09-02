@@ -354,3 +354,56 @@ Before we get started, keep in mind:
 [debug] [2025-09-02T00:24:15.650Z] Functions emulator received unknown request at path /favicon.ico
 [debug] [2025-09-02T00:24:20.539Z] Functions emulator received unknown request at path /engine/stockfish.js
 [debug] [2025-09-02T00:24:35.716Z] Functions emulator received unknown request at path /
+[debug] [2025-09-02T00:25:25.435Z] ----------------------------------------------------------------------
+[debug] [2025-09-02T00:25:25.437Z] Command:       C:\Program Files\nodejs\node.exe C:\Users\loxty\AppData\Roaming\npm\node_modules\firebase-tools\lib\bin\firebase.js emulators:start --only hosting
+[debug] [2025-09-02T00:25:25.437Z] CLI Version:   14.15.1
+[debug] [2025-09-02T00:25:25.437Z] Platform:      win32
+[debug] [2025-09-02T00:25:25.437Z] Node Version:  v22.17.1
+[debug] [2025-09-02T00:25:25.437Z] Time:          Tue Sep 02 2025 01:25:25 GMT+0100 (British Summer Time)
+[debug] [2025-09-02T00:25:25.437Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2025-09-02T00:25:25.587Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2025-09-02T00:25:25.587Z] > authorizing via signed-in user (loxtyrrell03@gmail.com)
+[info] i  emulators: Starting emulators: hosting {"metadata":{"emulator":{"name":"hub"},"message":"Starting emulators: hosting"}}
+[debug] [2025-09-02T00:25:25.594Z] [logging] Logging Emulator only supports listening on one address (127.0.0.1). Not listening on ::1
+[debug] [2025-09-02T00:25:25.594Z] [hosting] Hosting Emulator only supports listening on one address (127.0.0.1). Not listening on ::1
+[debug] [2025-09-02T00:25:25.594Z] assigned listening specs for emulators {"user":{"hub":[{"address":"127.0.0.1","family":"IPv4","port":4400},{"address":"::1","family":"IPv6","port":4400}],"logging":[{"address":"127.0.0.1","family":"IPv4","port":4500}],"hosting":[{"address":"127.0.0.1","family":"IPv4","port":5000}]},"metadata":{"message":"assigned listening specs for emulators"}}
+[debug] [2025-09-02T00:25:25.597Z] [hub] writing locator at C:\Users\loxty\AppData\Local\Temp\hub-chessmistaketrainer.json
+[debug] [2025-09-02T00:25:25.607Z] Checked if tokens are valid: true, expires at: 1756775062957
+[debug] [2025-09-02T00:25:25.607Z] Checked if tokens are valid: true, expires at: 1756775062957
+[debug] [2025-09-02T00:25:25.608Z] >>> [apiv2][query] GET https://firebasehosting.googleapis.com/v1beta1/projects/chessmistaketrainer/sites 
+[debug] [2025-09-02T00:25:26.416Z] <<< [apiv2][status] GET https://firebasehosting.googleapis.com/v1beta1/projects/chessmistaketrainer/sites 200
+[debug] [2025-09-02T00:25:26.416Z] <<< [apiv2][body] GET https://firebasehosting.googleapis.com/v1beta1/projects/chessmistaketrainer/sites {"sites":[{"name":"projects/chessmistaketrainer/sites/chessmistaketrainer","defaultUrl":"https://chessmistaketrainer.web.app","appId":"1:283045516917:web:c0d57f12aceb33a16d4a3c","type":"DEFAULT_SITE"}]}
+[debug] [2025-09-02T00:25:26.416Z] Checked if tokens are valid: true, expires at: 1756775062957
+[debug] [2025-09-02T00:25:26.416Z] Checked if tokens are valid: true, expires at: 1756775062957
+[debug] [2025-09-02T00:25:26.416Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects/chessmistaketrainer/webApps/1:283045516917:web:c0d57f12aceb33a16d4a3c/config [none]
+[debug] [2025-09-02T00:25:27.025Z] <<< [apiv2][status] GET https://firebase.googleapis.com/v1beta1/projects/chessmistaketrainer/webApps/1:283045516917:web:c0d57f12aceb33a16d4a3c/config 200
+[debug] [2025-09-02T00:25:27.025Z] <<< [apiv2][body] GET https://firebase.googleapis.com/v1beta1/projects/chessmistaketrainer/webApps/1:283045516917:web:c0d57f12aceb33a16d4a3c/config {"projectId":"chessmistaketrainer","appId":"1:283045516917:web:c0d57f12aceb33a16d4a3c","storageBucket":"chessmistaketrainer.firebasestorage.app","apiKey":"AIzaSyB_VkTkQXOgc4Q0jithJk9iwzRv2OLLIE0","authDomain":"chessmistaketrainer.firebaseapp.com","messagingSenderId":"283045516917","measurementId":"G-86S4RMVDR3"}
+[debug] [2025-09-02T00:25:27.029Z] Checked if tokens are valid: true, expires at: 1756775062957
+[debug] [2025-09-02T00:25:27.029Z] Checked if tokens are valid: true, expires at: 1756775062957
+[debug] [2025-09-02T00:25:27.029Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects/chessmistaketrainer [none]
+[debug] [2025-09-02T00:25:27.272Z] <<< [apiv2][status] GET https://firebase.googleapis.com/v1beta1/projects/chessmistaketrainer 200
+[debug] [2025-09-02T00:25:27.272Z] <<< [apiv2][body] GET https://firebase.googleapis.com/v1beta1/projects/chessmistaketrainer {"projectId":"chessmistaketrainer","projectNumber":"283045516917","displayName":"ChessMistakeTrainer","name":"projects/chessmistaketrainer","resources":{"hostingSite":"chessmistaketrainer"},"state":"ACTIVE","etag":"1_68a2e2b8-7795-4fbe-9e3c-a5ca0c8cd6fd"}
+[info] i  hosting[chessmistaketrainer]: Serving hosting files from: public {"metadata":{"emulator":{"name":"hosting"},"message":"Serving hosting files from: \u001b[1mpublic\u001b[22m"}}
+[info] +  hosting[chessmistaketrainer]: Local server: http://127.0.0.1:5000 {"metadata":{"emulator":{"name":"hosting"},"message":"Local server: \u001b[4m\u001b[1mhttp://127.0.0.1:5000\u001b[22m\u001b[24m"}}
+[warn] !  emulators: The Emulator UI is not starting, either because none of the running emulators have a UI component or the Emulator UI cannot determine the Project ID. Pass the --project flag to specify a project. {"metadata":{"emulator":{"name":"hub"},"message":"The Emulator UI is not starting, either because none of the running emulators have a UI component or the Emulator UI cannot determine the Project ID. Pass the --project flag to specify a project."}}
+[debug] [2025-09-02T00:25:27.289Z] Could not find VSCode notification endpoint: FetchError: request to http://localhost:40001/vscode/notify failed, reason: . If you are not running the Firebase Data Connect VSCode extension, this is expected and not an issue.
+[info] 
+┌─────────────────────────────────────────────────────────────┐
+│ ✔  All emulators ready! It is now safe to connect your app. │
+└─────────────────────────────────────────────────────────────┘
+
+┌──────────┬────────────────┐
+│ Emulator │ Host:Port      │
+├──────────┼────────────────┤
+│ Hosting  │ 127.0.0.1:5000 │
+└──────────┴────────────────┘
+  Emulator Hub host: 127.0.0.1 port: 4400
+  Other reserved ports: 4500
+
+Issues? Report them at https://github.com/firebase/firebase-tools/issues and attach the *-debug.log files.
+ 
+[info] i  hosting: 127.0.0.1 - - [02/Sep/2025:00:26:47 +0000] "GET / HTTP/1.1" 200 588 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36" {"metadata":{"emulator":{"name":"hosting"},"message":"127.0.0.1 - - [02/Sep/2025:00:26:47 +0000] \"GET / HTTP/1.1\" 200 588 \"-\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36\""}}
+[info] i  hosting: 127.0.0.1 - - [02/Sep/2025:00:26:47 +0000] "GET /engine/stockfish.js HTTP/1.1" 200 - "http://localhost:5000/" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36" {"metadata":{"emulator":{"name":"hosting"},"message":"127.0.0.1 - - [02/Sep/2025:00:26:47 +0000] \"GET /engine/stockfish.js HTTP/1.1\" 200 - \"http://localhost:5000/\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36\""}}
+[info] i  hosting: 127.0.0.1 - - [02/Sep/2025:00:26:59 +0000] "GET /engine/stockfish.jshttp://localhost:5000/engine/stockfish.wasm HTTP/1.1" 404 - "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36" {"metadata":{"emulator":{"name":"hosting"},"message":"127.0.0.1 - - [02/Sep/2025:00:26:59 +0000] \"GET /engine/stockfish.jshttp://localhost:5000/engine/stockfish.wasm HTTP/1.1\" 404 - \"-\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36\""}}
+[info] i  hosting: 127.0.0.1 - - [02/Sep/2025:00:27:23 +0000] "GET /engine/stockfish.wasm HTTP/1.1" 200 - "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36" {"metadata":{"emulator":{"name":"hosting"},"message":"127.0.0.1 - - [02/Sep/2025:00:27:23 +0000] \"GET /engine/stockfish.wasm HTTP/1.1\" 200 - \"-\" \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36\""}}

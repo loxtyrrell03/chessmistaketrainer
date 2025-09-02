@@ -5,7 +5,7 @@
 
 self.Module = self.Module || {};
 
-// Make locateFile robust: return absolute /engine/<basename-of-requested-file>
+// Make locateFile robust: resolve to the same folder as this worker (project-relative)
 self.Module.locateFile = function(requestedPath, prefix) {
   try {
     // extract basename (strip any directory or query string)
@@ -20,11 +20,11 @@ self.Module.locateFile = function(requestedPath, prefix) {
     // take basename
     const parts = noQuery.split('/');
     const base = parts[parts.length - 1] || noQuery;
-    // final absolute path under engine folder
-    return '/engine/' + base;
+    // final path relative to this worker's folder
+    return base;
   } catch (err) {
-    // fallback naive concat
-    return '/engine/' + requestedPath;
+    // fallback naive basename
+    try { return (requestedPath+'').split('/').pop(); } catch { return requestedPath; }
   }
 };
 
@@ -32,9 +32,9 @@ self.Module.locateFile = function(requestedPath, prefix) {
 self.Module.print = function(text) { self.postMessage(String(text)); };
 self.Module.printErr = function(text) { self.postMessage(String(text)); };
 
-// import the actual stockfish glue. Use absolute path to be unambiguous.
+// import the actual stockfish glue (relative to this worker's folder)
 try {
-  importScripts('/engine/stockfish.js');
+  importScripts('stockfish.js');
 } catch (err) {
   // send a clear error so it shows in the main page console
   self.postMessage('stockfish importScripts error: ' + (err && err.message ? err.message : String(err)));

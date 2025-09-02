@@ -695,8 +695,8 @@
     });
   </script>
 
-  <!-- Stockfish WASM (local) -->
-  <script src="/engine/stockfish.js"></script>
+  <!-- Stockfish WASM (local, project-relative path) -->
+  <script src="engine/stockfish.js"></script>
 
   <script>
     /********************************************************************
@@ -1196,7 +1196,7 @@
           }catch{}
           try{
             if(typeof Stockfish==='function'){
-              try{ Stockfish.locateFile = (path, prefix)=> '/engine/' + path; }catch{}
+              try{ Stockfish.locateFile = (path, prefix)=> 'engine/' + path; }catch{}
               sf = Stockfish();
             } else {
               sf = null;
@@ -1302,7 +1302,7 @@
         if(sf || ready) return true;
         try{
           if(typeof Stockfish==='function'){
-            try{ Stockfish.locateFile = (path, prefix)=> '/engine/' + path; }catch{}
+            try{ Stockfish.locateFile = (path, prefix)=> 'engine/' + path; }catch{}
             sf=Stockfish();
           }
         }catch{}

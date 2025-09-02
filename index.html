@@ -83,6 +83,17 @@
     /* Hide training legend badges */
     #trainSection .legend.tiny{ display:none !important; }
 
+    /* Toggle switch for engine */
+    .switch{ position:relative; display:inline-block; width:44px; height:24px; vertical-align:middle }
+    .switch input{ opacity:0; width:0; height:0 }
+    .slider{ position:absolute; cursor:pointer; inset:0; background:#3a445a; transition:.2s; border-radius:24px }
+    .slider:before{ content:""; position:absolute; height:18px; width:18px; left:3px; bottom:3px; background:#fff; transition:.2s; border-radius:50% }
+    .switch input:checked + .slider{ background:var(--acc) }
+    .switch input:checked + .slider:before{ transform:translateX(20px) }
+
+    /* Engine arrow color (cyan-ish) */
+    :root{ --arrow-engine:#00bcd4 }
+
     @media (max-width:1000px){
       .grid, .train-grid{grid-template-columns:1fr}
     }
@@ -511,6 +522,20 @@
 
           </div>
         </div>
+        <!-- Engine Analysis panel under the board area -->
+        <div class="stroke tiny" style="margin-top:10px" id="enginePanel">
+          <div class="row" style="align-items:center; justify-content:space-between">
+            <div>
+              <b>Engine Analysis</b>
+              <span id="engineState" class="tiny muted" style="margin-left:6px">off</span>
+            </div>
+            <label class="switch" title="Toggle engine analysis">
+              <input type="checkbox" id="engineToggle">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div id="engineLines" class="mono" style="margin-top:6px; white-space:pre-wrap"></div>
+        </div>
       </div>
       <div class="card">
         <h2>Sets</h2>
@@ -670,8 +695,8 @@
     });
   </script>
 
-  <!-- Stockfish WASM -->
-  <script src="https://unpkg.com/stockfish.wasm/stockfish.js"></script>
+  <!-- Stockfish WASM (local) -->
+  <script src="/engine/stockfish.js"></script>
 
   <script>
     /********************************************************************
@@ -1170,7 +1195,12 @@
             if(window.SF_BACKEND_URL){ ready=true; $('#engineState').textContent='server'; return resolve(true); }
           }catch{}
           try{
-            sf = (typeof Stockfish==='function') ? Stockfish() : null;
+            if(typeof Stockfish==='function'){
+              try{ Stockfish.locateFile = (path, prefix)=> '/engine/' + path; }catch{}
+              sf = Stockfish();
+            } else {
+              sf = null;
+            }
             if(!sf){ /* do not show error text in UI */ return resolve(false); }
             sf.onmessage = (e) => {
               const line=(''+(e.data||e)).trim();
@@ -1239,6 +1269,71 @@
       const json=await res.json();
       return json.mistakes||[];
     }
+
+    /********************************************************************
+     * Live Engine (WASM) analysis for Train board
+     ********************************************************************/
+    const EngineLive = (() => {
+      let sf=null, ready=false, active=false, pending=false;
+      let curFen=null, analyzeTimer=null;
+      let lines = new Map(); // multipv -> {scoreStr, pvUci:[], pvSan:[]}
+      function setState(txt){ try{ const s=$('#engineState'); if(s) s.textContent=txt; }catch{}
+      }
+      function clearUI(){ try{ const el=$('#engineLines'); if(el) el.textContent=''; }catch{} }
+      function formatScore(line){
+        const mMate=line.match(/score\s+mate\s+(-?\d+)/);
+        if(mMate){ const n=parseInt(mMate[1],10); return (n>0?`#${n}`:`#-${Math.abs(n)}`); }
+        const mCp=line.match(/score\s+cp\s+(-?\d+)/); const cp = mCp? parseInt(mCp[1],10):0; const pawns = (cp/100).toFixed(2); return (cp>=0?`+${pawns}`:pawns);
+      }
+      function pvToSANs(fen, pvUci){
+        try{
+          const out=[]; let curFen = fen; const cl=ChessLite(); cl.loadFEN(curFen);
+          for(const u of pvUci){
+            out.push(uciToSAN(curFen, u));
+            const mv=cl.moveUci(u); if(!mv.ok) break; curFen = cl.fen();
+          }
+          return out;
+        }catch{ return pvUci; }
+      }
+      function updateUI(){
+        const el=$('#engineLines'); if(!el) return; const keys=[1,2,3]; const parts=[]; for(const k of keys){ const ln=lines.get(k); if(!ln) continue; const san = (ln.pvSan||[]).slice(0,6).join(' '); parts.push(`${k}. ${ln.scoreStr}  ${san}`); } el.textContent = parts.join("\n");
+      }
+      function ensure(){
+        if(sf || ready) return true;
+        try{
+          if(typeof Stockfish==='function'){
+            try{ Stockfish.locateFile = (path, prefix)=> '/engine/' + path; }catch{}
+            sf=Stockfish();
+          }
+        }catch{}
+        if(!sf){ setState('not loaded'); return false; }
+        sf.onmessage = (e)=>{
+          const line=(''+(e.data||e)).trim();
+          if(line==='uciok'){ sf.postMessage('setoption name Threads value 1'); sf.postMessage('setoption name MultiPV value 3'); sf.postMessage('isready'); return; }
+          if(line==='readyok'){ ready=true; setState('ready'); return; }
+          if(line.startsWith('info')){
+            if(!active) return;
+            const m=line.match(/multipv\s+(\d+)/); const idx = m?parseInt(m[1],10):1;
+            const scoreStr = formatScore(line);
+            const pvIdx=line.indexOf(' pv ');
+            const pvUci = pvIdx>=0 ? line.slice(pvIdx+4).trim().split(/\s+/) : [];
+            const pvSan = curFen ? pvToSANs(curFen, pvUci) : pvUci;
+            lines.set(idx, { scoreStr, pvUci, pvSan });
+            // Arrow from first move of PV #1
+            if(idx===1 && pvUci.length){ BOARD.arrows.engine = pvUci[0]; renderArrows(); }
+            updateUI();
+          }
+          if(line.startsWith('bestmove')){ pending=false; }
+        };
+        sf.postMessage('uci'); setState('loading');
+        return true;
+      }
+      function go(fen){ if(!active) return; if(!ensure()) return; curFen=fen; lines.clear(); clearUI(); BOARD.arrows.engine=null; renderArrows(); pending=true; sf.postMessage('stop'); sf.postMessage('ucinewgame'); sf.postMessage('position fen '+fen); sf.postMessage('go depth 16'); }
+      function analyzeDebounced(fen){ if(!active) return; curFen=fen; clearTimeout(analyzeTimer); analyzeTimer=setTimeout(()=>go(fen), 200); }
+      function enable(){ active=true; setState('on'); if(BOARD.current) analyzeDebounced(BOARD.current); }
+      function disable(){ active=false; setState('off'); lines.clear(); clearUI(); if(sf){ try{ sf.postMessage('stop'); }catch{} } BOARD.arrows.engine=null; renderArrows(); }
+      return { enable, disable, analyzeDebounced };
+    })();
     async function analyzeOnServer(pgn, depth=12){
       const base=(window.SF_BACKEND_URL||'').replace(/\/$/,''); if(!base) throw new Error('SF_BACKEND_URL not set');
       const url=`${base}/analyze`;
@@ -1510,7 +1605,7 @@
       'P':'♙'+VS15,'N':'♘'+VS15,'B':'♗'+VS15,'R':'♖'+VS15,'Q':'♕'+VS15,'K':'♔'+VS15,
       'p':'♟'+VS15,'n':'♞'+VS15,'b':'♝'+VS15,'r':'♜'+VS15,'q':'♛'+VS15,'k':'♚'+VS15
     };
-    const BOARD = { current:null, selected:null, highlights:new Set(), chess:ChessLite(), arrows:{ user:null, best:null, showBest:false } };
+    const BOARD = { current:null, selected:null, highlights:new Set(), chess:ChessLite(), arrows:{ user:null, best:null, engine:null, showBest:false } };
 
     function ensureArrowCanvas(){
       const outer = document.getElementById('trainBoard'); if(!outer) return null;
@@ -1549,8 +1644,10 @@
       const {cv,dpr}=info; const ctx=cv.getContext('2d'); if(!ctx) return; ctx.clearRect(0,0,cv.width,cv.height);
       const red = getComputedStyle(document.documentElement).getPropertyValue('--arrow-user').trim()||'#ff5c5c';
       const green = getComputedStyle(document.documentElement).getPropertyValue('--arrow-best').trim()||'#2ecc71';
+      const cyan = getComputedStyle(document.documentElement).getPropertyValue('--arrow-engine').trim()||'#00bcd4';
       const u=BOARD.arrows.user; if(u){ drawArrow(ctx,dpr,u.slice(0,2),u.slice(2,4),red,false); }
       const b=BOARD.arrows.best; if(b && BOARD.arrows.showBest){ drawArrow(ctx,dpr,b.slice(0,2),b.slice(2,4),green,false); }
+      const e=BOARD.arrows.engine; if(e){ drawArrow(ctx,dpr,e.slice(0,2),e.slice(2,4),cyan,false); }
     }
 
     function drawBoardInto(rootId, fen, whiteBottom){
@@ -1603,7 +1700,8 @@
       const root = $('#board'); root.innerHTML='';
       if(!fen){
         for(let r=0;r<8;r++){ for(let c=0;c<8;c++){ const el=document.createElement('div'); el.className='sq '+(((r+c)%2)?'dark':'light'); root.appendChild(el); } }
-        try{ const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent='FEN: —'; }catch{}
+        try{ const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent='FEN: -'; }catch{}
+        BOARD.arrows.engine=null; try{ const el=$('#engineLines'); if(el) el.textContent=''; }catch{}
         setBoardFonts(); renderArrows(); return;
       }
       BOARD.chess.loadFEN(fen); BOARD.current=fen; $('#sideToMove').textContent = BOARD.chess.turn()==='w'?'White':'Black';
@@ -1636,7 +1734,7 @@
         cell.addEventListener('click', onSquareClick);
         root.appendChild(cell);
       });
-      BOARD.selected=null; BOARD.highlights.clear(); showHints(); setBoardFonts(); renderArrows();
+      BOARD.selected=null; BOARD.highlights.clear(); showHints(); setBoardFonts(); renderArrows(); try{ if($('#engineToggle')?.checked) EngineLive.analyzeDebounced(fen); }catch{}
     }
 
     function showHints(){
@@ -1997,6 +2095,11 @@
 
       // Enable board drag-resize via the corner handle
       setupBoardResizeHandle();
+      // Engine toggle handlers
+      try{
+        const tog=$('#engineToggle');
+        tog && tog.addEventListener('change', ()=>{ if(tog.checked){ EngineLive.enable(); if(BOARD.current) EngineLive.analyzeDebounced(BOARD.current); } else { EngineLive.disable(); } });
+      }catch{}
     })();
 
     // Board size preference

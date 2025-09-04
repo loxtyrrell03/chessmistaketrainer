@@ -595,16 +595,19 @@
     window.FN_CHESSCOM_URL = window.FN_CHESSCOM_URL || `${window.FN_BASE}/fetchChessCom`;
     window.SF_BACKEND_URL = window.SF_BACKEND_URL || 'https://sf-backend-283045516917.europe-west2.run.app';
 
-    // Analytics (best-effort)
-    (async () => {
-      try {
-        const mod = await import('https://www.gstatic.com/firebasejs/10.12.4/firebase-analytics.js');
-        const supported = await mod.isSupported();
-        if (supported) {
-          mod.getAnalytics(app);
-        }
-      } catch {}
-    })();
+    // Analytics disabled to avoid noisy console errors under COOP/COEP
+    // If you wish to enable, set ENABLE_ANALYTICS=true and ensure the SDK version
+    // works in your environment.
+    const ENABLE_ANALYTICS = false;
+    if (ENABLE_ANALYTICS) {
+      (async () => {
+        try {
+          const mod = await import('https://www.gstatic.com/firebasejs/10.12.4/firebase-analytics.js');
+          const supported = await mod.isSupported();
+          if (supported) mod.getAnalytics(app);
+        } catch {}
+      })();
+    }
   </script>
 
   <!-- Firebase Auth + Firestore sync (module) -->
@@ -1317,7 +1320,9 @@
 
         // Create dedicated worker that loads stockfish.js and resolves wasm locally
         try{
+          // Use our bridge worker which instantiates Stockfish() and forwards messages
           sf = new Worker('engine/stockfish-worker.js');
+          try { window._engineWorker = sf; } catch {}
         }catch(err){
           setState('worker error');
           try{
@@ -1326,6 +1331,17 @@
           }catch{}
           return false;
         }
+
+        // Extra diagnostics if the worker fails to communicate
+        try{
+          sf.onerror = (ev)=>{
+            setState('error');
+            const el=$('#engineLines'); if(el) el.textContent = 'Worker error: ' + (ev && ev.message ? ev.message : 'unknown');
+          };
+          sf.onmessageerror = ()=>{
+            const el=$('#engineLines'); if(el) el.textContent = 'Worker message error';
+          };
+        }catch{}
 
         sf.onmessage = (e) => {
           const line = (''+(e.data||e)).trim();
@@ -1363,6 +1379,14 @@
             }catch{}
             setState('error');
           }
+          // Surface any other messages while debugging stuck states
+          try{
+            const el=$('#engineLines');
+            if(el && line && !/^info|bestmove|uciok|readyok/.test(line)){
+              const cur = el.textContent || '';
+              el.textContent = (cur ? cur + '\n' : '') + line;
+            }
+          }catch{}
         };
 
         sf.onmessageerror = () => {
@@ -1406,7 +1430,8 @@
 
       function enable(){
         active=true;
-        setState('on');
+        // Prime the worker immediately; ensure() sets 'loading' and later 'ready'
+        ensure();
         if(BOARD.current) analyzeDebounced(BOARD.current);
       }
 

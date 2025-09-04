@@ -1,41 +1,59 @@
-// stockfish-worker.js
-// Robust wrapper: sets Module.locateFile to resolve the wasm reliably,
-// then imports the real stockfish.js glue with importScripts.
-// Place this file in public/engine/ next to stockfish.js and stockfish.wasm.
+// stockfish-worker.js (bridge)
+try { self.postMessage('bridge: boot'); } catch {}
+// Runs Stockfish (Emscripten) inside a Web Worker and bridges messages.
+// Place this file next to stockfish.js and stockfish.wasm under /engine/.
 
+// Configure Module and locateFile so the wasm resolves within this folder
 self.Module = self.Module || {};
-
-// Make locateFile robust: resolve to the same folder as this worker (project-relative)
-self.Module.locateFile = function(requestedPath, prefix) {
+// Ensure pthread helper gets a string URL to import for the main script
+// This avoids createObjectURL(undefined) inside stockfish.worker.js
+self.Module.mainScriptUrlOrBlob = 'stockfish.js';
+self.Module.locateFile = function(requestedPath) {
   try {
-    // extract basename (strip any directory or query string)
-    // examples handled:
-    //  - "stockfish.wasm"
-    //  - "./stockfish.wasm"
-    //  - "some/path/stockfish.wasm?version=123"
-    //  - "stockfish.wasm.wasm" => we take basename which avoids doubling paths
-    const url = requestedPath + '';
-    // strip query string
-    const noQuery = url.split('?')[0];
-    // take basename
-    const parts = noQuery.split('/');
-    const base = parts[parts.length - 1] || noQuery;
-    // final path relative to this worker's folder
-    return base;
-  } catch (err) {
-    // fallback naive basename
-    try { return (requestedPath+'').split('/').pop(); } catch { return requestedPath; }
-  }
+    const noQuery = String(requestedPath).split('?')[0];
+    return noQuery.split('/').pop(); // resolve to local file in this folder
+  } catch { return requestedPath; }
 };
 
-// route Emscripten prints to main thread so you see loader logs
-self.Module.print = function(text) { self.postMessage(String(text)); };
-self.Module.printErr = function(text) { self.postMessage(String(text)); };
+// Route engine prints back to the main thread for visibility
+self.Module.print = function(text) { try { self.postMessage(String(text)); } catch {} };
+self.Module.printErr = function(text) { try { self.postMessage(String(text)); } catch {} };
 
-// import the actual stockfish glue (relative to this worker's folder)
+let engine = null;
+let ready = false;
+const q = [];
 try {
   importScripts('stockfish.js');
+  try { self.postMessage('bridge: stockfish.js loaded'); } catch {}
+  if (typeof Stockfish === 'function') {
+    try {
+      engine = Stockfish(Module);
+      self.postMessage('bridge: Stockfish() created');
+    } catch (e) {
+      self.postMessage('bridge: Stockfish() failed: ' + (e && e.message ? e.message : String(e)));
+      throw e;
+    }
+    // Bridge engine -> main
+    engine.onmessage = function(e){
+      try {
+        const msg = e && e.data != null ? e.data : e;
+        if (String(msg).trim() === 'uciok') ready = true;
+        self.postMessage(msg);
+      } catch {}
+    };
+    // Bridge main -> engine
+    self.onmessage = function(e){
+      try {
+        const msg = e && e.data != null ? e.data : e;
+        if (engine) engine.postMessage(msg); else q.push(msg);
+      } catch {}
+    };
+    // Flush any queued messages that arrived early
+    while (q.length) { try { engine.postMessage(q.shift()); } catch {} }
+    // Signal ready path will proceed via 'uciok' after we send 'uci' from main
+  } else {
+    self.postMessage('stockfish worker error: Stockfish() not found after importScripts');
+  }
 } catch (err) {
-  // send a clear error so it shows in the main page console
   self.postMessage('stockfish importScripts error: ' + (err && err.message ? err.message : String(err)));
 }

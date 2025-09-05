@@ -230,6 +230,13 @@
     .topnav a.active{background:#1b2130;color:#fff}
     .section{display:none}
     .section.active{display:block}
+
+    /* Last-move highlight for chessboard.js squares */
+    #board [data-square].last-move,
+    #gvBoard [data-square].last-move,
+    #statsBoard [data-square].last-move{
+      background: var(--sq-hl, #ffd54f) !important; /* filled yellow */
+    }
   </style>
 </head>
 <body>
@@ -1972,16 +1979,63 @@
           showNotation: false,
           orientation: (whiteBottom ? 'white' : 'black'),
           position: fen || 'empty',
-          pieceTheme: '/chessboardjs/img/chesspieces/wikipedia/{piece}.png'
+          pieceTheme: '/chessboardjs/img/chesspieces/wikipedia/{piece}.png',
+          onMoveEnd: (oldPos, newPos) => { highlightLastMoveFromDiff(`#${rootId}`, oldPos, newPos); }
         });
       } else {
         CB.extras[rootId].orientation(whiteBottom ? 'white' : 'black');
         if(!fen) CB.extras[rootId].clear(true); else CB.extras[rootId].position(fen, false);
       }
+      clearLastMoveHighlights(`#${rootId}`);
       setBoardFonts();
     }
 
     function setBoardFonts(){ renderArrows(); }
+
+    // Last-move highlight helpers (for chessboard.js boards)
+    function clearLastMoveHighlights(rootSel){
+      try{ document.querySelectorAll(`${rootSel} [data-square].last-move`).forEach(el=>el.classList.remove('last-move')); }catch{}
+    }
+    function addLastMoveSquare(rootSel, sq){
+      try{ const el = document.querySelector(`${rootSel} [data-square="${sq}"]`); if(el) el.classList.add('last-move'); }catch{}
+    }
+    function highlightLastMoveFromDiff(rootSel, oldPos, newPos){
+      try{
+        const o = oldPos||{}; const n = newPos||{};
+        const squares = new Set([...Object.keys(o), ...Object.keys(n)]);
+        const fromCandidates=[], toCandidates=[];
+        for(const s of squares){
+          const ov=o[s], nv=n[s];
+          if(ov===nv) continue;
+          if(ov && !nv) { fromCandidates.push(s); continue; }
+          if(!ov && nv) { toCandidates.push(s); continue; }
+          // changed piece (capture, move into occupied, etc.) => count as both
+          fromCandidates.push(s); toCandidates.push(s);
+        }
+        let from=null, to=null;
+        if(fromCandidates.length===1 && toCandidates.length===1){ from=fromCandidates[0]; to=toCandidates[0]; }
+        else{
+          // try pair by color/type similarity
+          let best=null;
+          for(const t of toCandidates){
+            const np=n[t]; if(!np) continue;
+            for(const f of fromCandidates){
+              const op=o[f]; if(!op) continue;
+              const sameColor = np[0]===op[0];
+              const sameType  = np[1]===op[1];
+              const score = (sameColor?1:0)+(sameType?2:0);
+              const isKingDest = np && (np[1]==='K' || np[1]==='k');
+              if(!best || score>best.score || (score===best.score && isKingDest)) best={from:f,to:t,score};
+            }
+          }
+          if(best){ from=best.from; to=best.to; }
+          else { from=fromCandidates[0]||null; to=toCandidates[0]||null; }
+        }
+        clearLastMoveHighlights(rootSel);
+        if(from) addLastMoveSquare(rootSel, from);
+        if(to) addLastMoveSquare(rootSel, to);
+      }catch{}
+    }
 
     function ensureMainBoard(){
       if(CB.main) return CB.main;
@@ -1992,6 +2046,10 @@
         orientation: ORIENT_WHITE_BOTTOM ? 'white' : 'black',
         position: 'empty',
         pieceTheme: '/chessboardjs/img/chesspieces/wikipedia/{piece}.png',
+        onMoveEnd: (oldPos, newPos) => {
+          // After animation, mark last moved squares
+          highlightLastMoveFromDiff('#board', oldPos, newPos);
+        },
         onDragStart: (source, piece) => {
           try{
             const turn = BOARD.chess.turn();
@@ -2029,12 +2087,14 @@
         BOARD.current=null;
         BOARD.arrows.engine=null; try{ const el=$('#engineLines'); if(el) el.textContent=''; }catch{}
         board.clear(true);
+        clearLastMoveHighlights('#board');
         setBoardFonts(); renderArrows(); return;
       }
       BOARD.chess.loadFEN(fen); BOARD.current=fen; $('#sideToMove').textContent = BOARD.chess.turn()==='w'?'White':'Black';
       try{ const fenEl = $('#trainFen'); if(fenEl) fenEl.textContent = `FEN: ${fen}`; }catch{}
       board.orientation(ORIENT_WHITE_BOTTOM ? 'white' : 'black');
       board.position(fen, false);
+      clearLastMoveHighlights('#board');
       try{ board.resize(); }catch{}
       BOARD.selected=null; BOARD.highlights.clear(); setBoardFonts(); renderArrows();
       try{ if($('#engineToggle')?.checked) EngineLive.analyzeDebounced(fen); }catch{}

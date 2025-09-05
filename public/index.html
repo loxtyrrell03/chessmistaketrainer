@@ -76,7 +76,6 @@
     #trainSection.training-mode .train-grid > .card:nth-of-type(2){ display:none; }
     /* Show only selection view when not training */
     #trainSection:not(.training-mode) .train-grid{ display:none; }
-    #trainSection.training-mode #trainSelectView{ display:none; }
     .train-center{ display:flex; flex-direction:column; align-items:center; gap:12px }
     .train-block{ width:min(100%, var(--board-size)); margin:0 auto }
 
@@ -595,9 +594,7 @@
     window.FN_CHESSCOM_URL = window.FN_CHESSCOM_URL || `${window.FN_BASE}/fetchChessCom`;
     window.SF_BACKEND_URL = window.SF_BACKEND_URL || 'https://sf-backend-283045516917.europe-west2.run.app';
 
-    // Analytics disabled to avoid noisy console errors under COOP/COEP
-    // If you wish to enable, set ENABLE_ANALYTICS=true and ensure the SDK version
-    // works in your environment.
+    // Analytics disabled to avoid env errors unless explicitly enabled
     const ENABLE_ANALYTICS = false;
     if (ENABLE_ANALYTICS) {
       (async () => {
@@ -614,7 +611,9 @@
   <script type="module">
     import { getAuth, onAuthStateChanged, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js';
     import {
-      getFirestore, enableIndexedDbPersistence,
+      getFirestore,
+      enableIndexedDbPersistence,
+      enableMultiTabIndexedDbPersistence,
       collection, doc, getDocs, onSnapshot, writeBatch, addDoc, query, orderBy
     } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js';
 
@@ -622,7 +621,16 @@
     const auth = getAuth(fbApp);
     const db = getFirestore(fbApp);
 
-    enableIndexedDbPersistence(db).catch(()=>{});
+    // Prefer single-tab persistence and fallback to multi-tab when needed
+    enableIndexedDbPersistence(db).catch(async (err)=>{
+      console.warn('[Firestore] enableIndexedDbPersistence failed; attempting multi-tab persistence.', err?.code || err);
+      try{
+        await enableMultiTabIndexedDbPersistence(db);
+        console.info('[Firestore] Multi-tab persistence enabled.');
+      }catch(e){
+        console.warn('[Firestore] Multi-tab persistence failed; using memory cache only.', e?.code || e);
+      }
+    });
 
     const mistakeId = (m) => {
       const key = `${m.fen}|${m.played}`;
@@ -677,7 +685,11 @@
 
     window.firebaseAPI = api;
 
-    signInAnonymously(auth).catch(()=>{});
+    // Cloud sync is optional; avoid automatic sign-in to prevent console errors
+    // when Anonymous auth is not enabled. Call firebaseAPI.initAuth() to start.
+    window.ENABLE_CLOUD_SYNC = window.ENABLE_CLOUD_SYNC ?? false;
+    api.initAuth = async function(){ try { await signInAnonymously(auth); } catch {} };
+    if (window.ENABLE_CLOUD_SYNC) { api.initAuth(); }
     onAuthStateChanged(auth, async (user) => {
       api.user = user || null; api.ready = !!user; window.firebaseUser = user || null;
       if(!user) return;
@@ -1277,11 +1289,18 @@
      * Live Engine (WASM) analysis for Train board (Worker-based)
      ********************************************************************/
     const EngineLive = (() => {
+      const DEBUG = (window.DEBUG_ENGINE ?? true);
+      const dlog = (...args)=>{ try{ if(DEBUG) console.log('[EngineLive]', ...args); }catch{} };
+      const derr = (...args)=>{ try{ if(DEBUG) console.error('[EngineLive]', ...args); }catch{} };
+
       let sf = null, ready = false, active = false, pending = false;
+      let gotUci = false;
+      let queuedFen = null;
       let curFen = null, analyzeTimer = null;
       const lines = new Map(); // multipv -> {scoreStr, pvUci:[], pvSan:[]}
 
       function setState(txt){
+        dlog('state ->', txt);
         try{ const s = $('#engineStateLive'); if(s) s.textContent = txt; }catch{}
       }
       function clearUI(){ try{ const el=$('#engineLines'); if(el) el.textContent=''; }catch{} }
@@ -1316,15 +1335,18 @@
       }
 
       function ensure(){
-        if(sf || ready) return true;
+        if(sf) return true;
 
         // Create dedicated worker that loads stockfish.js and resolves wasm locally
         try{
-          // Use our bridge worker which instantiates Stockfish() and forwards messages
-          sf = new Worker('engine/stockfish-worker.js');
-          try { window._engineWorker = sf; } catch {}
+          // Use absolute path so engine resolves nested worker and wasm from the same directory
+          sf = new Worker('/engine/stockfish.js');
+          // Expose for DevTools validation
+          try{ window._engineWorker = sf; }catch{}
+          dlog('worker created');
         }catch(err){
           setState('worker error');
+          derr('worker creation failed', err);
           try{
             const el=$('#engineLines');
             if(el) el.textContent = 'Failed to create Stockfish worker: ' + (err && err.message ? err.message : String(err));
@@ -1332,22 +1354,16 @@
           return false;
         }
 
-        // Extra diagnostics if the worker fails to communicate
-        try{
-          sf.onerror = (ev)=>{
-            setState('error');
-            const el=$('#engineLines'); if(el) el.textContent = 'Worker error: ' + (ev && ev.message ? ev.message : 'unknown');
-          };
-          sf.onmessageerror = ()=>{
-            const el=$('#engineLines'); if(el) el.textContent = 'Worker message error';
-          };
-        }catch{}
-
         sf.onmessage = (e) => {
           const line = (''+(e.data||e)).trim();
+          if(DEBUG && line) dlog('worker ->', line.slice(0,240));
 
-          if(line === 'uciok'){ sf.postMessage('isready'); return; }
-          if(line === 'readyok'){ ready=true; setState('ready'); return; }
+          if(line === 'uciok'){ gotUci=true; try{ sf.postMessage('isready'); }catch{} return; }
+          if(line === 'readyok'){
+            ready=true; setState('ready');
+            if(queuedFen){ const f=queuedFen; queuedFen=null; go(f); }
+            return;
+          }
 
           if(line.startsWith('info')){
             if(!active) return;
@@ -1372,38 +1388,32 @@
           }
 
           // Emit loader errors to UI as text
-          if(/^stockfish importScripts error:/.test(line)){
+          if(/^stockfish importScripts error:/.test(line) || /^stockfish worker error:/.test(line)){
             try{
               const el=$('#engineLines');
               if(el) el.textContent = line + '\nCheck that /engine/stockfish.wasm is present and COOP/COEP headers are enabled.';
             }catch{}
             setState('error');
           }
-          // Surface any other messages while debugging stuck states
-          try{
-            const el=$('#engineLines');
-            if(el && line && !/^info|bestmove|uciok|readyok/.test(line)){
-              const cur = el.textContent || '';
-              el.textContent = (cur ? cur + '\n' : '') + line;
-            }
-          }catch{}
         };
 
-        sf.onmessageerror = () => {
+        sf.onmessageerror = (e) => {
           setState('messageerror');
+          derr('worker messageerror', e);
           try{ const el=$('#engineLines'); if(el) el.textContent = 'Stockfish worker messageerror.'; }catch{}
         };
 
         sf.onerror = (ev) => {
           setState('error');
+          derr('worker error', ev);
           try{
             const el=$('#engineLines');
             if(el) el.textContent = 'Stockfish worker error: ' + (ev && ev.message ? ev.message : (ev && ev.filename ? ev.filename : 'unknown'));
           }catch{}
         };
 
-        sf.postMessage('uci');
-        setState('loading');
+        try{ dlog('post -> uci'); sf.postMessage('uci'); }catch(e){ derr('post uci failed', e);}        
+        // caller (enable) will set label to "loading"
         return true;
       }
 
@@ -1412,13 +1422,22 @@
         if(!ensure()) return;
         curFen=fen; lines.clear(); clearUI();
         BOARD.arrows.engine=null; renderArrows();
+
+        // If not ready yet, queue this position to run immediately after 'readyok'
+        if(!ready){
+          queuedFen = fen;
+          try{ sf.postMessage('uci'); }catch{}
+          return;
+        }
+
         pending=true;
-        try{ sf.postMessage('stop'); }catch{}
-        sf.postMessage('ucinewgame');
+        try{ dlog('post -> stop'); sf.postMessage('stop'); }catch(e){ derr('post stop failed', e); }
+        dlog('post -> ucinewgame'); sf.postMessage('ucinewgame');
+        dlog('post -> position fen', fen);
         sf.postMessage('position fen '+fen);
-        sf.postMessage('setoption name Threads value 1');
-        sf.postMessage('setoption name MultiPV value 3');
-        sf.postMessage('go depth 16');
+        dlog('post -> setoption Threads=1'); sf.postMessage('setoption name Threads value 1');
+        dlog('post -> setoption MultiPV=3'); sf.postMessage('setoption name MultiPV value 3');
+        dlog('post -> go depth 16'); sf.postMessage('go depth 16');
       }
 
       function analyzeDebounced(fen){
@@ -1430,20 +1449,25 @@
 
       function enable(){
         active=true;
-        // Prime the worker immediately; ensure() sets 'loading' and later 'ready'
-        ensure();
-        if(BOARD.current) analyzeDebounced(BOARD.current);
+        setState('loading');
+        dlog('enable');
+        const ok = ensure();
+        if(ok && BOARD.current) analyzeDebounced(BOARD.current);
       }
 
       function disable(){
         active=false;
+        dlog('disable');
         setState('off');
         lines.clear();
         clearUI();
-        try{ sf && sf.postMessage('stop'); }catch{}
+        try{ dlog('post -> stop'); sf && sf.postMessage('stop'); }catch{}
         BOARD.arrows.engine=null; renderArrows();
       }
 
+      // Small debug surface for manual testing from DevTools
+      function ping(){ try{ ensure(); sf && sf.postMessage('uci'); setTimeout(()=>sf && sf.postMessage('isready'), 250); }catch(e){ derr('ping failed', e);} }
+      try{ window.EngineLiveDebug = { ping, ensure: ()=>ensure(), post:(s)=>sf && sf.postMessage(String(s)) }; }catch{}
       return { enable, disable, analyzeDebounced };
     })();
     async function analyzeOnServer(pgn, depth=12){
@@ -1828,16 +1852,16 @@
         const r=Math.floor(i/8), c=i%8; const sq=BOARD.chess.idxToSq(i);
         const cell=document.createElement('div'); cell.className='sq '+(((r+c)%2)?'dark':'light');
         cell.dataset.index=i; cell.dataset.square=sq;
-        const piece=cells[i]; 
-        if(piece){ 
-          const span=document.createElement('div'); 
-          span.className='piece'; 
-          span.textContent=PIECES[piece]||''; 
-          span.classList.add(piece===piece.toUpperCase()?'w':'b'); 
+        const piece=cells[i];
+        if(piece){
+          const span=document.createElement('div');
+          span.className='piece';
+          span.textContent=PIECES[piece]||'';
+          span.classList.add(piece===piece.toUpperCase()?'w':'b');
           span.setAttribute('draggable','true');
           span.addEventListener('dragstart', onDragStart);
           span.addEventListener('dragend', onDragEnd);
-          cell.appendChild(span); 
+          cell.appendChild(span);
         }
         // Drag over/drop targets
         cell.addEventListener('dragover', onDragOver);
@@ -2023,7 +2047,8 @@
       const sets = loadSets();
       sel.innerHTML = '';
       const opt0 = document.createElement('option'); opt0.value=''; opt0.textContent='Select a set…'; sel.appendChild(opt0);
-      for(const s of sets){ const o=document.createElement('option'); o.value=s.id; o.textContent=`${s.name} (${s.keys.length})`; sel.appendChild(o); }
+      for(const s of sets){ const o=document.createElement('option'); o.value=s.id; o.textContent=`${s.name} (${s.keys.length})`; sel.appendChild(o);
+      }
       if(STATS_SELECTED_SET_ID){ sel.value = STATS_SELECTED_SET_ID; }
       else if(sets.length){ STATS_SELECTED_SET_ID = sets[0].id; sel.value = STATS_SELECTED_SET_ID; }
       sel.onchange = ()=>{ STATS_SELECTED_SET_ID = sel.value || null; renderStatsMistakeList(); renderStatsSummary(); drawBoardInto('statsBoard', null, true); $('#statsMInfo').textContent='-'; $('#statsSideToMove').textContent='-'; $('#statsBest').textContent='-'; $('#statsDelta').textContent='-'; };
@@ -2173,7 +2198,7 @@
     // Game viewer controls
     $('#gvPrev')?.addEventListener('click', () => { if(GAMEVIEW.idx>0){ GAMEVIEW.idx--; drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); } });
     $('#gvNext')?.addEventListener('click', () => { if(GAMEVIEW.idx+1<GAMEVIEW.fens.length){ GAMEVIEW.idx++; drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); } });
-    $('#gvStart')?.addEventListener('click', () => { GAMEVIEW.idx=0; drawBoardInto('gvBoard', GAMEVIEW.fens[0], true); gvUpdate(); });
+    $('#gvStart')?.addEventListener('click', () => { GAMEVIEW.idx=0; drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); });
     $('#gvEnd')?.addEventListener('click', () => { GAMEVIEW.idx=Math.max(0,GAMEVIEW.fens.length-1); drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); });
 
     /********************************************************************

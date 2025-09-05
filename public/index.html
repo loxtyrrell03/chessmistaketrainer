@@ -163,15 +163,10 @@
       background:#ddd;border-radius:12px;overflow:hidden;border:1px solid #c7cdd8;position:relative
     }
 
-    /* Chess grid */
-    .grid8{
-      display:grid;
-      grid-template-columns:repeat(8, minmax(0,1fr)); /* prevent content from stretching columns */
-      grid-template-rows:repeat(8, minmax(0,1fr));
-      width:100%;
-      height:100%;
-      contain: content;
-    }
+    /* Ensure chessboard.js containers fill their wrappers */
+    #board, #gvBoard, #statsBoard{ width:100%; height:100%; }
+    /* Legacy custom grid (no longer used for main rendering) */
+    .grid8{ display:grid; grid-template-columns:repeat(8, minmax(0,1fr)); grid-template-rows:repeat(8, minmax(0,1fr)); width:100%; height:100%; contain: content; }
     .sq{
       display:flex;align-items:center;justify-content:center;
       user-select:none;position:relative;transition:background .08s ease;
@@ -226,6 +221,8 @@
     .pill.blun{background:#4f1e24;color:#ffb3bd;border:1px solid #ff6b6b}
     .stroke{border:1px dashed #2a3142;border-radius:10px;padding:10px}
   </style>
+  <!-- chessboard.js CSS (local) -->
+  <link rel="stylesheet" href="/chessboardjs/css/chessboard-1.0.0.min.css" />
   <style>
     .topnav{background:#11141a;border-bottom:1px solid #232836;position:sticky;top:0;z-index:5}
     .topnav .navwrap{max-width:1100px;margin:0 auto;display:flex;gap:12px;align-items:center;padding:10px 18px}
@@ -385,7 +382,7 @@
               </div>
             </div>
             <div class="board-mini" style="margin-top:8px">
-              <div id="gvBoard" class="grid8" aria-label="game-viewer-board"></div>
+              <div id="gvBoard" aria-label="game-viewer-board"></div>
             </div>
           </div>
         </div>
@@ -463,7 +460,7 @@
       <div class="card">
         <h2>Preview</h2>
         <div class="board-mini" style="margin-top:8px">
-          <div id="statsBoard" class="grid8" aria-label="stats-board"></div>
+          <div id="statsBoard" aria-label="stats-board"></div>
         </div>
         <div class="stroke tiny" style="margin-top:10px">
           <div class="small"><b>Selected mistake</b></div>
@@ -516,12 +513,12 @@
         <h2>Board</h2>
         <div class="board-wrap" style="margin-top:10px">
           <div class="board" id="trainBoard">
-            <div id="board" class="grid8" aria-label="chessboard"></div>
+            <div id="board" aria-label="chessboard"></div>
             <div id="resizeHandle" class="resize-handle" title="Drag to resize"></div>
           </div>
           <div style="flex:1;min-width:260px">
             <div class="legend tiny">
-              <span>Drag or click to move</span>
+              <span>Drag to move</span>
               <span>✔️ correct = best move</span>
               <span>❌ otherwise</span>
             </div>
@@ -888,6 +885,9 @@
 
   <!-- Stockfish WASM (local, project-relative path) -->
   <script src="engine/stockfish.js"></script>
+  <!-- jQuery + chessboard.js (local) -->
+  <script src="/vendor/jquery.min.js"></script>
+  <script src="/chessboardjs/js/chessboard-1.0.0.min.js"></script>
 
   <script>
     /********************************************************************
@@ -1919,6 +1919,7 @@
       'p':'♟'+VS15,'n':'♞'+VS15,'b':'♝'+VS15,'r':'♜'+VS15,'q':'♛'+VS15,'k':'♚'+VS15
     };
     const BOARD = { current:null, selected:null, highlights:new Set(), chess:ChessLite(), arrows:{ user:null, best:null, engine:null, showBest:false } };
+    const CB = { main:null, extras:{} };
 
     function ensureArrowCanvas(){
       const outer = document.getElementById('trainBoard'); if(!outer) return null;
@@ -1964,90 +1965,79 @@
     }
 
     function drawBoardInto(rootId, fen, whiteBottom){
-      const root = document.getElementById(rootId); if(!root) return;
-      root.innerHTML='';
-      if(!fen){
-        for(let r=0;r<8;r++){ for(let c=0;c<8;c++){ const el=document.createElement('div'); el.className='sq '+(((r+c)%2)?'dark':'light'); root.appendChild(el); } }
-        setBoardFonts(); return;
+      const el = document.getElementById(rootId); if(!el) return;
+      if(!CB.extras[rootId]){
+        CB.extras[rootId] = Chessboard(el, {
+          draggable: false,
+          showNotation: false,
+          orientation: (whiteBottom ? 'white' : 'black'),
+          position: fen || 'empty',
+          pieceTheme: '/chessboardjs/img/chesspieces/wikipedia/{piece}.png'
+        });
+      } else {
+        CB.extras[rootId].orientation(whiteBottom ? 'white' : 'black');
+        if(!fen) CB.extras[rootId].clear(true); else CB.extras[rootId].position(fen, false);
       }
-      const cl=ChessLite(); cl.loadFEN(fen);
-      const parts=fen.split(' ')[0].split('/'); const cells=[];
-      for(const row of parts){ for(const ch of row){ if(/[1-8]/.test(ch)){ for(let k=0;k<parseInt(ch,10);k++) cells.push(null); } else cells.push(ch); } }
-
-      const idxOrder=[]; for(let r=0;r<8;r++){ for(let c=0;c<8;c++) idxOrder.push(r*8+c); }
-      const oriented = (whiteBottom ? idxOrder : idxOrder.slice().reverse());
-
-      oriented.forEach(i=>{
-        const r=Math.floor(i/8), c=i%8;
-        const cell=document.createElement('div'); cell.className='sq '+(((r+c)%2)?'dark':'light');
-        const piece=cells[i]; if(piece){ const span=document.createElement('div'); span.className='piece'; span.textContent=PIECES[piece]||''; span.classList.add(piece===piece.toUpperCase()?'w':'b'); cell.appendChild(span); }
-        root.appendChild(cell);
-      });
       setBoardFonts();
     }
 
-    function setBoardFonts(){
-      // main board
-      try{
-        const outer = document.getElementById('trainBoard');
-        const grid = document.getElementById('board');
-        const w = outer?.clientWidth || 520;
-        grid && grid.style.setProperty('--cell-font', Math.max(14, Math.floor((w/8)*0.78))+'px');
-      }catch{}
-      // game viewer board
-      try{
-        const gv = document.getElementById('gvBoard');
-        const gvw = gv?.clientWidth || 360;
-        gv && gv.style.setProperty('--cell-font', Math.max(12, Math.floor((gvw/8)*0.78))+'px');
-      }catch{}
-      // stats preview board
-      try{
-        const sb = document.getElementById('statsBoard');
-        const sbw = sb?.clientWidth || 360;
-        sb && sb.style.setProperty('--cell-font', Math.max(12, Math.floor((sbw/8)*0.78))+'px');
-      }catch{}
-      renderArrows();
+    function setBoardFonts(){ renderArrows(); }
+
+    function ensureMainBoard(){
+      if(CB.main) return CB.main;
+      const el = document.getElementById('board'); if(!el) return null;
+      CB.main = Chessboard(el, {
+        draggable: true,
+        showNotation: false,
+        orientation: ORIENT_WHITE_BOTTOM ? 'white' : 'black',
+        position: 'empty',
+        pieceTheme: '/chessboardjs/img/chesspieces/wikipedia/{piece}.png',
+        onDragStart: (source, piece) => {
+          try{
+            const turn = BOARD.chess.turn();
+            if((turn==='w' && piece[0] !== 'w') || (turn==='b' && piece[0] !== 'b')) return false;
+          }catch{}
+          return true;
+        },
+        onDrop: (source, target, piece, newPos, oldPos) => {
+          if(source===target) return 'snapback';
+          let uci = source + target;
+          try{
+            const legal = BOARD.chess.moves().filter(m=>m.from===source && m.to===target);
+            if(legal.length){ let move=legal[0]; const q=legal.find(m=>m.promotion==='q'); if(q) move=q; if(move.promotion) uci+=move.promotion; }
+          }catch{}
+          const tmp=ChessLite(); tmp.loadFEN(BOARD.current); const mv=tmp.moveUci(uci);
+          if(!mv.ok) return 'snapback';
+          const nextFen = tmp.fen();
+          BOARD.chess.loadFEN(nextFen); BOARD.current=nextFen;
+          CB.main.orientation(ORIENT_WHITE_BOTTOM ? 'white' : 'black');
+          CB.main.position(nextFen, true);
+          try{ $('#sideToMove').textContent = BOARD.chess.turn()==='w'?'White':'Black'; }catch{}
+          try{ const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent = `FEN: ${nextFen}`; }catch{}
+          BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
+          try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
+          Session.answer(uci);
+        }
+      });
+      return CB.main;
     }
 
     function drawBoardMain(fen){
-      const root = $('#board'); root.innerHTML='';
+      const board = ensureMainBoard(); if(!board) return;
       if(!fen){
-        for(let r=0;r<8;r++){ for(let c=0;c<8;c++){ const el=document.createElement('div'); el.className='sq '+(((r+c)%2)?'dark':'light'); root.appendChild(el); } }
         try{ const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent='FEN: -'; }catch{}
+        BOARD.current=null;
         BOARD.arrows.engine=null; try{ const el=$('#engineLines'); if(el) el.textContent=''; }catch{}
+        board.clear(true);
         setBoardFonts(); renderArrows(); return;
       }
       BOARD.chess.loadFEN(fen); BOARD.current=fen; $('#sideToMove').textContent = BOARD.chess.turn()==='w'?'White':'Black';
-      // Update Game Info FEN whenever board changes
       try{ const fenEl = $('#trainFen'); if(fenEl) fenEl.textContent = `FEN: ${fen}`; }catch{}
-      const parts=fen.split(' ')[0].split('/'); const cells=[];
-      for(const row of parts){ for(const ch of row){ if(/[1-8]/.test(ch)){ for(let k=0;k<parseInt(ch,10);k++) cells.push(null); } else cells.push(ch); } }
-      const idxOrder=[]; for(let r=0;r<8;r++){ for(let c=0;c<8;c++) idxOrder.push(r*8+c); }
-      const oriented = ORIENT_WHITE_BOTTOM ? idxOrder : idxOrder.slice().reverse();
-
-      oriented.forEach(i=>{
-        const r=Math.floor(i/8), c=i%8; const sq=BOARD.chess.idxToSq(i);
-        const cell=document.createElement('div'); cell.className='sq '+(((r+c)%2)?'dark':'light');
-        cell.dataset.index=i; cell.dataset.square=sq;
-        const piece=cells[i];
-        if(piece){
-          const span=document.createElement('div');
-          span.className='piece';
-          span.textContent=PIECES[piece]||'';
-          span.classList.add(piece===piece.toUpperCase()?'w':'b');
-          span.setAttribute('draggable','true');
-          span.addEventListener('dragstart', onDragStart);
-          span.addEventListener('dragend', onDragEnd);
-          cell.appendChild(span);
-        }
-        // Drag over/drop targets
-        cell.addEventListener('dragover', onDragOver);
-        cell.addEventListener('drop', onDrop);
-        // Click to move support
-        cell.addEventListener('click', onSquareClick);
-        root.appendChild(cell);
-      });
-      BOARD.selected=null; BOARD.highlights.clear(); showHints(); setBoardFonts(); renderArrows(); try{ if($('#engineToggle')?.checked) EngineLive.analyzeDebounced(fen); }catch{}
+      board.orientation(ORIENT_WHITE_BOTTOM ? 'white' : 'black');
+      board.position(fen, false);
+      try{ board.resize(); }catch{}
+      BOARD.selected=null; BOARD.highlights.clear(); setBoardFonts(); renderArrows();
+      try{ if($('#engineToggle')?.checked) EngineLive.analyzeDebounced(fen); }catch{}
     }
 
     function showHints(){
@@ -2404,8 +2394,12 @@
       renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); renderSets(); renderSetsForTrain(); renderActiveSetInfo();
       drawBoardMain(null);
       setStatus('Loading engine…'); await Engine.ensure(); setStatus('Idle');
-      // keep fonts/arrows sized when window resizes
-      window.addEventListener('resize', setBoardFonts);
+      // keep boards/arrows sized when window resizes
+      window.addEventListener('resize', ()=>{
+        try{ CB.main && CB.main.resize(); }catch{}
+        try{ Object.values(CB.extras||{}).forEach(b=>{ try{ b && b.resize && b.resize(); }catch{} }); }catch{}
+        setBoardFonts();
+      });
 
       // Enable board drag-resize via the corner handle
       setupBoardResizeHandle();
@@ -2424,6 +2418,8 @@
       document.documentElement.style.setProperty('--board-size', size+'px');
       const lbl=$('#boardSizeVal'); if(lbl) lbl.textContent = `(${size})`;
       localStorage.setItem('pmtt_board_size', String(size));
+      try{ CB.main && CB.main.resize(); }catch{}
+      try{ Object.values(CB.extras||{}).forEach(b=>{ try{ b && b.resize && b.resize(); }catch{} }); }catch{}
       setBoardFonts();
       renderArrows();
     }
@@ -2447,7 +2443,7 @@
       const sec = document.getElementById('trainSection'); if(!sec) return;
       sec.classList.add('training-mode');
       try{ gvHide(); }catch{}
-      setTimeout(()=>{ setBoardFonts(); renderArrows(); }, 0);
+      setTimeout(()=>{ try{ ensureMainBoard(); CB.main && CB.main.resize(); }catch{} setBoardFonts(); renderArrows(); }, 0);
     }
     function showTrainSelectionMode(){
       const sec = document.getElementById('trainSection'); if(!sec) return;
@@ -2575,7 +2571,14 @@
       document.getElementById('navStats')?.classList.toggle('active', which==='stats');
       document.getElementById('navSets')?.classList.toggle('active', which==='sets');
       document.getElementById('navTrain')?.classList.toggle('active', which==='train');
-      if(which==='train' || which==='stats'){ setTimeout(()=>{ setBoardFonts(); renderArrows(); }, 50); }
+      if(which==='train' || which==='stats'){
+        setTimeout(()=>{
+          try{ ensureMainBoard(); CB.main && CB.main.resize(); if(BOARD.current) CB.main.position(BOARD.current, false); else CB.main.clear(true); }catch{}
+          try{ Object.values(CB.extras||{}).forEach(b=>{ try{ b && b.resize && b.resize(); }catch{} }); }catch{}
+          setBoardFonts();
+          renderArrows();
+        }, 50);
+      }
     }
     document.getElementById('navHome')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('home'); });
     document.getElementById('navAnalyze')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('analyze'); });

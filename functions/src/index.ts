@@ -49,6 +49,8 @@ export const fetchLichess = onRequest(async (req, res) => {
     for (const line of lines) {
       try { parsed.push(JSON.parse(line)); } catch (e) { /* ignore bad line */ }
     }
+    // sort newest-first just in case upstream order varies, then take max
+    parsed.sort((a,b) => ((b?.lastMoveAt ?? b?.createdAt ?? 0) - (a?.lastMoveAt ?? a?.createdAt ?? 0)));
     const games = parsed.map((g) => ({
       id: g.id,
       rated: g.rated,
@@ -59,7 +61,7 @@ export const fetchLichess = onRequest(async (req, res) => {
       white: g.players?.white?.user?.name || g.players?.white?.userId,
       black: g.players?.black?.user?.name || g.players?.black?.userId,
       pgn: g.pgn,
-    })).filter((g) => !!g.pgn);
+    })).filter((g) => !!g.pgn).slice(0, max);
 
     res.status(200).json({ games });
     return;
@@ -97,7 +99,10 @@ export const fetchChessCom = onRequest(async (req, res) => {
         const r = await fetch(url);
         if (!r.ok) continue;
         const m = await r.json() as { games?: any[] };
-        for (const g of (m.games || [])) {
+        const arr = (m.games || []).slice();
+        // iterate newest-first within the month
+        for (let i=arr.length-1; i>=0; i--) {
+          const g = arr[i];
           if (!g?.pgn) continue;
           out.push({
             end_time: g.end_time,

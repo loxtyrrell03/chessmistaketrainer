@@ -235,7 +235,8 @@
     #board [data-square].last-move,
     #gvBoard [data-square].last-move,
     #statsBoard [data-square].last-move{
-      background: var(--sq-hl, #ffd54f) !important; /* filled yellow */
+      /* slightly transparent yellow to reduce intensity */
+      background: rgba(255, 213, 79, 0.6) !important;
     }
   </style>
 </head>
@@ -1058,6 +1059,31 @@
       const u2=$('#chesscomUser')?.value.trim(); if(u2) names.push(u2.toLowerCase());
       window.LAST_USERNAMES = new Set(names);
     }
+    // Derive a comparable timestamp from PGN headers
+    function pgnTimeMs(pgn){
+      try{
+        const h = parsePGNHeaders(pgn||'');
+        const norm = (d)=> (d||'').replace(/\?/g,'01').replace(/\./g,'-');
+        function toMs(d,t){
+          const dd = norm(d); if(!dd) return 0;
+          let iso = dd;
+          if(/^\d{4}-\d{2}-\d{2}$/.test(dd)){
+            const tt = (t||'12:00:00');
+            const tfix = /^\d{2}:\d{2}(:\d{2})?$/.test(tt) ? (tt.length===5?tt+':00':tt) : '12:00:00';
+            iso = dd + 'T' + tfix + 'Z';
+          }
+          const ms = Date.parse(iso);
+          return isNaN(ms) ? 0 : ms;
+        }
+        const utc = toMs(h.UTCDate, h.UTCTime);
+        if(utc) return utc;
+        const dateOnly = toMs(h.Date, h.UTCTime || '12:00:00');
+        if(dateOnly) return dateOnly;
+        const end = toMs(h.EndDate || h.EventDate, h.EndTime || '12:00:00');
+        if(end) return end;
+      }catch{}
+      return 0;
+    }
     function userSideForPGN(pgn){
       try{
         const h=parsePGNHeaders(pgn||''); const w=(h.White||'').toLowerCase(); const b=(h.Black||'').toLowerCase();
@@ -1679,7 +1705,8 @@
         if(btn){ btn.textContent = 'Create set (0 mistakes)'; }
         if(info){ info.textContent = '-'; }
       }catch{}
-      for(const rec of window.importedGames){
+      const list = (window.importedGames||[]).slice().sort((a,b)=> pgnTimeMs(b.pgn) - pgnTimeMs(a.pgn));
+      for(const rec of list){
         const pgn = rec.pgn; const source=rec.source||'Imported';
         const h = parsePGNHeaders(pgn||'');
         const tr=document.createElement('tr');
@@ -1820,7 +1847,12 @@
       const base=(window.FN_LICHESS_URL||`${window.FN_BASE||''}/fetchLichess`).replace(/\/$/,'');
       const url=`${base}?username=${encodeURIComponent(user)}&max=${n}`;
       const res=await fetch(url,{headers:{'Accept':'application/json'}}); if(!res.ok) throw new Error(`Lichess proxy failed (${res.status})`);
-      const json=await res.json(); const games=(json.games||[]).filter(g=>g&&g.pgn); const out=games.map(g=>g.pgn);
+      const json=await res.json();
+      let games=(json.games||[]).filter(g=>g&&g.pgn);
+      // Ensure newest-first and limit to last N
+      games.sort((a,b)=>((b.lastMoveAt||b.createdAt||0) - (a.lastMoveAt||a.createdAt||0)));
+      games = games.slice(0, n);
+      const out=games.map(g=>g.pgn);
       appendImportedGames(out,'Lichess'); return out;
     }
 
@@ -1829,7 +1861,12 @@
       const base=(window.FN_CHESSCOM_URL||`${window.FN_BASE||''}/fetchChessCom`).replace(/\/$/,'');
       const url=`${base}?username=${encodeURIComponent(user)}&limit=${n}`;
       const res=await fetch(url,{headers:{'Accept':'application/json'}}); if(!res.ok) throw new Error(`Chess.com proxy failed (${res.status})`);
-      const json=await res.json(); const games=(json.games||[]).filter(g=>g&&g.pgn); const out=games.map(g=>g.pgn);
+      const json=await res.json();
+      let games=(json.games||[]).filter(g=>g&&g.pgn);
+      // Ensure newest-first and limit to last N
+      games.sort((a,b)=>((b.end_time||0)-(a.end_time||0)));
+      games = games.slice(0, n);
+      const out=games.map(g=>g.pgn);
       appendImportedGames(out,'Chess.com'); return out;
     }
 

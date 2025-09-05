@@ -780,11 +780,12 @@
     const auth = getAuth(window.firebaseApp);
     const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ prompt: 'select_account' });
+    // Prefer redirect everywhere for consistency and fewer popup issues.
+    // Allow override via window.AUTH_USE_POPUP=true for local debugging.
     const preferRedirect = (()=>{
       try{
-        const h = location.hostname || '';
-        if(h.endsWith('.web.app') || h.endsWith('web.app') || h.endsWith('firebaseapp.com')) return true;
-        return self.crossOriginIsolated === true;
+        if (window.AUTH_USE_POPUP === true) return false;
+        return true;
       }catch{ return true }
     })();
 
@@ -839,6 +840,8 @@
 
     openBtn?.addEventListener('click', async()=>{
       const user = auth.currentUser;
+      // If signed in anonymously, open modal to upgrade instead of signing out.
+      if(user && user.isAnonymous){ openModal(); return; }
       if(user){ try{ await signOut(auth); }catch{}; return; }
       openModal();
     });
@@ -865,8 +868,10 @@
     }).catch((e)=>{ console.debug('[Auth] getRedirectResult error', e?.code||e); });
 
     googleBtn?.addEventListener('click', async()=>{
+      if(!googleBtn) return;
+      googleBtn.disabled = true;
       try{
-        console.debug('[Auth] Google click. crossOriginIsolated=', self.crossOriginIsolated, 'preferRedirect=', preferRedirect);
+        console.debug('[Auth] Google click. preferRedirect=', preferRedirect);
         if (preferRedirect) {
           await signInWithRedirect(auth, provider);
           return; // navigation follows
@@ -874,9 +879,11 @@
         await signInWithPopup(auth, provider);
         closeModal();
       } catch(e){
-        console.warn('[Auth] Popup failed, falling back to redirect', e?.code||e);
+        console.warn('[Auth] Sign-in attempt failed, trying redirect', e?.code||e);
         try{ await signInWithRedirect(auth, provider); return; }catch{}
         showErr(e);
+      } finally {
+        try{ googleBtn.disabled = false; }catch{}
       }
     });
 

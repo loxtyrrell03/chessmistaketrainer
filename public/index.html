@@ -1339,8 +1339,9 @@
 
         // Create dedicated worker that loads stockfish.js and resolves wasm locally
         try{
-          // Use absolute path so engine resolves nested worker and wasm from the same directory
-          sf = new Worker('/engine/stockfish.js');
+          // Use our bridge worker so stdout/stderr are forwarded to main thread
+          // and engine assets resolve relative to /engine/
+          sf = new Worker('/engine/stockfish-worker.js');
           // Expose for DevTools validation
           try{ window._engineWorker = sf; }catch{}
           dlog('worker created');

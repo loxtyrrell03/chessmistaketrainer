@@ -245,6 +245,37 @@
       <a href="#" data-sec="sets" id="navSets">Sets</a>
       <a href="#" data-sec="train" id="navTrain">Train</a>
       <div style="margin-left:auto"></div>
+      <span id="authUserName" class="small" style="color:#cbd5e1;margin-right:8px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:none"></span>
+      <button id="btnAuth" class="ghost small" title="Sign in to sync">Sign in</button>
+    </div>
+  </div>
+
+  <!-- Auth modal -->
+  <div id="authModal" style="display:none">
+    <div id="authBackdrop" style="position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(2px);z-index:50"></div>
+    <div class="card" style="position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(92%,640px);z-index:51;padding:20px 22px 18px;border-radius:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="font-size:1.25rem;font-weight:700">Welcome back</div>
+        <button id="authClose" class="ghost" style="padding:6px 10px">✕</button>
+      </div>
+      <div class="muted" style="margin-bottom:12px">Sign in to sync your data across devices.</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <button id="btnGoogle" class="ghost" style="display:flex;gap:10px;align-items:center;justify-content:center;border:1px solid #2a3142;padding:10px;border-radius:10px">
+          <img alt="" src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" style="width:20px;height:20px"/>
+          <span>Continue with Google</span>
+        </button>
+        <div class="muted" style="text-align:center">or</div>
+        <input id="authEmail" type="email" placeholder="Email" autocomplete="email" />
+        <input id="authPass" type="password" placeholder="Password" autocomplete="current-password" />
+        <div class="row" style="gap:10px">
+          <button id="btnEmailPrimary" style="flex:1">Sign in</button>
+          <button id="btnReset" class="secondary" style="flex:1">Reset password</button>
+        </div>
+        <div id="authError" class="small" style="color:var(--bad);min-height:18px"></div>
+        <div class="small" style="text-align:center">
+          <a href="#" id="linkToggleMode">New here? Create an account</a>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -575,9 +606,13 @@
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js';
 
+    // Use the Firebase Hosting "firebaseapp.com" domain as authDomain to
+    // match the Google provider's authorized redirect URIs and avoid
+    // redirect_uri_mismatch. (web.app works too if added in console.)
+    const AUTH_DOMAIN = 'chessmistaketrainer.firebaseapp.com';
     const firebaseConfig = {
       apiKey: "AIzaSyB_VkTkQXOgc4Q0jithJk9iwzRv2OLLIE0",
-      authDomain: "chessmistaketrainer.firebaseapp.com",
+      authDomain: AUTH_DOMAIN,
       projectId: "chessmistaketrainer",
       storageBucket: "chessmistaketrainer.firebasestorage.app",
       messagingSenderId: "283045516917",
@@ -586,6 +621,7 @@
     };
 
     const app = initializeApp(firebaseConfig);
+    try{ console.debug('[Auth] Using authDomain =', AUTH_DOMAIN); }catch{}
     window.firebaseApp = app;
     const REGION = 'europe-west2';
     const PROJECT_ID = firebaseConfig.projectId || (app && app.options && app.options.projectId) || 'chessmistaketrainer';
@@ -618,7 +654,7 @@
     } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js';
 
     const fbApp = window.firebaseApp;
-    const auth = getAuth(fbApp);
+    const fbAuth = getAuth(fbApp);
     const db = getFirestore(fbApp);
 
     // Prefer single-tab persistence and fallback to multi-tab when needed
@@ -632,6 +668,7 @@
       }
     });
 
+    // Use fbAuth instead of auth in this module
     const mistakeId = (m) => {
       const key = `${m.fen}|${m.played}`;
       try { return btoa(unescape(encodeURIComponent(key))).replace(/=+$/,''); }
@@ -687,11 +724,12 @@
 
     // Cloud sync is optional; avoid automatic sign-in to prevent console errors
     // when Anonymous auth is not enabled. Call firebaseAPI.initAuth() to start.
-    window.ENABLE_CLOUD_SYNC = window.ENABLE_CLOUD_SYNC ?? false;
-    api.initAuth = async function(){ try { await signInAnonymously(auth); } catch {} };
+    api.initAuth = async function(){ try { await signInAnonymously(fbAuth); } catch {} };
     if (window.ENABLE_CLOUD_SYNC) { api.initAuth(); }
-    onAuthStateChanged(auth, async (user) => {
+    onAuthStateChanged(fbAuth, async (user) => {
       api.user = user || null; api.ready = !!user; window.firebaseUser = user || null;
+      try { window.setAuthUIUser && window.setAuthUIUser(user || null); } catch {}
+      if(!user) return;
       if(!user) return;
 
       // live sync mistakes -> local
@@ -707,6 +745,144 @@
         localStorage.setItem('pmtt_attempts', JSON.stringify(attempts));
         window.dispatchEvent(new CustomEvent('firebase:attemptsUpdated'));
       }catch{}
+    });
+  </script>
+
+  <!-- Auth modal logic (Google + email/password) -->
+  <script type="module">
+    import {
+      getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult,
+      signInWithEmailAndPassword, createUserWithEmailAndPassword,
+      sendPasswordResetEmail, signOut, onAuthStateChanged
+    } from 'https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js';
+
+    const auth = getAuth(window.firebaseApp);
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    const preferRedirect = (()=>{
+      try{
+        const h = location.hostname || '';
+        if(h.endsWith('.web.app') || h.endsWith('web.app') || h.endsWith('firebaseapp.com')) return true;
+        return self.crossOriginIsolated === true;
+      }catch{ return true }
+    })();
+
+    const byId = (id)=> document.getElementById(id);
+    const modal = byId('authModal');
+    const backdrop = byId('authBackdrop');
+    const closeBtn = byId('authClose');
+    const openBtn = byId('btnAuth');
+    const emailEl = byId('authEmail');
+    const passEl = byId('authPass');
+    const primaryBtn = byId('btnEmailPrimary');
+    const resetBtn = byId('btnReset');
+    const googleBtn = byId('btnGoogle');
+    const toggleLink = byId('linkToggleMode');
+    const errEl = byId('authError');
+
+    let mode = 'signin';
+
+    function nameForUser(u){
+      if(!u) return '';
+      return u.displayName || u.email || (u.isAnonymous ? 'Guest' : '');
+    }
+
+    function applyAuthUI(user){
+      const openBtn = byId('btnAuth');
+      const nameEl = byId('authUserName');
+      if(openBtn){
+        openBtn.textContent = user ? 'Sign out' : 'Sign in';
+        openBtn.title = user ? nameForUser(user) : 'Sign in to sync';
+      }
+      if(nameEl){
+        const nm = nameForUser(user);
+        nameEl.textContent = user ? nm : '';
+        nameEl.style.display = user ? 'inline' : 'none';
+      }
+    }
+    // expose for other scripts
+    window.setAuthUIUser = applyAuthUI;
+    // Set initial UI state if auth already initialized
+    try { applyAuthUI(auth.currentUser || null); } catch {}
+    function setMode(m){
+      mode = m === 'signup' ? 'signup' : 'signin';
+      if(primaryBtn) primaryBtn.textContent = mode === 'signup' ? 'Create account' : 'Sign in';
+      if(resetBtn) resetBtn.style.display = mode === 'signup' ? 'none' : 'inline-block';
+      if(toggleLink) toggleLink.textContent = mode === 'signup' ? 'Have an account? Sign in' : 'New here? Create an account';
+      if(errEl){ errEl.style.color='var(--bad)'; errEl.textContent = ''; }
+    }
+    setMode('signin');
+
+    function openModal(){ if(modal){ modal.style.display = 'block'; } setMode('signin'); emailEl?.focus(); }
+    function closeModal(){ if(modal){ modal.style.display = 'none'; } }
+
+    openBtn?.addEventListener('click', async()=>{
+      const user = auth.currentUser;
+      if(user){ try{ await signOut(auth); }catch{}; return; }
+      openModal();
+    });
+    closeBtn?.addEventListener('click', closeModal);
+    backdrop?.addEventListener('click', closeModal);
+    toggleLink?.addEventListener('click', (e)=>{ e.preventDefault(); setMode(mode==='signup'?'signin':'signup'); });
+
+    function showErr(e){
+      if(!errEl) return;
+      const code = (e && e.code)||'';
+      const msg = (e && e.message)||'';
+      const pretty = code.replace('auth/','').replace(/-/g,' ');
+      errEl.textContent = pretty || msg || 'Error';
+      errEl.style.color = 'var(--bad)';
+    }
+
+    // Handle redirect results on load (in case we used redirect flow)
+    getRedirectResult(auth).then((res)=>{
+      console.debug('[Auth] getRedirectResult resolved', !!res?.user);
+      if(res && res.user){
+        closeModal();
+        setTimeout(()=>{ try{ applyAuthUI(auth.currentUser||null); }catch{} }, 0);
+      }
+    }).catch((e)=>{ console.debug('[Auth] getRedirectResult error', e?.code||e); });
+
+    googleBtn?.addEventListener('click', async()=>{
+      try{
+        console.debug('[Auth] Google click. crossOriginIsolated=', self.crossOriginIsolated, 'preferRedirect=', preferRedirect);
+        if (preferRedirect) {
+          await signInWithRedirect(auth, provider);
+          return; // navigation follows
+        }
+        await signInWithPopup(auth, provider);
+        closeModal();
+      } catch(e){
+        console.warn('[Auth] Popup failed, falling back to redirect', e?.code||e);
+        try{ await signInWithRedirect(auth, provider); return; }catch{}
+        showErr(e);
+      }
+    });
+
+    primaryBtn?.addEventListener('click', async()=>{
+      const email = (emailEl?.value||'').trim();
+      const pass = (passEl?.value||'');
+      if(!email || !pass){ if(errEl){ errEl.textContent = 'Enter email and password'; } return; }
+      try{
+        if(mode==='signup') await createUserWithEmailAndPassword(auth, email, pass);
+        else await signInWithEmailAndPassword(auth, email, pass);
+        closeModal();
+      }catch(e){ showErr(e); }
+    });
+    resetBtn?.addEventListener('click', async()=>{
+      const email = (emailEl?.value||'').trim();
+      if(!email){ if(errEl){ errEl.textContent = 'Enter your email to reset password'; } return; }
+      try{
+        await sendPasswordResetEmail(auth, email);
+        if(errEl){ errEl.style.color='var(--good)'; errEl.textContent='Password reset email sent'; setTimeout(()=>{ errEl.style.color='var(--bad)'; }, 1500); }
+      }
+      catch(e){ showErr(e); }
+    });
+
+    onAuthStateChanged(auth, (user)=>{
+      console.debug('[Auth] state change =>', user ? (user.email || user.displayName || user.uid) : 'signed out');
+      applyAuthUI(user);
+      if(user){ closeModal(); }
     });
   </script>
 

@@ -739,6 +739,63 @@
         const snap = await getDocs(q);
         const arr=[]; snap.forEach(d=>arr.push(d.data())); return arr;
       },
+      // Sets sync
+      async saveAllSets(sets){
+        if(!api.user) return;
+        const sCol = collection(db, 'users', api.user.uid, 'sets');
+        const batch = writeBatch(db);
+        for(const s of (sets||[])) batch.set(doc(sCol, s.id), s, { merge:true });
+        await batch.commit();
+      },
+      async deleteSetRemote(id){
+        if(!api.user || !id) return;
+        const sCol = collection(db, 'users', api.user.uid, 'sets');
+        const b = writeBatch(db); b.delete(doc(sCol, id)); await b.commit();
+      },
+      async updateSetName(id, name){
+        if(!api.user || !id) return;
+        const sCol = collection(db, 'users', api.user.uid, 'sets');
+        const b = writeBatch(db); b.set(doc(sCol, id), { name }, { merge:true }); await b.commit();
+      },
+      // Imports sync
+      // Stable, short ID for imports to avoid oversized Firestore doc IDs
+      importId(rec){
+        try{
+          const s = String(rec?.pgn || '');
+          let h1 = 0, h2 = 0;
+          for(let i=0;i<s.length;i++){
+            const c = s.charCodeAt(i);
+            h1 = (h1 * 31 + c) | 0;
+            h2 = (h2 * 131 + c) | 0;
+          }
+          const id = 'p' + (h1>>>0).toString(36) + (h2>>>0).toString(36);
+          return id;
+        }catch{
+          return 'p' + Date.now().toString(36);
+        }
+      },
+      async appendImports(pgns, source){
+        if(!api.user) return;
+        const iCol = collection(db, 'users', api.user.uid, 'imports');
+        const batch = writeBatch(db);
+        const now = Date.now(); let idx=0;
+        for(const pgn of (pgns||[])){
+          if(!pgn) continue;
+          const rec = { pgn, source: source||'Imported', ts: now + (idx++) };
+          const id = api.importId(rec);
+          batch.set(doc(iCol, id), rec, { merge:true });
+        }
+        try{ await batch.commit(); }
+        catch(e){ try{ console.warn('[Imports] Firestore save failed:', e?.code||e); }catch{} }
+      },
+      async clearImportsRemote(){
+        if(!api.user) return;
+        const iCol = collection(db, 'users', api.user.uid, 'imports');
+        const snap = await getDocs(iCol);
+        const batch = writeBatch(db);
+        snap.forEach(d => batch.delete(doc(iCol, d.id)));
+        await batch.commit();
+      }
     };
 
     window.firebaseAPI = api;
@@ -750,22 +807,74 @@
     onAuthStateChanged(fbAuth, async (user) => {
       api.user = user || null; api.ready = !!user; window.firebaseUser = user || null;
       try { window.setAuthUIUser && window.setAuthUIUser(user || null); } catch {}
-      if(!user) return;
-      if(!user) return;
+
+      // Detach previous listeners if any
+      try{ if(api._unsubs){ Object.values(api._unsubs).forEach(fn=>{ try{ fn&&fn(); }catch{} }); } }catch{}
+      api._unsubs = {};
+
+      if(!user){
+        // Wipe local session data on sign-out
+        try{
+          localStorage.removeItem('pmtt_mistakes');
+          localStorage.removeItem('pmtt_attempts');
+          localStorage.removeItem('pmtt_sets');
+        }catch{}
+        try{ window.importedGames = []; }catch{}
+        try{ window.LAST_ANALYZED = { mistakes: [], suggestedName: '' }; }catch{}
+        try{ window.dispatchEvent(new CustomEvent('firebase:mMistakesUpdated')); }catch{}
+        try{ window.dispatchEvent(new CustomEvent('firebase:attemptsUpdated')); }catch{}
+        try{ window.dispatchEvent(new CustomEvent('firebase:setsUpdated')); }catch{}
+        try{ window.dispatchEvent(new CustomEvent('firebase:importsUpdated')); }catch{}
+        return;
+      }
 
       // live sync mistakes -> local
       const mCol = collection(db, 'users', user.uid, 'mistakes');
-      onSnapshot(mCol, (snap) => {
+      api._unsubs.mistakes = onSnapshot(mCol, (snap) => {
         const arr=[]; snap.forEach(d=>arr.push(d.data()));
         try{ localStorage.setItem('pmtt_mistakes', JSON.stringify(arr)); }catch{}
         window.dispatchEvent(new CustomEvent('firebase:mMistakesUpdated'));
       });
 
+      // live sync attempts -> local
       try{
-        const attempts = await api.getAttemptsRemote();
-        localStorage.setItem('pmtt_attempts', JSON.stringify(attempts));
-        window.dispatchEvent(new CustomEvent('firebase:attemptsUpdated'));
+        const aCol = collection(db, 'users', user.uid, 'attempts');
+        const qA = query(aCol, orderBy('ts','asc'));
+        api._unsubs.attempts = onSnapshot(qA, (snap) => {
+          const arr=[]; snap.forEach(d=>arr.push(d.data()));
+          try{ localStorage.setItem('pmtt_attempts', JSON.stringify(arr)); }catch{}
+          window.dispatchEvent(new CustomEvent('firebase:attemptsUpdated'));
+        });
       }catch{}
+
+      // live sync sets -> local
+      const sCol = collection(db, 'users', user.uid, 'sets');
+      api._unsubs.sets = onSnapshot(sCol, (snap) => {
+        const arr=[]; snap.forEach(d=>arr.push(d.data()));
+        try{ localStorage.setItem('pmtt_sets', JSON.stringify(arr)); }catch{}
+        window.dispatchEvent(new CustomEvent('firebase:setsUpdated'));
+      });
+
+      // live sync imports -> merge remote into local to avoid flicker/erase on slow writes
+      const iCol = collection(db, 'users', user.uid, 'imports');
+      api._unsubs.imports = onSnapshot(iCol, (snap) => {
+        const remote=[]; snap.forEach(d=>remote.push(d.data()));
+        try{
+          const local = Array.isArray(window.importedGames) ? window.importedGames : [];
+          // If remote is temporarily empty right after a local add, avoid clearing UI
+          const justLocallyUpdated = (Date.now() - (window._importsLocalBump||0)) < 4000;
+          if(justLocallyUpdated && remote.length < local.length){
+            // keep local as-is; remote will merge on next snapshot
+            window.dispatchEvent(new CustomEvent('firebase:importsUpdated'));
+            return;
+          }
+          const map = new Map();
+          for(const r of local){ if(r && r.pgn) map.set(r.pgn, r); }
+          for(const r of remote){ if(r && r.pgn) map.set(r.pgn, r); }
+          window.importedGames = Array.from(map.values());
+        }catch{ window.importedGames = remote; }
+        try{ window.dispatchEvent(new CustomEvent('firebase:importsUpdated')); }catch{}
+      });
     });
   </script>
 
@@ -996,13 +1105,22 @@
 
     window.addEventListener('firebase:mMistakesUpdated', ()=>{ try{renderStatsSetOptions();renderStatsMistakeList();renderStatsSummary();}catch{} });
     window.addEventListener('firebase:attemptsUpdated', ()=>{ try{renderStats();}catch{} });
+    window.addEventListener('firebase:setsUpdated', ()=>{
+      try{ ACTIVE_SET = null; ACTIVE_SET_KEYS = new Set(); }catch{}
+      try{renderSets(); renderSetsForTrain(); renderActiveSetInfo();}catch{}
+    });
+    window.addEventListener('firebase:importsUpdated', ()=>{ try{rebuildImportedTable();}catch{} });
 
     /********************************************************************
      * Sets (de-duped)
      ********************************************************************/
     const keyOf = (m) => (m.fen + '|' + m.played);
     function loadSets(){ try{ return JSON.parse(localStorage.getItem(LS_SETS)||'[]'); }catch{return [];} }
-    function saveSets(arr){ localStorage.setItem(LS_SETS, JSON.stringify(arr)); renderSets(); }
+    function saveSets(arr){
+      localStorage.setItem(LS_SETS, JSON.stringify(arr));
+      try{ if(fb()) fb().saveAllSets(arr).catch(()=>{}); }catch{}
+      renderSets();
+    }
 
     function findExistingSetByNameAndKeys(name, keys){
       const sets = loadSets();
@@ -1036,6 +1154,7 @@
       tb.querySelectorAll('button[data-act="delete"]').forEach(btn => btn.addEventListener('click', () => {
         const id = btn.getAttribute('data-id');
         const sets = loadSets().filter(x => x.id!==id); saveSets(sets);
+        try{ if(fb()) fb().deleteSetRemote(id).catch(()=>{}); }catch{}
       }));
       tb.querySelectorAll('button[data-act="train"]').forEach(btn => btn.addEventListener('click', () => {
         const id = btn.getAttribute('data-id');
@@ -1786,6 +1905,8 @@
         if(!p || set.has(p)) continue;
         window.importedGames.push({pgn:p, source:source||'Imported'});
       }
+      try{ window._importsLocalBump = Date.now(); }catch{}
+      try{ if(fb()) fb().appendImports(pgns, source).catch(()=>{}); }catch{}
       rebuildImportedTable();
     }
 
@@ -2474,6 +2595,7 @@
       }
       // Clear table + viewer + state
       window.importedGames = [];
+      try{ if(fb()) fb().clearImportsRemote().catch(()=>{}); }catch{}
       rebuildImportedTable();
       const help=$('#importHelp'); if(help) help.textContent='Imported games cleared.';
       gvHide();

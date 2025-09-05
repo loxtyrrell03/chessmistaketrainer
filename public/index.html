@@ -90,6 +90,12 @@
     .switch input:checked + .slider{ background:var(--acc) }
     .switch input:checked + .slider:before{ transform:translateX(20px) }
 
+    /* Compact toggle specifically for Engine panel */
+    #enginePanel .switch{ width:32px; height:20px }
+    #enginePanel .slider:before{ width:14px; height:14px; left:3px; bottom:3px }
+    /* When ON, knob travels flush to the right edge */
+    #enginePanel .switch input:checked + .slider:before{ transform:translateX(15px) }
+
     /* Engine arrow color (cyan-ish) */
     :root{ --arrow-engine:#00bcd4 }
 
@@ -559,15 +565,25 @@
         </div>
         <!-- Engine Analysis panel under the board area -->
         <div class="stroke tiny" style="margin-top:10px" id="enginePanel">
-          <div class="row" style="align-items:center; justify-content:space-between">
-            <div>
-              <b>Engine Analysis</b>
-              <span id="engineStateLive" class="tiny muted" style="margin-left:6px">off</span>
+          <div class="row" style="align-items:center; justify-content:space-between; gap:10px">
+            <div style="display:flex; align-items:center; gap:8px">
+              <b>Engine</b>
+              <span id="engineStateLive" class="tiny muted">off</span>
+              <span id="engineMeta" class="tiny mono muted">-</span>
+              <span id="enginePerf" class="tiny mono muted" title="nodes per second">0 kn/s</span>
             </div>
-            <label class="switch" title="Toggle engine analysis">
-              <input type="checkbox" id="engineToggle">
-              <span class="slider"></span>
-            </label>
+            <div style="display:flex; align-items:center; gap:10px">
+              <div class="tiny" style="display:flex; align-items:center; gap:6px">
+                <span class="muted">Lines</span>
+                <button id="mpDec" class="ghost" style="padding:2px 8px">-</button>
+                <span id="mpVal" class="mono">3</span>
+                <button id="mpInc" class="ghost" style="padding:2px 8px">+</button>
+              </div>
+              <label class="switch" title="Toggle engine analysis">
+                <input type="checkbox" id="engineToggle">
+                <span class="slider"></span>
+              </label>
+            </div>
           </div>
           <div id="engineLines" class="mono" style="margin-top:6px; white-space:pre-wrap"></div>
         </div>
@@ -1507,12 +1523,21 @@
       let queuedFen = null;
       let curFen = null, analyzeTimer = null;
       const lines = new Map(); // multipv -> {scoreStr, pvUci:[], pvSan:[]}
+      let engineName = '-';
+      let lastNps = 0;
+      let multiPV = 3;
+      let depth = 16;
 
       function setState(txt){
         dlog('state ->', txt);
         try{ const s = $('#engineStateLive'); if(s) s.textContent = txt; }catch{}
       }
       function clearUI(){ try{ const el=$('#engineLines'); if(el) el.textContent=''; }catch{} }
+      function updateMeta(){
+        try{ const m=$('#engineMeta'); if(m) m.textContent = engineName; }catch{}
+        try{ const p=$('#enginePerf'); if(p){ const knps=Math.round(lastNps/1000); p.textContent = `${knps} kn/s`; } }catch{}
+        try{ const v=$('#mpVal'); if(v) v.textContent = String(multiPV); }catch{}
+      }
       function formatScore(line){
         const mMate=line.match(/score\s+mate\s+(-?\d+)/);
         if(mMate){ const n=parseInt(mMate[1],10); return (n>0?`#${n}`:`#-${Math.abs(n)}`); }
@@ -1533,7 +1558,7 @@
       }
       function updateUI(){
         const el=$('#engineLines'); if(!el) return;
-        const keys=[1,2,3];
+        const keys=Array.from({length: multiPV}, (_,i)=>i+1);
         const parts=[];
         for(const k of keys){
           const ln=lines.get(k); if(!ln) continue;
@@ -1575,6 +1600,12 @@
             return;
           }
 
+          // Capture engine identity
+          {
+            const m = line.match(/^id\s+name\s+(.+)$/i);
+            if(m){ engineName = m[1].trim(); updateMeta(); }
+          }
+
           if(line.startsWith('info')){
             if(!active) return;
             const m=line.match(/multipv\s+(\d+)/);
@@ -1584,6 +1615,9 @@
             const pvUci = pvIdx>=0 ? line.slice(pvIdx+4).trim().split(/\s+/) : [];
             const pvSan = curFen ? pvToSANs(curFen, pvUci) : pvUci;
             lines.set(idx, { scoreStr, pvUci, pvSan });
+
+            // nps tracking
+            try{ const mnps=line.match(/\bnps\s+(\d+)/); if(mnps){ lastNps = parseInt(mnps[1],10)||0; updateMeta(); } }catch{}
 
             // Draw the first PV arrow
             if(idx===1 && pvUci.length){
@@ -1646,8 +1680,8 @@
         dlog('post -> position fen', fen);
         sf.postMessage('position fen '+fen);
         dlog('post -> setoption Threads=1'); sf.postMessage('setoption name Threads value 1');
-        dlog('post -> setoption MultiPV=3'); sf.postMessage('setoption name MultiPV value 3');
-        dlog('post -> go depth 16'); sf.postMessage('go depth 16');
+        dlog('post -> setoption MultiPV='+multiPV); sf.postMessage('setoption name MultiPV value '+multiPV);
+        dlog('post -> go depth '+depth); sf.postMessage('go depth '+depth);
       }
 
       function analyzeDebounced(fen){
@@ -1661,6 +1695,7 @@
         active=true;
         setState('loading');
         dlog('enable');
+        updateMeta();
         const ok = ensure();
         if(ok && BOARD.current) analyzeDebounced(BOARD.current);
       }
@@ -1678,7 +1713,8 @@
       // Small debug surface for manual testing from DevTools
       function ping(){ try{ ensure(); sf && sf.postMessage('uci'); setTimeout(()=>sf && sf.postMessage('isready'), 250); }catch(e){ derr('ping failed', e);} }
       try{ window.EngineLiveDebug = { ping, ensure: ()=>ensure(), post:(s)=>sf && sf.postMessage(String(s)) }; }catch{}
-      return { enable, disable, analyzeDebounced };
+      function setMultiPV(n){ multiPV = Math.max(1, Math.min(10, parseInt(n,10)||1)); updateMeta(); try{ ensure(); if(ready) sf.postMessage('setoption name MultiPV value '+multiPV); if(active && curFen) analyzeDebounced(curFen); }catch{} }
+      return { enable, disable, analyzeDebounced, setMultiPV };
     })();
     async function analyzeOnServer(pgn, depth=12){
       const base=(window.SF_BACKEND_URL||'').replace(/\/$/,''); if(!base) throw new Error('SF_BACKEND_URL not set');
@@ -2107,6 +2143,7 @@
           BOARD.chess.loadFEN(nextFen); BOARD.current=nextFen;
           CB.main.orientation(ORIENT_WHITE_BOTTOM ? 'white' : 'black');
           CB.main.position(nextFen, true);
+          try{ if($('#engineToggle')?.checked) EngineLive.analyzeDebounced(nextFen); }catch{}
           try{ $('#sideToMove').textContent = BOARD.chess.turn()==='w'?'White':'Black'; }catch{}
           try{ const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent = `FEN: ${nextFen}`; }catch{}
           BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
@@ -2504,6 +2541,10 @@
       try{
         const tog=$('#engineToggle');
         tog && tog.addEventListener('change', ()=>{ if(tog.checked){ EngineLive.enable(); if(BOARD.current) EngineLive.analyzeDebounced(BOARD.current); } else { EngineLive.disable(); } });
+        // MultiPV stepper
+        const dec=$('#mpDec'), inc=$('#mpInc');
+        dec && dec.addEventListener('click', ()=>{ const v=parseInt($('#mpVal')?.textContent||'3',10)||3; EngineLive.setMultiPV(Math.max(1,v-1)); });
+        inc && inc.addEventListener('click', ()=>{ const v=parseInt($('#mpVal')?.textContent||'3',10)||3; EngineLive.setMultiPV(Math.min(10,v+1)); });
       }catch{}
     })();
 

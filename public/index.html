@@ -422,6 +422,7 @@
             <span style="margin-left:auto"></span>
             <button id="btnClearImports" class="ghost" title="Clear imported games & their mistakes">Clear imports</button>
             <button id="btnAnalyzeImported" class="btn-green" title="Analyse mistakes (server)">Analyse mistakes</button>
+            <button id="btnAnalyzeSettings" class="ghost" title="Analysis settings" style="padding:4px 8px">⚙</button>
           </div>
           <div style="max-height:220px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:6px">
             <table id="importTable" style="width:100%">
@@ -1815,7 +1816,8 @@
     async function analyzeOnBackend(pgns){
       const url=`${window.FN_BASE}/analyzePGNs`;
       const thr=getSev();
-      const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pgns,depth:12,thresholds:thr})});
+      const depth = parseInt(window.getAnalysisDepth?.()||12,10)||12;
+      const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pgns,depth,thresholds:thr})});
       if(!res.ok) throw new Error(`analyzePGNs failed ${res.status}`);
       const json=await res.json();
       return json.mistakes||[];
@@ -2027,10 +2029,11 @@
       function setMultiPV(n){ multiPV = Math.max(1, Math.min(10, parseInt(n,10)||1)); updateMeta(); try{ ensure(); if(ready) sf.postMessage('setoption name MultiPV value '+multiPV); if(active && curFen) analyzeDebounced(curFen); }catch{} }
       return { enable, disable, analyzeDebounced, setMultiPV };
     })();
-    async function analyzeOnServer(pgn, depth=12){
+    async function analyzeOnServer(pgn, depth){
       const base=(window.SF_BACKEND_URL||'').replace(/\/$/,''); if(!base) throw new Error('SF_BACKEND_URL not set');
       const url=`${base}/analyze`;
       const thr=getSev();
+      depth = parseInt(depth||window.getAnalysisDepth?.()||12,10)||12;
       const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pgn,depth,thresholds:thr})});
       if(!res.ok) throw new Error(`Stockfish backend error ${res.status}`);
       const data=await res.json(); const mistakes=data.mistakes||[];
@@ -2108,7 +2111,7 @@
         try{
           let ms=[];
           if(window.SF_BACKEND_URL){
-            try{ ms=await analyzeOnServer(pgn,12); }
+            try{ ms=await analyzeOnServer(pgn, window.getAnalysisDepth ? window.getAnalysisDepth() : 12); }
             catch(err){
               console.warn('Analyze via SF backend failed, falling back', err);
               if(window.FN_BASE){
@@ -2132,7 +2135,8 @@
             });
           }catch{}
 
-          ms = filterMistakesToUserOnly(ms);
+          // Apply user and severity filters
+          ms = filterMistakesToUserOnly(ms).filter(m => (window.includeSeverity ? window.includeSeverity(m.severity) : true));
           if(ms.length){
             for(const m of ms){
               all.push(m);
@@ -2171,14 +2175,16 @@
       const cl=ChessLite(); const seq=cl.loadPGN(pgn).filter(x=>x.san);
       const mistakes=[]; const cl2=ChessLite(); cl2.reset();
       const sideWanted = userSideForPGN(pgn);
+      const depth = parseInt(window.getAnalysisDepth?.()||12,10)||12;
       for(const mv of seq){
         const fenBefore=cl2.fen(); const sideToMove=cl2.turn();
-        const { cp:cpBefore, bestmove } = await Engine.analyze(fenBefore,12);
+        const { cp:cpBefore, bestmove } = await Engine.analyze(fenBefore, depth);
         const uci=cl2.parseSANtoMove(mv.san); if(!uci) continue;
         cl2.moveUci(uci); const fenAfter=cl2.fen();
-        const { cp:cpAfter } = await Engine.analyze(fenAfter,12);
+        const { cp:cpAfter } = await Engine.analyze(fenAfter, depth);
         const drop=Math.max(0, cpBefore + cpAfter); const sev=severityFromDrop(drop);
-        if(sev && sideWanted && sideToMove===sideWanted){
+        const include = (window.includeSeverity ? window.includeSeverity(sev) : true);
+        if(sev && include && sideWanted && sideToMove===sideWanted){
           const m = { id:uid(), fen:fenBefore, side:sideToMove, played:mv.san, best:bestmove, deltaCp:drop, severity:sev, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn };
           mistakes.push(m);
           try{ if(typeof onFound==='function') onFound(m); }catch{}
@@ -3193,6 +3199,118 @@
   </script>
 
   <script>
+    // Analysis settings modal
+    (function(){
+      const LS_DEPTH = 'pmtt_an_depth';
+      const LS_FLAGS = 'pmtt_sev_flags'; // {inacc:boolean, mistake:boolean, blunder:boolean}
+      const LS_SEV = 'pmtt_sev'; // thresholds object {inacc, mistake, blunder}
+
+      function loadDepth(){ try{ return Math.max(6, Math.min(40, parseInt(localStorage.getItem(LS_DEPTH)||'12',10)||12)); }catch{ return 12; } }
+      function saveDepth(n){ try{ localStorage.setItem(LS_DEPTH, String(Math.max(6, Math.min(40, parseInt(n,10)||12)))); }catch{} }
+      function loadFlags(){ try{ const o=JSON.parse(localStorage.getItem(LS_FLAGS)||'{}'); return { inacc: o.inacc!==false, mistake: o.mistake!==false, blunder: o.blunder!==false }; }catch{ return {inacc:true, mistake:true, blunder:true}; } }
+      function saveFlags(f){ try{ localStorage.setItem(LS_FLAGS, JSON.stringify({ inacc:!!f.inacc, mistake:!!f.mistake, blunder:!!f.blunder })); }catch{} }
+      function loadSev(){ try{ const d=JSON.parse(localStorage.getItem(LS_SEV)||'{}'); return { inacc: Number.isFinite(d.inacc)?d.inacc:50, mistake: Number.isFinite(d.mistake)?d.mistake:150, blunder: Number.isFinite(d.blunder)?d.blunder:300 }; }catch{ return {inacc:50, mistake:150, blunder:300}; } }
+      function saveSev(t){ try{ localStorage.setItem(LS_SEV, JSON.stringify({ inacc:Math.max(0,parseInt(t.inacc,10)||50), mistake:Math.max(0,parseInt(t.mistake,10)||150), blunder:Math.max(0,parseInt(t.blunder,10)||300) })); }catch{} }
+
+      function includeSeverity(sev){
+        try{
+          const f = loadFlags();
+          if(sev==='inaccuracy') return !!f.inacc;
+          if(sev==='mistake') return !!f.mistake;
+          if(sev==='blunder') return !!f.blunder;
+          return true;
+        }catch{ return true; }
+      }
+      window.includeSeverity = includeSeverity;
+
+      // Modal DOM
+      const modal = document.createElement('div');
+      modal.id = 'anSettingsModal';
+      modal.style.display = 'none';
+      modal.innerHTML = `
+        <div id="anSettingsBackdrop" style="position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(2px);z-index:50"></div>
+        <div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:51">
+          <div class="card" style="width:min(560px, 95vw); max-height:90vh; overflow:auto">
+            <div style="display:flex;align-items:center;gap:10px;justify-content:space-between">
+              <h2>Analysis Settings</h2>
+              <button id="anSettingsClose" class="ghost" title="Close">✕</button>
+            </div>
+            <div class="row" style="margin-top:8px">
+              <div style="max-width:140px">
+                <label>Depth</label>
+                <input id="anDepth" type="number" min="6" max="40" value="12" />
+              </div>
+              <div class="stroke" style="flex:1">
+                <div class="small"><b>Classify by centipawn loss</b></div>
+                <div class="grid-2" style="margin-top:6px; gap:10px">
+                  <div>
+                    <label>Inaccuracy ≥</label>
+                    <input id="sevInacc" type="number" min="0" step="1" value="50" />
+                  </div>
+                  <div>
+                    <label>Mistake ≥</label>
+                    <input id="sevMistake" type="number" min="0" step="1" value="150" />
+                  </div>
+                  <div>
+                    <label>Blunder ≥</label>
+                    <input id="sevBlunder" type="number" min="0" step="1" value="300" />
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="stroke" style="margin-top:10px">
+              <div class="small"><b>Include severities</b></div>
+              <div class="row" style="margin-top:6px">
+                <label style="display:flex;align-items:center;gap:6px"><input id="incInacc" type="checkbox" checked /> Inaccuracies</label>
+                <label style="display:flex;align-items:center;gap:6px"><input id="incMistake" type="checkbox" checked /> Mistakes</label>
+                <label style="display:flex;align-items:center;gap:6px"><input id="incBlunder" type="checkbox" checked /> Blunders</label>
+              </div>
+            </div>
+            <div class="row" style="margin-top:12px; justify-content:flex-end">
+              <button id="anSettingsReset" class="ghost">Reset</button>
+              <button id="anSettingsSave" class="secondary">Save</button>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+
+      function open(){
+        try{
+          document.getElementById('anDepth').value = String(loadDepth());
+          const t = loadSev();
+          document.getElementById('sevInacc').value = String(t.inacc);
+          document.getElementById('sevMistake').value = String(t.mistake);
+          document.getElementById('sevBlunder').value = String(t.blunder);
+          const f = loadFlags();
+          document.getElementById('incInacc').checked = !!f.inacc;
+          document.getElementById('incMistake').checked = !!f.mistake;
+          document.getElementById('incBlunder').checked = !!f.blunder;
+        }catch{}
+        modal.style.display = 'block';
+      }
+      function close(){ modal.style.display = 'none'; }
+      function reset(){ try{ localStorage.removeItem(LS_DEPTH); localStorage.removeItem(LS_FLAGS); localStorage.removeItem(LS_SEV); }catch{} open(); }
+      function save(){
+        const depth = parseInt(document.getElementById('anDepth').value,10)||12; saveDepth(depth);
+        const t = { inacc: parseInt(document.getElementById('sevInacc').value,10)||50,
+                    mistake: parseInt(document.getElementById('sevMistake').value,10)||150,
+                    blunder: parseInt(document.getElementById('sevBlunder').value,10)||300 };
+        saveSev(t);
+        const f = { inacc: !!document.getElementById('incInacc').checked,
+                    mistake: !!document.getElementById('incMistake').checked,
+                    blunder: !!document.getElementById('incBlunder').checked };
+        saveFlags(f);
+        close();
+      }
+      document.getElementById('btnAnalyzeSettings')?.addEventListener('click', open);
+      document.getElementById('anSettingsBackdrop')?.addEventListener('click', close);
+      document.getElementById('anSettingsClose')?.addEventListener('click', close);
+      document.getElementById('anSettingsReset')?.addEventListener('click', reset);
+      document.getElementById('anSettingsSave')?.addEventListener('click', save);
+
+      // Expose helpers used below
+      window.getAnalysisDepth = loadDepth;
+    })();
     // Simple SPA nav
     function showSection(which){
       const map = { home:'homeSection', analyze:'analyzeSection', stats:'statsSection', sets:'setsSection', train:'trainSection' };

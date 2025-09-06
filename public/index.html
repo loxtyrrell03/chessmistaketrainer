@@ -3282,6 +3282,7 @@
               <h2>Analysis Settings</h2>
               <button id="anSettingsClose" class="ghost" title="Close">✕</button>
             </div>
+            <div id="anSettingsCloud" class="tiny muted" style="margin-top:4px; display:flex; align-items:center; gap:8px">-</div>
             <div class="row" style="margin-top:8px">
               <div style="max-width:140px">
                 <label>Depth</label>
@@ -3336,16 +3337,25 @@
         }catch{}
       }
       let prefsListener=null;
+      function updateCloudStatus(){
+        try{
+          const el = document.getElementById('anSettingsCloud'); if(!el) return;
+          const u = (window.firebaseUser || null);
+          const signedIn = !!u && !u.isAnonymous;
+          const btn = '<button id="anSettingsSignIn" class="ghost small">' + (signedIn ? 'Switch account' : 'Sign in') + '</button>';
+          el.innerHTML = signedIn ? ('Cloud sync: ' + (u.email||u.displayName||'account') + ' ' + btn) : ('Cloud sync: signed out. ' + btn);
+          const b=document.getElementById('anSettingsSignIn'); if(b){ b.addEventListener('click', ()=>{ try{ document.getElementById('btnAuth')?.click(); }catch{} }); }
+        }catch{}
+      }
       function open(){
-        // Kick off auth to pull prefs in fresh contexts (incognito/new tab)
-        try{ if(window.firebaseAPI && !window.firebaseAPI.ready){ window.firebaseAPI.initAuth(); } }catch{}
         fillFromPrefs();
+        updateCloudStatus();
         // Update once remote prefs arrive
         try{
-          prefsListener = ()=>{ try{ fillFromPrefs(); }catch{} };
+          prefsListener = ()=>{ try{ fillFromPrefs(); updateCloudStatus(); }catch{} };
           window.addEventListener('firebase:prefsUpdated', prefsListener);
           // Safety: also refresh after a short delay
-          setTimeout(()=>{ try{ fillFromPrefs(); }catch{} }, 800);
+          setTimeout(()=>{ try{ fillFromPrefs(); updateCloudStatus(); }catch{} }, 800);
         }catch{}
         modal.style.display = 'block';
       }
@@ -3364,19 +3374,11 @@
                     mistake: !!document.getElementById('incMistake').checked,
                     blunder: !!document.getElementById('incBlunder').checked };
         saveFlags(f);
-        // Persist to unified prefs in Firestore as well
+        // Persist to unified prefs in Firestore as well (only if signed in)
         try{
           const payload = { analysisDepth: depth, analysisThresholds: t, analysisInclude: f };
           if(window.savePrefsLocal) window.savePrefsLocal(payload);
-          if(window.firebaseAPI){
-            try{ if(!window.firebaseAPI.ready){ window.firebaseAPI.initAuth(); } }catch{}
-            try{
-              if(window.firebaseAPI.savePrefs){
-                if(window.firebaseAPI.ready){ window.firebaseAPI.savePrefs(payload).catch(()=>{}); }
-                else { setTimeout(()=>{ try{ window.firebaseAPI.savePrefs(payload).catch(()=>{}); }catch{} }, 1000); }
-              }
-            }catch{}
-          }
+          if(window.firebaseAPI && window.firebaseAPI.ready && window.firebaseAPI.savePrefs){ window.firebaseAPI.savePrefs(payload).catch(()=>{}); }
         }catch{}
         close();
       }

@@ -2,6 +2,7 @@ import express from 'express';
 import { Chess } from 'chess.js';
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import os from 'node:os';
 
 // Severity thresholds (centipawns)
 const DEFAULT_THR = { inacc: 50, mistake: 150, blunder: 300 };
@@ -60,7 +61,21 @@ function startEngine() {
     for (const raw of lines) {
       const line = raw.trim();
       if (!line) continue;
-      if (line === 'uciok') { readyUci = true; send('isready'); continue; }
+      if (line === 'uciok') {
+        // Apply engine options before going ready
+        readyUci = true;
+        try {
+          const maxThreads = Math.max(1, Math.min(16, parseInt(process.env.STOCKFISH_THREADS || '0', 10) || (os.cpus()?.length || 1)));
+          const hashMb = Math.max(16, Math.min(4096, parseInt(process.env.STOCKFISH_HASH_MB || '0', 10) || 256));
+          send('setoption name Threads value ' + maxThreads);
+          send('setoption name Hash value ' + hashMb);
+          send('setoption name MultiPV value 1');
+          send('setoption name UCI_AnalyseMode value true');
+          send('setoption name Ponder value false');
+        } catch {}
+        send('isready');
+        continue;
+      }
       if (line === 'readyok') { readyOk = true; continue; }
       if (line.startsWith('info')) {
         const mMate = line.match(/score\s+mate\s+(-?\d+)/);
@@ -94,11 +109,14 @@ function startEngine() {
     }
   }
 
+  function newGame(){
+    try { send('ucinewgame'); } catch {}
+  }
+
   async function analyzeFen(fen, depth = 12) {
     await waitReady();
     lastScore = { cp: 0, mate: null };
     lastPV = [];
-    send('ucinewgame');
     send('position fen ' + fen);
     const p = new Promise((res) => resolvers.push(res));
     send('go depth ' + depth);
@@ -107,7 +125,7 @@ function startEngine() {
     return { cp, bestmove: out.bestmove, pv: out.pv };
   }
 
-  return { analyzeFen, kill: () => { try { eng.kill('SIGTERM'); } catch {} } };
+  return { analyzeFen, newGame, kill: () => { try { eng.kill('SIGTERM'); } catch {} } };
 }
 
 async function analyzePGNWithEngine(pgn, depth = 12, thr = DEFAULT_THR) {
@@ -118,6 +136,7 @@ async function analyzePGNWithEngine(pgn, depth = 12, thr = DEFAULT_THR) {
     const verboseMoves = chess.history({ verbose: true });
     const game = new Chess();
     const mistakes = [];
+    engine.newGame(); // reset TT once per game, then reuse across positions
     for (const mv of verboseMoves) {
       const fenBefore = game.fen();
       const side = game.turn(); // 'w' or 'b'
@@ -125,8 +144,15 @@ async function analyzePGNWithEngine(pgn, depth = 12, thr = DEFAULT_THR) {
       // apply the move
       game.move({ from: mv.from, to: mv.to, promotion: mv.promotion });
       const fenAfter = game.fen();
-      const { cp: cpAfter } = await engine.analyzeFen(fenAfter, depth);
-      const drop = Math.max(0, cpBefore + cpAfter);
+      // If the move played equals engine best move, we can infer zero drop and skip second search
+      const playedUci = (mv.from + mv.to + (mv.promotion ? mv.promotion.toLowerCase() : ''));
+      let drop = 0;
+      if (playedUci === bestmove) {
+        drop = 0;
+      } else {
+        const { cp: cpAfter } = await engine.analyzeFen(fenAfter, depth);
+        drop = Math.max(0, cpBefore + cpAfter);
+      }
       const sev = severityFromDrop(drop, thr);
       if (sev) {
         mistakes.push({

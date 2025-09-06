@@ -170,9 +170,17 @@ async function createEngine() {
   sf.postMessage("uci");
   const t0 = Date.now();
   while (!ready && Date.now()-t0 < 5000) await new Promise(r=>setTimeout(r,20));
+  // Apply analysis options once
+  try {
+    const hash = Math.max(16, Math.min(512, parseInt(String(process.env.WASM_HASH_MB||'64'),10) || 64));
+    sf.postMessage("setoption name Hash value "+hash);
+    sf.postMessage("setoption name MultiPV value 1");
+    sf.postMessage("setoption name UCI_AnalyseMode value true");
+    sf.postMessage("setoption name Ponder value false");
+  } catch {}
   return {
+    newGame(){ try{ sf.postMessage("ucinewgame"); }catch{} },
     async analyze(fen: string, depth = 12) {
-      sf.postMessage("ucinewgame");
       sf.postMessage("position fen "+fen);
       const p = new Promise<{ bestmove: string; score: typeof lastScore; pv: string[] }>(res=>resolvers.push(res));
       sf.postMessage("go depth "+depth);
@@ -216,6 +224,7 @@ export const analyzePGNs = onRequest({ timeoutSeconds: 300 }, async (req: Reques
       // Re-iterate from start to get sequence
       const game = new Chess();
       const moves = chess.history({ verbose: true });
+      try{ engine.newGame && engine.newGame(); }catch{}
       // Determine user's side from provided usernames and PGN headers
       let sideWanted: 'w'|'b'|null = null;
       if (usernames.length){
@@ -234,8 +243,15 @@ export const analyzePGNs = onRequest({ timeoutSeconds: 300 }, async (req: Reques
         // apply move
         game.move({ from: mv.from, to: mv.to, promotion: mv.promotion });
         const fenAfter = game.fen();
-        const { cp: cpAfter } = await engine.analyze(fenAfter, depth);
-        const drop = Math.max(0, cpBefore + cpAfter);
+        // Skip second search when the played move equals engine best move
+        const playedUci = (mv.from + mv.to + (mv.promotion ? String(mv.promotion).toLowerCase() : ''));
+        let drop = 0;
+        if (playedUci === bestmove) {
+          drop = 0;
+        } else {
+          const { cp: cpAfter } = await engine.analyze(fenAfter, depth);
+          drop = Math.max(0, cpBefore + cpAfter);
+        }
         const sev = severityFromDrop(drop, thr);
         if (sev) {
           mistakes.push({

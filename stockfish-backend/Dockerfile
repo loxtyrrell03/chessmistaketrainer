@@ -21,6 +21,10 @@ COPY server.js ./
 
 ENV NODE_ENV=production
 ENV STOCKFISH_PATH=/usr/games/stockfish
+## Engine tuning defaults for 2 vCPU / 4 GiB instances
+## Can be overridden via Cloud Run environment variables
+ENV STOCKFISH_THREADS=2
+ENV STOCKFISH_HASH_MB=2048
 ENV PORT=8080
 
 EXPOSE 8080

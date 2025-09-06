@@ -319,15 +319,8 @@
       <div class="card">
         <h2>1) Import Games</h2>
         <!-- Unified import controls -->
-        <div id="unifiedImportRow" class="row" style="margin-top:6px; align-items:flex-end">
-          <div style="max-width:280px; display:flex; gap:8px">
-            <label>&nbsp;</label>
-            <button id="btnImportUnified">Import</button>
-            <button id="btnImportSettings" class="secondary">Settings</button>
-          </div>
-        </div>
-        <!-- Settings (collapsible) -->
-        <div id="importSettingsBox" class="stroke tiny" style="display:none; margin-top:8px">
+        <!-- Settings (visible) -->
+        <div id="importSettingsBox" class="tiny" style="display:block; margin-top:8px">
           <div class="row" style="align-items:flex-end">
             <div>
               <label>Providers</label>
@@ -386,9 +379,7 @@
             </div>
           </div>
           <div class="tiny muted">Usernames and preferences are saved to your account.</div>
-          <div style="display:flex; justify-content:flex-end; margin-top:8px">
-            <button id="btnSaveImportSettings" class="secondary">Save settings</button>
-          </div>
+          <div style="display:flex; justify-content:flex-end; margin-top:8px"><button id="btnOpenPGN" class="ghost" style="margin-right:8px">Import PGN</button><button id="btnImportUnified">Import</button></div>
         </div>
         <div id="legacyLichessRow" class="row" style="margin-top:6px; display:none">
           <div>
@@ -418,18 +409,9 @@
             <button id="btnFetchChesscom">Fetch (Chess.com)</button>
           </div>
         </div>
-        <div style="margin-top:10px">
-          <label>Or paste PGN manually (one or more games)</label>
-          <textarea id="pgnInput" placeholder="[Event &quot;...&quot;] â€¦ moves â€¦"></textarea>
-          <div class="row" style="margin-top:8px">
-            <button id="btnImportPGN" class="ghost">Import PGN</button>
-          </div>
-        </div>
+        <!-- PGN area removed: now uses popup --></div>
 
-        <div class="stroke tiny" id="statusBox" style="margin-top:10px">
-          <b>Status:</b> <span id="status">Idle</span>
-          <span class="right" id="engineWrap" style="display:none"><span id="engineStateServer"></span></span>
-        </div>
+        <!-- Status panel removed; messages moved to Imported Games header -->
 
         <div class="stroke tiny" id="importedBox" style="margin-top:10px">
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -457,9 +439,7 @@
               </thead>
               <tbody id="importTBody"></tbody>
             </table>
-          </div>
-
-          <!-- Game Viewer with fully responsive board -->
+          </div>$insertion<!-- Game Viewer with fully responsive board -->
           <div id="gameViewer" class="stroke tiny" style="margin-top:10px; display:none">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               <b>Game Viewer</b>
@@ -1132,7 +1112,7 @@
     const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
     const uid = () => 'm_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
     function tsToDate(ts){ try{ const d=new Date(ts); return d.toLocaleDateString()+' '+d.toLocaleTimeString(); }catch{return '-';} }
-    function setStatus(msg){ const s=$('#status'); if(s) s.textContent = msg; }
+    function setStatus(msg){ try{ const h=document.getElementById("importHelp"); if(h) h.textContent=msg; }catch{} }
 
     /********************************************************************
      * Game viewer (Import page)
@@ -2811,14 +2791,7 @@
     $('#btnFetchChesscom').addEventListener('click', async () => {
       const u=$('#chesscomUser').value.trim(); if(!u) return alert('Enter a Chess.com username');
       try{ const n=parseInt($('#chesscomCount')?.value,10)||5; setStatus(`Fetching Chess.com games (N=${n})â€¦`); await fetchChesscom(u,n); setStatus('Idle'); }catch(e){ setStatus('Error: '+(e?.message||e)); }
-    });
-
-    $('#btnImportPGN').addEventListener('click', async () => {
-      const t=$('#pgnInput').value.trim(); if(!t) return alert('Paste one or more PGNs first.');
-      const parts=t.split(/\n(?=\[Event\s)/g).filter(s=>s.trim());
-      appendImportedGames(parts, 'Manual');
-      setStatus(`Imported ${parts.length} game(s). You can now press "Analyse mistakes".`);
-    });
+    });
 
     // Unified import controls
     $('#btnImportUnified')?.addEventListener('click', async () => { try{ const fn=(window.importUnified||importUnified); await fn(); }catch(e){ setStatus('Error: '+(e?.message||e)); } });
@@ -3115,6 +3088,14 @@
   </script>
 </body>
 </html>
+
+
+
+
+
+
+
+
 
 
 

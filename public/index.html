@@ -1227,7 +1227,23 @@
         const sets = loadSets().filter(x => x.id!==id); saveSets(sets);
         try{ if(fb()) fb().deleteSetRemote(id).catch(()=>{}); }catch{}
       }));
-      tb.querySelectorAll('button[data-act="train"]').forEach(btn => btn.addEventListener('click', () => {
+      async function ensureMistakesForSet(targetSet, timeoutMs){
+        function hasSome(){
+          const all = loadMistakes();
+          if(!all || !all.length) return false;
+          if(!targetSet || !targetSet.keys || !targetSet.keys.length) return all.length>0;
+          const ks = new Set(targetSet.keys);
+          return all.some(m => ks.has(keyOf(m)));
+        }
+        if(hasSome()) return;
+        await new Promise((res)=>{
+          let done=false; const onUpd=()=>{ if(!done && hasSome()){ done=true; try{ window.removeEventListener('firebase:mMistakesUpdated', onUpd); }catch{} res(); } };
+          try{ window.addEventListener('firebase:mMistakesUpdated', onUpd); }catch{}
+          setTimeout(()=>{ if(!done){ done=true; try{ window.removeEventListener('firebase:mMistakesUpdated', onUpd); }catch{} res(); } }, Math.max(500, timeoutMs||3000));
+        });
+      }
+
+      tb.querySelectorAll('button[data-act="train"]').forEach(btn => btn.addEventListener('click', async () => {
         const id = btn.getAttribute('data-id');
         const s = loadSets().find(x => x.id===id); if(!s) return;
         setActiveSet(s);
@@ -1235,6 +1251,8 @@
         showSection('train');
         enterTrainingMode();
         renderActiveSetInfo();
+        try{ const info=document.getElementById('mInfo'); if(info) info.textContent='Loading set…'; }catch{}
+        await ensureMistakesForSet(s, 5000);
         Session.startSRS();
       }));
       tb.querySelectorAll('input.setNameInput').forEach(inp => inp.addEventListener('change', () => {

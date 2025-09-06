@@ -434,6 +434,7 @@
                   <th>Res</th>
                   <th>Date</th>
                   <th>Source</th>
+                  <th>Analyse</th>
                 </tr>
               </thead>
               <tbody id="importTBody"></tbody>
@@ -452,10 +453,10 @@
               <b>Game Viewer</b>
               <span id="gvStatus" class="mono">-</span>
               <div style="margin-left:auto;display:flex;gap:6px">
-                <button id="gvStart" class="ghost" title="Start">? Start</button>
-                <button id="gvPrev" class="ghost" title="Prev">? Prev</button>
-                <button id="gvNext" class="ghost" title="Next">Next ?</button>
-                <button id="gvEnd" class="ghost" title="End">End ?</button>
+                <button id="gvStart" class="ghost" title="Start">«</button>
+                <button id="gvPrev" class="ghost" title="Prev">‹</button>
+                <button id="gvNext" class="ghost" title="Next">›</button>
+                <button id="gvEnd" class="ghost" title="End">»</button>
               </div>
             </div>
             <div class="board-mini" style="margin-top:8px">
@@ -937,8 +938,14 @@
             return;
           }
           const map = new Map();
-          for(const r of local){ if(r && r.pgn) map.set(r.pgn, r); }
-          for(const r of remote){ if(r && r.pgn) map.set(r.pgn, r); }
+          for(const r of local){ if(r && r.pgn){ if(typeof r.sel==='undefined') r.sel=true; map.set(r.pgn, r); } }
+          for(const r of remote){
+            if(r && r.pgn){
+              const prev = map.get(r.pgn);
+              const sel = prev && typeof prev.sel !== 'undefined' ? prev.sel : true;
+              map.set(r.pgn, {...r, sel});
+            }
+          }
           window.importedGames = Array.from(map.values());
         }catch{ window.importedGames = remote; }
         try{ window.dispatchEvent(new CustomEvent('firebase:importsUpdated')); }catch{}
@@ -1124,7 +1131,7 @@
     /********************************************************************
      * Game viewer (Import page)
      ********************************************************************/
-    const GAMEVIEW = { fens: [], idx: 0, total: 0, pgn: '' };
+    const GAMEVIEW = { fens: [], idx: 0, total: 0, pgn: '', whiteBottom: true };
     function gvHide(){ const el = $('#gameViewer'); if(el) el.style.display = 'none'; }
     function gvShow(){ const el = $('#gameViewer'); if(el) el.style.display = 'block'; }
     function gvUpdate(){
@@ -2057,7 +2064,7 @@
     }
 
     // NEW: keep a stacked list of imported games across sources
-    window.importedGames = window.importedGames || []; // [{pgn, source}]
+    window.importedGames = window.importedGames || []; // [{pgn, source, sel?:boolean}]
     function rebuildImportedTable(){
       const tb = $('#importTBody'); if(!tb) return;
       tb.innerHTML='';
@@ -2068,6 +2075,8 @@
         if(btn){ btn.textContent = 'Create set (0 mistakes)'; }
         if(info){ info.textContent = '-'; }
       }catch{}
+      // ensure selection defaults
+      try{ (window.importedGames||[]).forEach(r=>{ if(r && typeof r.sel==='undefined') r.sel = true; }); }catch{}
       const list = (window.importedGames||[]).slice().sort((a,b)=> pgnTimeMs(b.pgn) - pgnTimeMs(a.pgn));
       for(const rec of list){
         const pgn = rec.pgn; const source=rec.source||'Imported';
@@ -2079,7 +2088,8 @@
           <td>${h.Black||'-'}</td>
           <td>${h.Result||'-'}</td>
           <td>${h.Date||h.UTCDate||'-'}</td>
-          <td>${source}</td>`;
+          <td>${source}</td>
+          <td style="text-align:center"><input type="checkbox" class="impSel" data-pgn="${encodeURIComponent(pgn)}" ${rec.sel!==false?'checked':''} /></td>`;
         tr.style.cursor='pointer';
         tr.addEventListener('click', () => {
           Array.from(tb.querySelectorAll('tr')).forEach(r=>r.classList.remove('selected'));
@@ -2091,20 +2101,42 @@
             const mixed = cl.loadPGN(pgn);
             const fens = [startFen, ...mixed.filter(x=>x.san).map(x=>x.fenAfter)];
             GAMEVIEW.fens=fens; GAMEVIEW.idx=0; GAMEVIEW.total=fens.length-1; GAMEVIEW.pgn=pgn;
-            gvShow(); setTimeout(()=>{ drawBoardInto('gvBoard', fens[0], true); gvUpdate(); }, 0);
+            // Orient from user's perspective if possible
+            const side = userSideForPGN(pgn);
+            const wb = side ? (side==='w') : true;
+            GAMEVIEW.whiteBottom = wb;
+            gvShow(); setTimeout(()=>{ drawBoardInto('gvBoard', fens[0], wb); gvUpdate(); }, 0);
             setStatus('Game loaded in viewer.');
           }catch(e){ console.warn('viewer load failed', e); }
         });
         tb.appendChild(tr);
       }
+      // wire selection checkboxes
+      try{
+        tb.querySelectorAll('input.impSel').forEach(el=>{
+          el.addEventListener('click', (ev)=>{ ev.stopPropagation(); });
+          el.addEventListener('change', (ev)=>{
+            const key = decodeURIComponent(ev.target.getAttribute('data-pgn')||'');
+            const sel = !!ev.target.checked;
+            const arr = window.importedGames || [];
+            for(const r of arr){ if(r && r.pgn===key){ r.sel = sel; break; } }
+          });
+        });
+      }catch{}
       const help = $('#importHelp');
-      if(help) help.textContent = `${window.importedGames.length} game(s) listed. Click a row to preview.`;
+      if(help){
+        try{
+          const total = window.importedGames.length;
+          const chosen = (window.importedGames||[]).filter(r=>r && r.sel!==false).length;
+          help.textContent = `${total} game(s) listed · ${chosen} selected. Click a row to preview.`;
+        }catch{ help.textContent = `${window.importedGames.length} game(s) listed. Click a row to preview.`; }
+      }
     }
     function appendImportedGames(pgns, source){
       const set = new Set((window.importedGames||[]).map(r=>r.pgn));
       for(const p of (pgns||[])){
         if(!p || set.has(p)) continue;
-        window.importedGames.push({pgn:p, source:source||'Imported'});
+        window.importedGames.push({pgn:p, source:source||'Imported', sel:true});
       }
       try{ window._importsLocalBump = Date.now(); }catch{}
       try{ if(fb()) fb().appendImports(pgns, source).catch(()=>{}); }catch{}
@@ -2113,7 +2145,7 @@
 
     async function analyzeImportedWithBackendAbortable(state){
       const imported = window.importedGames || [];
-      const list = imported.map(x => x.pgn);
+      const list = imported.filter(x => x && x.sel!==false).map(x => x.pgn);
       if(!list.length){ alert('No imported games found. Import games first.'); return; }
       inferUsernames();
       const all=[];
@@ -2862,8 +2894,14 @@
       $('#statsBest').textContent = bestSan || m.best || '-';
       try{ const lbl=$('#statsDelta')?.parentElement?.querySelector('b'); if(lbl) lbl.textContent='centipawn loss:'; }catch{}
       $('#statsDelta').textContent = formatCentipawnLoss(m.deltaCp);
-      const whiteBottom = (m.side==='w');
-      drawBoardInto('statsBoard', m.fen, whiteBottom);
+      try{
+        const sideUser = userSideForPGN(m.pgn||'');
+        const whiteBottom = sideUser ? (sideUser==='w') : true;
+        drawBoardInto('statsBoard', m.fen, whiteBottom);
+      }catch{
+        const whiteBottom = (m.side==='w');
+        drawBoardInto('statsBoard', m.fen, whiteBottom);
+      }
     }
 
     /********************************************************************
@@ -2996,10 +3034,10 @@
     });
 
     // Game viewer controls
-    $('#gvPrev')?.addEventListener('click', () => { if(GAMEVIEW.idx>0){ GAMEVIEW.idx--; setTimeout(()=>{ drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); }, 0); } });
-    $('#gvNext')?.addEventListener('click', () => { if(GAMEVIEW.idx+1<GAMEVIEW.fens.length){ GAMEVIEW.idx++; setTimeout(()=>{ drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); }, 0); } });
-    $('#gvStart')?.addEventListener('click', () => { GAMEVIEW.idx=0; setTimeout(()=>{ drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); }, 0); });
-    $('#gvEnd')?.addEventListener('click', () => { GAMEVIEW.idx=Math.max(0,GAMEVIEW.fens.length-1); setTimeout(()=>{ drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); }, 0); });
+    $('#gvPrev')?.addEventListener('click', () => { if(GAMEVIEW.idx>0){ GAMEVIEW.idx--; setTimeout(()=>{ drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], GAMEVIEW.whiteBottom); gvUpdate(); }, 0); } });
+    $('#gvNext')?.addEventListener('click', () => { if(GAMEVIEW.idx+1<GAMEVIEW.fens.length){ GAMEVIEW.idx++; setTimeout(()=>{ drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], GAMEVIEW.whiteBottom); gvUpdate(); }, 0); } });
+    $('#gvStart')?.addEventListener('click', () => { GAMEVIEW.idx=0; setTimeout(()=>{ drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], GAMEVIEW.whiteBottom); gvUpdate(); }, 0); });
+    $('#gvEnd')?.addEventListener('click', () => { GAMEVIEW.idx=Math.max(0,GAMEVIEW.fens.length-1); setTimeout(()=>{ drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], GAMEVIEW.whiteBottom); gvUpdate(); }, 0); });
 
     /********************************************************************
      * Session start buttons
@@ -3426,16 +3464,37 @@
       document.body.appendChild(modal);
 
       function close(){ modal.style.display='none'; }
+      // Choose source mistakes: prefer LAST_ANALYZED; fallback to mistakes linked to current imports; else all mistakes
+      function getAddCandidates(){
+        try{
+          const la = (window.LAST_ANALYZED && Array.isArray(window.LAST_ANALYZED.mistakes)) ? window.LAST_ANALYZED.mistakes : [];
+          if(la.length) return la;
+          const all = (typeof loadMistakes==='function') ? loadMistakes() : [];
+          const imports = Array.isArray(window.importedGames) ? window.importedGames : [];
+          const importPgns = new Set(imports.map(r=>r && r.pgn).filter(Boolean));
+          const byImport = all.filter(m => m && m.pgn && importPgns.has(m.pgn));
+          if(byImport.length) return byImport;
+          return all;
+        }catch{ return []; }
+      }
       function open(){
-        const n = (window.LAST_ANALYZED && Array.isArray(window.LAST_ANALYZED.mistakes)) ? window.LAST_ANALYZED.mistakes.length : 0;
+        const cand = getAddCandidates();
+        const n = cand.length;
         const info = document.getElementById('atsInfo');
-        if(info) info.textContent = n ? `Last analysis: ${n} mistake(s) ready to add.` : 'No mistakes from the last analysis. Run Analyse mistakes first.';
+        if(info){
+          if(n){
+            const laCount = (window.LAST_ANALYZED && Array.isArray(window.LAST_ANALYZED.mistakes)) ? window.LAST_ANALYZED.mistakes.length : 0;
+            info.textContent = laCount ? `Last analysis: ${n} mistake(s) ready to add.` : `Using detected mistakes: ${n} item(s).`;
+          } else {
+            info.textContent = 'No mistakes available. Run Analyse mistakes first.';
+          }
+        }
         const tb = document.getElementById('atsTBody'); if(tb) tb.innerHTML='';
         const sets = loadSetsLocal();
         if(!sets.length){
           const tr=document.createElement('tr'); tr.innerHTML='<td colspan="3" class="tiny muted">No sets found. Create a set first.</td>'; tb && tb.appendChild(tr);
         } else {
-          const newKeys = new Set(((window.LAST_ANALYZED && Array.isArray(window.LAST_ANALYZED.mistakes)) ? window.LAST_ANALYZED.mistakes : []).map(keyOf));
+          const newKeys = new Set(cand.map(keyOf));
           for(const s of sets){
             const existing = new Set((s.keys||[]));
             let addCount=0; for(const k of newKeys){ if(!existing.has(k)) addCount++; }

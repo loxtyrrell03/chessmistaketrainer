@@ -1185,7 +1185,94 @@
     /********************************************************************
      * Sets (de-duped)
      ********************************************************************/
+    // Key helpers: tolerate historical variations (SAN vs UCI stored in sets/records)
+    const UCI_RE = /^[a-h][1-8][a-h][1-8][qrbn]?$/i;
+    const isUci = (s) => !!(s && UCI_RE.test(String(s)));
+    function normFenKey(fen){
+      try{
+        const toks = String(fen||'').trim().split(/\s+/);
+        return [toks[0]||'', toks[1]||'', toks[2]||'', (toks[3]||'-')].join(' ');
+      }catch{ return fen||''; }
+    }
+    function sanitizeSANKey(s){
+      try{
+        let out = String(s||'').trim();
+        out = out.replace(/[\u00D7×]/g,'x');       // unicode times -> x
+        out = out.replace(/[+#]/g,'');              // drop check/mate marks
+        out = out.replace(/!!|\?\?|!\?|\?!/g,'');// drop NAG-like
+        out = out.replace(/e\.p\./gi,'');         // drop en passant marker
+        out = out.replace(/\s+/g,'');              // drop spaces
+        // Normalize castling digits to letter O
+        if(/^0-0-0$/i.test(out)) out = 'O-O-O';
+        else if(/^0-0$/i.test(out)) out = 'O-O';
+        return out;
+      }catch{ return String(s||''); }
+    }
     const keyOf = (m) => (m.fen + '|' + m.played);
+    function keysForMistake(m){
+      try{
+        const fen = m?.fen || '';
+        const nfen = normFenKey(fen);
+        const played = m?.played || '';
+        const out = new Set();
+        const add = (f,k)=>{ if(f && k) out.add(f + '|' + k); };
+        // As-is and sanitized SAN
+        add(fen, played);
+        add(nfen, played);
+        const sp = sanitizeSANKey(played);
+        if(sp && sp!==played){ add(fen, sp); add(nfen, sp); }
+        // Convert between SAN/ UCI for robust matching
+        if(isUci(played)){
+          try{
+            const san = uciToSAN(fen, played);
+            add(fen, san); add(nfen, san);
+            const ss = sanitizeSANKey(san); if(ss && ss!==san){ add(fen, ss); add(nfen, ss); }
+          }catch{}
+        }else{
+          try{
+            const cl = ChessLite(); cl.loadFEN(fen);
+            const uci = cl.parseSANtoMove(sp||played);
+            if(uci){ add(fen, uci); add(nfen, uci); }
+          }catch{}
+        }
+        return Array.from(out.values());
+      }catch{ return [keyOf(m)]; }
+    }
+    function expandKeys(keys){
+      const out = new Set();
+      try{
+        for(const k of (keys||[])){
+          if(!k || typeof k !== 'string'){ continue; }
+          out.add(k);
+          const bar = k.indexOf('|');
+          if(bar>0){
+            const fen = k.slice(0, bar);
+            const nfen = normFenKey(fen);
+            const mv0 = k.slice(bar+1);
+            const mv = mv0;
+            const sp = sanitizeSANKey(mv);
+            const add = (f,move)=>{ if(f && move) out.add(f + '|' + move); };
+            // base + normalized-fen variants
+            add(nfen, mv);
+            if(sp && sp!==mv){ add(fen, sp); add(nfen, sp); }
+            if(isUci(mv)){
+              try{
+                const san = uciToSAN(fen, mv);
+                add(fen, san); add(nfen, san);
+                const ss = sanitizeSANKey(san); if(ss && ss!==san){ add(fen, ss); add(nfen, ss); }
+              }catch{}
+            }else{
+              try{
+                const cl = ChessLite(); cl.loadFEN(fen);
+                const uci = cl.parseSANtoMove(sp||mv);
+                if(uci){ add(fen, uci); add(nfen, uci); }
+              }catch{}
+            }
+          }
+        }
+      }catch{}
+      return out;
+    }
     function loadSets(){ try{ return JSON.parse(localStorage.getItem(LS_SETS)||'[]'); }catch{return [];} }
     function saveSets(arr){
       localStorage.setItem(LS_SETS, JSON.stringify(arr));
@@ -1252,7 +1339,7 @@
         enterTrainingMode();
         renderActiveSetInfo();
         try{ const info=document.getElementById('mInfo'); if(info) info.textContent='Loading set…'; }catch{}
-        await ensureMistakesForSet(s, 5000);
+        await ensureMistakesForSet(s, 10000);
         Session.startSRS();
       }));
       tb.querySelectorAll('input.setNameInput').forEach(inp => inp.addEventListener('change', () => {
@@ -1261,7 +1348,11 @@
       }));
     }
     let ACTIVE_SET = null; let ACTIVE_SET_KEYS = new Set();
-    function setActiveSet(s){ ACTIVE_SET = s; ACTIVE_SET_KEYS = new Set((s&&s.keys)||[]); setStatus(`Active set: ${s?.name||'-'}`); }
+    function setActiveSet(s){
+      ACTIVE_SET = s;
+      ACTIVE_SET_KEYS = expandKeys((s&&s.keys)||[]);
+      setStatus(`Active set: ${s?.name||'-'}`);
+    }
     function renderActiveSetInfo(){ const el = $('#activeSetInfo'); if(el) el.textContent = `Active set: ${ACTIVE_SET?ACTIVE_SET.name:'â€”'}`; }
 
     function renderSetsForTrain(){
@@ -2231,7 +2322,13 @@
 
     function pickDueSRS(){
       let list = loadMistakes();
-      if(ACTIVE_SET_KEYS && ACTIVE_SET_KEYS.size){ list = list.filter(m => ACTIVE_SET_KEYS.has(keyOf(m))); }
+      if(ACTIVE_SET_KEYS && ACTIVE_SET_KEYS.size){
+        list = list.filter(m => {
+          const ks = keysForMistake(m);
+          for(const k of ks){ if(ACTIVE_SET_KEYS.has(k)) return true; }
+          return false;
+        });
+      }
       const now = nowTs(); return list.filter(m => (m.nextReview||0) <= now);
     }
 
@@ -2249,7 +2346,13 @@
 
       function startWoodpecker(N){
         let list = loadMistakes().slice();
-        if(ACTIVE_SET_KEYS && ACTIVE_SET_KEYS.size){ list = list.filter(m => ACTIVE_SET_KEYS.has(keyOf(m))); }
+        if(ACTIVE_SET_KEYS && ACTIVE_SET_KEYS.size){
+          list = list.filter(m => {
+            const ks = keysForMistake(m);
+            for(const k of ks){ if(ACTIVE_SET_KEYS.has(k)) return true; }
+            return false;
+          });
+        }
         list.sort((a,b) => {
           const rank = s => s==='blunder'?3 : s==='mistake'?2 : s==='inaccuracy'?1 : 0;
           const d = rank(b.severity) - rank(a.severity); if(d) return d;
@@ -2683,9 +2786,13 @@
       tb.innerHTML='';
       const sets = loadSets(); const target = sets.find(s=>s.id===STATS_SELECTED_SET_ID);
       if(!target){ STATS_CURRENT_LIST=[]; $('#statsTotal') && ($('#statsTotal').textContent='0'); $('#statsDue') && ($('#statsDue').textContent='0'); return; }
-      const keySet = new Set(target.keys||[]);
+      const keySet = expandKeys(target.keys||[]);
       const all=filterMistakesToUserOnly(loadMistakes());
-      const list=all.filter(m => keySet.has(keyOf(m)));
+      const list=all.filter(m => {
+        const ks = keysForMistake(m);
+        for(const k of ks){ if(keySet.has(k)) return true; }
+        return false;
+      });
       STATS_CURRENT_LIST = list;
       list.forEach((m,i)=>{
         const bestSan = m.best ? uciToSAN(m.fen, m.best) : '-';
@@ -2701,7 +2808,11 @@
         tr.addEventListener('click', ()=>{ loadMistakeOnStatsBoard(m); });
         tb.appendChild(tr);
       });
-      const due = pickDueSRS().filter(m => keySet.has(keyOf(m))).length;
+      const due = pickDueSRS().filter(m => {
+        const ks = keysForMistake(m);
+        for(const k of ks){ if(keySet.has(k)) return true; }
+        return false;
+      }).length;
       const totalEl=$('#statsTotal'); if(totalEl) totalEl.textContent=list.length;
       const dueEl=$('#statsDue'); if(dueEl) dueEl.textContent=due;
     }

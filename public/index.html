@@ -7,9 +7,9 @@
   <!--
     Personal Chess Mistake Trainer (single-file app)
 
-    ✅ Single HTML file: all HTML, CSS, and JS are inline (one file only).
-    ✅ Works offline once loaded (except for fetching online games).
-    ✅ No frameworks used.
+    ? Single HTML file: all HTML, CSS, and JS are inline (one file only).
+    ? Works offline once loaded (except for fetching online games).
+    ? No frameworks used.
 
     This build addresses your latest requests:
       • Board-size slider works even in fullscreen (width uses min(100%, var(--board-size))).
@@ -119,6 +119,10 @@
     }
     input[type="range"]{padding:6px 8px}
     textarea{min-height:120px;resize:vertical}
+    /* Input with prefix (e.g., 'chess.com/' inside the field) */
+    .input-prefix{display:flex;align-items:center;background:#11141a;border:1px solid #2a3142;color:var(--text);border-radius:10px}
+    .input-prefix .prefix{padding:10px 10px;color:var(--muted);border-right:1px solid #2a3142;white-space:nowrap}
+    .input-prefix input{flex:1;background:transparent;border:0;color:var(--text);padding:10px 12px;outline:none}
 
     button{
       appearance:none;border:0;background:var(--acc);color:white;
@@ -249,7 +253,7 @@
 <body>
   <div class="topnav">
     <div class="navwrap">
-      <div style="font-weight:700;color:#e6edf3">♟️ PMT</div>
+      <div style="font-weight:700;color:#e6edf3">?? PMT</div>
       <a href="#" data-sec="home" id="navHome" class="active">Home</a>
       <a href="#" data-sec="analyze" id="navAnalyze">Import</a>
       <a href="#" data-sec="stats" id="navStats">Stats</a>
@@ -267,7 +271,7 @@
     <div class="card" style="position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(92%,640px);z-index:51;padding:20px 22px 18px;border-radius:14px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
         <div style="font-size:1.25rem;font-weight:700">Welcome back</div>
-        <button id="authClose" class="ghost" style="padding:6px 10px">✕</button>
+        <button id="authClose" class="ghost" style="padding:6px 10px">?</button>
       </div>
       <div class="muted" style="margin-bottom:12px">Sign in to sync your data across devices.</div>
       <div style="display:flex;flex-direction:column;gap:10px">
@@ -293,7 +297,7 @@
   <!-- Home -->
   <div class="wrap section active" id="homeSection">
     <h1>Welcome to Personal Chess Mistake Trainer</h1>
-    <p class="muted small">Import games from Lichess/Chess.com, extract mistakes with Stockfish, and train them using Woodpecker or SM‑2 spaced repetition.</p>
+    <p class="muted small">Import games from Lichess/Chess.com, extract mistakes with Stockfish, and train them using Woodpecker or SM-2 spaced repetition.</p>
     <div class="card" style="margin-top:12px">
       <h2>Get Started</h2>
       <ul>
@@ -308,13 +312,82 @@
   <!-- Import -->
   <div class="wrap section" id="analyzeSection">
     <h1>Import games & prepare analysis</h1>
-    <p class="muted small">Import games → then press <b>Analyse mistakes</b> to run Stockfish (server) and extract mistakes. All data stays in your browser (plus Firestore sync).</p>
+    <p class="muted small">Import games ? then press <b>Analyse mistakes</b> to run Stockfish (server) and extract mistakes. All data stays in your browser (plus Firestore sync).</p>
 
     <div class="grid" style="margin-top:14px">
       <!-- LEFT COLUMN -->
       <div class="card">
         <h2>1) Import Games</h2>
-        <div class="row" style="margin-top:6px">
+        <!-- Unified import controls -->
+        <div id="unifiedImportRow" class="row" style="margin-top:6px; align-items:flex-end">
+          <div style="max-width:280px; display:flex; gap:8px">
+            <label>&nbsp;</label>
+            <button id="btnImportUnified">Import</button>
+            <button id="btnImportSettings" class="secondary">Settings</button>
+          </div>
+        </div>
+        <!-- Settings (collapsible) -->
+        <div id="importSettingsBox" class="stroke tiny" style="display:none; margin-top:8px">
+          <div class="row" style="align-items:flex-end">
+            <div>
+              <label>Providers</label>
+              <div class="row" style="gap:10px">
+                <label class="tiny"><input type="checkbox" id="provLichess" checked> Lichess</label>
+                <label class="tiny"><input type="checkbox" id="provChesscom" checked> Chess.com</label>
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <div>
+              <label>Mode</label>
+              <div>
+                <label class="tiny"><input type="radio" name="importMode" id="modeCount" checked> By count</label>
+                <label class="tiny" style="margin-left:10px"><input type="radio" name="importMode" id="modeTime"> By time period</label>
+              </div>
+            </div>
+            <div id="countWrap2" style="max-width:140px">
+              <label>Count</label>
+              <input id="importCount2" type="number" min="1" max="100" value="10" />
+            </div>
+            <div id="periodWrap" style="display:none; max-width:220px">
+              <label>Period</label>
+              <select id="importPeriod">
+                <option value="7d">Last 7 days</option>
+                <option value="30d" selected>Last 30 days</option>
+                <option value="90d">Last 90 days</option>
+                <option value="thisMonth">This month</option>
+                <option value="lastMonth">Last month</option>
+              </select>
+            </div>
+          </div>
+          <div class="row" style="margin-top:8px; flex-direction:column; align-items:stretch; gap:8px">
+            <div>
+              <label>Link Chess.com username</label>
+              <div style="display:flex; gap:8px; align-items:center">
+                <div class="input-prefix" style="flex:1">
+                  <span class="prefix">chess.com/</span>
+                  <input id="accChessCom" type="text" placeholder="username" />
+                </div>
+                <button id="btnLinkChessCom" class="ghost">Link</button>
+              </div>
+            </div>
+            <div>
+              <label>Link Lichess username</label>
+              <div style="display:flex; gap:8px; align-items:center">
+                <div class="input-prefix" style="flex:1">
+                  <span class="prefix">lichess.org/</span>
+                  <input id="accLichess" type="text" placeholder="username" />
+                </div>
+                <button id="btnLinkLichess" class="ghost">Link</button>
+              </div>
+            </div>
+          </div>
+          <div class="tiny muted">Usernames and preferences are saved to your account.</div>
+          <div style="display:flex; justify-content:flex-end; margin-top:8px">
+            <button id="btnSaveImportSettings" class="secondary">Save settings</button>
+          </div>
+        </div>
+        <div id="legacyLichessRow" class="row" style="margin-top:6px; display:none">
           <div>
             <label>Lichess username</label>
             <input id="lichessUser" type="text" placeholder="e.g., lox123" />
@@ -328,7 +401,7 @@
             <button id="btnFetchLichess">Fetch (Lichess)</button>
           </div>
         </div>
-        <div class="row">
+        <div id="legacyChesscomRow" class="row" style="display:none">
           <div>
             <label>Chess.com username</label>
             <input id="chesscomUser" type="text" placeholder="e.g., lox123" />
@@ -389,10 +462,10 @@
               <b>Game Viewer</b>
               <span id="gvStatus" class="mono">-</span>
               <div style="margin-left:auto;display:flex;gap:6px">
-                <button id="gvStart" class="ghost" title="Start">⏮ Start</button>
-                <button id="gvPrev" class="ghost" title="Prev">◀ Prev</button>
-                <button id="gvNext" class="ghost" title="Next">Next ▶</button>
-                <button id="gvEnd" class="ghost" title="End">End ⏭</button>
+                <button id="gvStart" class="ghost" title="Start">? Start</button>
+                <button id="gvPrev" class="ghost" title="Prev">? Prev</button>
+                <button id="gvNext" class="ghost" title="Next">Next ?</button>
+                <button id="gvEnd" class="ghost" title="End">End ?</button>
               </div>
             </div>
             <div class="board-mini" style="margin-top:8px">
@@ -461,7 +534,7 @@
                 <th>Side</th>
                 <th>Played</th>
                 <th>Best</th>
-                <th>Δcp</th>
+                <th>?cp</th>
                 <th>Next review</th>
               </tr>
             </thead>
@@ -481,7 +554,7 @@
           <div class="tiny mono" id="statsMInfo">-</div>
           <div class="tiny"><b>Side to move:</b> <span id="statsSideToMove">-</span></div>
           <div class="tiny"><b>Best:</b> <span id="statsBest">-</span></div>
-          <div class="tiny"><b>Δcp:</b> <span id="statsDelta">-</span></div>
+          <div class="tiny"><b>?cp:</b> <span id="statsDelta">-</span></div>
         </div>
 
         <hr style="border:none;border-top:1px solid #242a39;margin:16px 0">
@@ -533,8 +606,8 @@
           <div style="flex:1;min-width:260px">
             <div class="legend tiny">
               <span>Drag to move</span>
-              <span>✔️ correct = best move</span>
-              <span>❌ otherwise</span>
+              <span>?? correct = best move</span>
+              <span>? otherwise</span>
             </div>
             <div class="stroke" style="margin-top:10px">
               <div class="small"><b>Current Mistake</b></div>
@@ -795,6 +868,11 @@
         const batch = writeBatch(db);
         snap.forEach(d => batch.delete(doc(iCol, d.id)));
         await batch.commit();
+      },
+      async savePrefs(p){
+        if(!api.user || !p) return;
+        const ref = doc(db, 'users', api.user.uid, 'prefs', 'app');
+        const b = writeBatch(db); b.set(ref, p, { merge:true }); await b.commit();
       }
     };
 
@@ -875,6 +953,16 @@
         }catch{ window.importedGames = remote; }
         try{ window.dispatchEvent(new CustomEvent('firebase:importsUpdated')); }catch{}
       });
+      
+      // live sync prefs -> local
+      try{
+        const pRef = doc(db, 'users', user.uid, 'prefs', 'app');
+        api._unsubs.prefs = onSnapshot(pRef, (snap)=>{
+          const d = (snap && snap.data && snap.data()) ? snap.data() : {};
+          try{ localStorage.setItem('pmtt_prefs', JSON.stringify(d)); }catch{}
+          try{ window.dispatchEvent(new CustomEvent('firebase:prefsUpdated')); }catch{}
+        });
+      }catch{}
     });
   </script>
 
@@ -1890,7 +1978,7 @@
             const mixed = cl.loadPGN(pgn);
             const fens = [startFen, ...mixed.filter(x=>x.san).map(x=>x.fenAfter)];
             GAMEVIEW.fens=fens; GAMEVIEW.idx=0; GAMEVIEW.total=fens.length-1; GAMEVIEW.pgn=pgn;
-            gvShow(); drawBoardInto('gvBoard', fens[0], true); gvUpdate();
+            gvShow(); setTimeout(()=>{ drawBoardInto('gvBoard', fens[0], true); gvUpdate(); }, 0);
             setStatus('Game loaded in viewer.');
           }catch(e){ console.warn('viewer load failed', e); }
         });
@@ -1947,7 +2035,6 @@
             });
           }catch{}
 
-          // user-only
           ms = filterMistakesToUserOnly(ms);
           if(ms.length){
             for(const m of ms){
@@ -2031,8 +2118,81 @@
       games.sort((a,b)=>((b.end_time||0)-(a.end_time||0)));
       games = games.slice(0, n);
       const out=games.map(g=>g.pgn);
-      appendImportedGames(out,'Chess.com'); return out;
+  appendImportedGames(out,'Chess.com'); return out;
+}
+
+  /********************************************************************
+   * Unified Import UI logic
+   ********************************************************************/
+  function getPrefs(){ try{ return JSON.parse(localStorage.getItem('pmtt_prefs')||'{}'); }catch{return {}} }
+  function savePrefsLocal(p){ try{ const cur=getPrefs(); localStorage.setItem('pmtt_prefs', JSON.stringify({...cur, ...p})); }catch{} }
+  function applyPrefsToUI(){
+    try{
+      const p=getPrefs();
+      if($('#provLichess')) $('#provLichess').checked = (p.provLichess!==false);
+      if($('#provChesscom')) $('#provChesscom').checked = (p.provChesscom!==false);
+      if($('#modeTime')) $('#modeTime').checked = (p.importMode==='time');
+      if($('#modeCount')) $('#modeCount').checked = (p.importMode!=='time');
+      if($('#importCount')) $('#importCount').value = String(p.importCount||10);
+      if($('#importCount2')) $('#importCount2').value = String(p.importCount||10);
+      if($('#importPeriod')) $('#importPeriod').value = p.importPeriod||'30d';
+      if($('#accLichess')) $('#accLichess').value = p.lichessUser||'';
+      if($('#accChessCom')) $('#accChessCom').value = p.chesscomUser||'';
+      if($('#lichessUser')) $('#lichessUser').value = p.lichessUser||'';
+      if($('#chesscomUser')) $('#chesscomUser').value = p.chesscomUser||'';
+      if($('#modeTime') && $('#modeTime').checked){ $('#periodWrap').style.display='block'; $('#countWrap2').style.display='none'; }
+      else { if($('#periodWrap')) $('#periodWrap').style.display='none'; if($('#countWrap2')) $('#countWrap2').style.display='block'; }
+    }catch{}
+  }
+  try{ window.getPrefs = getPrefs; window.savePrefsLocal = savePrefsLocal; window.applyPrefsToUI = applyPrefsToUI; }catch{}
+
+  function periodSinceMs(val){
+    const now=new Date();
+    const startOfMonth=(d)=>{ const x=new Date(d.getFullYear(), d.getMonth(), 1, 0,0,0); return x.getTime(); };
+    const startOfPrevMonth=(d)=>{ const x=new Date(d.getFullYear(), d.getMonth()-1, 1, 0,0,0); return x.getTime(); };
+    if(val==='7d') return Date.now()-7*24*3600*1000;
+    if(val==='30d') return Date.now()-30*24*3600*1000;
+    if(val==='90d') return Date.now()-90*24*3600*1000;
+    if(val==='thisMonth') return startOfMonth(now);
+    if(val==='lastMonth') return startOfPrevMonth(now);
+    return Date.now()-30*24*3600*1000;
+  }
+
+  async function importUnified(){
+    const provL = !!($('#provLichess') && $('#provLichess').checked);
+    const provC = !!($('#provChesscom') && $('#provChesscom').checked);
+    if(!provL && !provC){ alert('Select at least one provider'); return; }
+    const modeTime = !!($('#modeTime') && $('#modeTime').checked);
+    const count = parseInt($('#importCount')?.value||$('#importCount2')?.value||'10',10)||10;
+    const period = $('#importPeriod')?.value || '30d';
+    const lichUser = ($('#accLichess')?.value||$('#lichessUser')?.value||'').trim();
+    const chessUser = ($('#accChessCom')?.value||$('#chesscomUser')?.value||'').trim();
+    const prefs = { provLichess:provL, provChesscom:provC, importMode: modeTime?'time':'count', importCount:count, importPeriod:period, lichessUser:lichUser, chesscomUser:chessUser };
+    try { (window.savePrefsLocal||savePrefsLocal)(prefs); } catch {}
+    try{ if(fb()) fb().savePrefs(prefs).catch(()=>{}); }catch{}
+    if(provL && !lichUser){ alert('Enter your Lichess username in Settings'); return; }
+    if(provC && !chessUser){ alert('Enter your Chess.com username in Settings'); return; }
+
+    setStatus('Fetching games…');
+    const want = modeTime ? 120 : Math.max(20, count*3);
+    const jobs = [];
+    if(provL) jobs.push(fetchLichess(lichUser, want).then(arr=>arr.map(p=>({pgn:p, src:'Lichess'}))).catch(()=>[]));
+    if(provC) jobs.push(fetchChesscom(chessUser, want).then(arr=>arr.map(p=>({pgn:p, src:'Chess.com'}))).catch(()=>[]));
+    const results = (await Promise.all(jobs)).flat();
+    const withTs = results.map(r=>({ ...r, ms: pgnTimeMs(r.pgn) || 0 }));
+    let chosen=[];
+    if(modeTime){
+      const since = periodSinceMs(period);
+      chosen = withTs.filter(r=>r.ms>=since).sort((a,b)=>b.ms-a.ms);
+    } else {
+      chosen = withTs.sort((a,b)=>b.ms-a.ms).slice(0, count);
     }
+    const gL=[], gC=[]; for(const r of chosen){ if(r.src==='Lichess') gL.push(r.pgn); else if(r.src==='Chess.com') gC.push(r.pgn); }
+    if(gL.length) appendImportedGames(gL,'Lichess');
+    if(gC.length) appendImportedGames(gC,'Chess.com');
+    setStatus('Idle');
+  }
+  try{ window.importUnified = importUnified; }catch{}
 
     /********************************************************************
      * Trainer session + SM-2
@@ -2083,8 +2243,8 @@
         BOARD.arrows.user = null; BOARD.arrows.best = null; BOARD.arrows.showBest=false; renderArrows();
         try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
         if(queue.length===0){
-          if(mode==='srs'){ queue = pickDueSRS(); if(queue.length===0){ $('#mInfo').textContent='No SRS items due now. 🎉'; active=null; drawBoardMain(null); return; } }
-          else { $('#mInfo').textContent='Woodpecker set complete. ✅'; active=null; drawBoardMain(null); return; }
+          if(mode==='srs'){ queue = pickDueSRS(); if(queue.length===0){ $('#mInfo').textContent='No SRS items due now. ??'; active=null; drawBoardMain(null); return; } }
+          else { $('#mInfo').textContent='Woodpecker set complete. ?'; active=null; drawBoardMain(null); return; }
         }
         active = queue.shift(); pendingFirstTry=true; loadMistakeOnBoard(active);
       }
@@ -2102,14 +2262,14 @@
         if(mv.ok){ drawBoardMain(tmp.fen()); }
 
         if(correct){
-          $('#feedback').innerHTML = '✔️ Correct (best move)';
+          $('#feedback').innerHTML = '?? Correct (best move)';
           const list = loadMistakes(); const idx=list.findIndex(m=>m.id===active.id);
           if(idx>=0){ const q=(mode==='srs') ? (pendingFirstTry?5:3) : (pendingFirstTry?5:4); sm2Update(list[idx], q); saveMistakes(list); }
           logAttempt(active.id, true, moveUci);
           // DO NOT auto-advance; user presses Next
         }else{
           const bestSan = uciToSAN(active.fen, active.best);
-          $('#feedback').innerHTML = `❌ Not the best. <span class="mono">Best = ${bestSan || active.best}</span>`;
+          $('#feedback').innerHTML = `? Not the best. <span class="mono">Best = ${bestSan || active.best}</span>`;
           logAttempt(active.id, false, moveUci);
           pendingFirstTry=false;
           if(mode==='woodpecker') queue.push(active);
@@ -2123,8 +2283,8 @@
      ********************************************************************/
     const VS15 = '\uFE0E'; // force text (non-emoji) glyphs
     const PIECES = {
-      'P':'♙'+VS15,'N':'♘'+VS15,'B':'♗'+VS15,'R':'♖'+VS15,'Q':'♕'+VS15,'K':'♔'+VS15,
-      'p':'♟'+VS15,'n':'♞'+VS15,'b':'♝'+VS15,'r':'♜'+VS15,'q':'♛'+VS15,'k':'♚'+VS15
+      'P':'?'+VS15,'N':'?'+VS15,'B':'?'+VS15,'R':'?'+VS15,'Q':'?'+VS15,'K':'?'+VS15,
+      'p':'?'+VS15,'n':'?'+VS15,'b':'?'+VS15,'r':'?'+VS15,'q':'?'+VS15,'k':'?'+VS15
     };
     const BOARD = { current:null, selected:null, highlights:new Set(), chess:ChessLite(), arrows:{ user:null, best:null, engine:null, showBest:false } };
     const CB = { main:null, extras:{} };
@@ -2188,6 +2348,9 @@
         if(!fen) CB.extras[rootId].clear(true); else CB.extras[rootId].position(fen, false);
       }
       clearLastMoveHighlights(`#${rootId}`);
+      // Ensure layout after visibility changes (e.g., viewer toggled)
+      try { CB.extras[rootId].resize(); } catch {}
+      setTimeout(()=>{ try{ CB.extras[rootId].resize(); }catch{} }, 0);
       setBoardFonts();
     }
 
@@ -2395,7 +2558,7 @@
         const cpl = formatCentipawnLoss(m.deltaCp);
         $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> · centipawn loss: ${cpl}`;
       }catch{}
-      $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> · <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · Δcp ${Math.round(m.deltaCp)}`;
+      $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> · <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · ?cp ${Math.round(m.deltaCp)}`;
       $('#yourMove').textContent='—'; $('#feedback').textContent='—';
       ORIENT_WHITE_BOTTOM = (m.side==='w'); drawBoardMain(m.fen);
       try{
@@ -2622,14 +2785,60 @@
       const t=$('#pgnInput').value.trim(); if(!t) return alert('Paste one or more PGNs first.');
       const parts=t.split(/\n(?=\[Event\s)/g).filter(s=>s.trim());
       appendImportedGames(parts, 'Manual');
-      setStatus(`Imported ${parts.length} game(s). You can now press “Analyse mistakes”.`);
+      setStatus(`Imported ${parts.length} game(s). You can now press "Analyse mistakes".`);
+    });
+
+    // Unified import controls
+    $('#btnImportUnified')?.addEventListener('click', async () => { try{ const fn=(window.importUnified||importUnified); await fn(); }catch(e){ setStatus('Error: '+(e?.message||e)); } });
+    $('#btnImportSettings')?.addEventListener('click', () => {
+      const box = document.getElementById('importSettingsBox'); if(!box) return;
+      box.style.display = (box.style.display==='none' || !box.style.display) ? 'block' : 'none';
+      try{ (window.applyPrefsToUI||applyPrefsToUI)(); }catch{}
+    });
+    $('#modeCount')?.addEventListener('change', ()=>{ if($('#modeCount').checked){ $('#periodWrap').style.display='none'; $('#countWrap2').style.display='block'; (window.savePrefsLocal||savePrefsLocal)({importMode:'count'}); try{ fb()&&fb().savePrefs({importMode:'count'}); }catch{} } });
+    $('#modeTime')?.addEventListener('change', ()=>{ if($('#modeTime').checked){ $('#periodWrap').style.display='block'; $('#countWrap2').style.display='none'; (window.savePrefsLocal||savePrefsLocal)({importMode:'time'}); try{ fb()&&fb().savePrefs({importMode:'time'}); }catch{} } });
+    $('#importCount')?.addEventListener('change', ()=>{ const v=parseInt($('#importCount')?.value||'10',10)||10; if($('#importCount2')) $('#importCount2').value=String(v); (window.savePrefsLocal||savePrefsLocal)({importCount:v}); try{ fb()&&fb().savePrefs({importCount:v}); }catch{} });
+    $('#importCount2')?.addEventListener('change', ()=>{ const v=parseInt($('#importCount2')?.value||'10',10)||10; if($('#importCount')) $('#importCount').value=String(v); (window.savePrefsLocal||savePrefsLocal)({importCount:v}); try{ fb()&&fb().savePrefs({importCount:v}); }catch{} });
+    $('#importPeriod')?.addEventListener('change', ()=>{ const v=$('#importPeriod').value; (window.savePrefsLocal||savePrefsLocal)({importPeriod:v}); try{ fb()&&fb().savePrefs({importPeriod:v}); }catch{} });
+    $('#provLichess')?.addEventListener('change', ()=>{ const on=$('#provLichess').checked; (window.savePrefsLocal||savePrefsLocal)({provLichess:on}); try{ fb()&&fb().savePrefs({provLichess:on}); }catch{} });
+    $('#provChesscom')?.addEventListener('change', ()=>{ const on=$('#provChesscom').checked; (window.savePrefsLocal||savePrefsLocal)({provChesscom:on}); try{ fb()&&fb().savePrefs({provChesscom:on}); }catch{} });
+    $('#accLichess')?.addEventListener('change', ()=>{ const v=$('#accLichess').value.trim(); (window.savePrefsLocal||savePrefsLocal)({lichessUser:v}); try{ fb()&&fb().savePrefs({lichessUser:v}); }catch{}; if($('#lichessUser')) $('#lichessUser').value=v; });
+    $('#accChessCom')?.addEventListener('change', ()=>{ const v=$('#accChessCom').value.trim(); (window.savePrefsLocal||savePrefsLocal)({chesscomUser:v}); try{ fb()&&fb().savePrefs({chesscomUser:v}); }catch{}; if($('#chesscomUser')) $('#chesscomUser').value=v; });
+    window.addEventListener('firebase:prefsUpdated', applyPrefsToUI);
+    $('#btnSaveImportSettings')?.addEventListener('click', async ()=>{
+      try{
+        const prefs = {
+          provLichess: !!($('#provLichess') && $('#provLichess').checked),
+          provChesscom: !!($('#provChesscom') && $('#provChesscom').checked),
+          importMode: ($('#modeTime') && $('#modeTime').checked) ? 'time' : 'count',
+          importCount: parseInt($('#importCount2')?.value||'10',10)||10,
+          importPeriod: $('#importPeriod')?.value || '30d',
+          lichessUser: ($('#accLichess')?.value||'').trim(),
+          chesscomUser: ($('#accChessCom')?.value||'').trim(),
+        };
+        (window.savePrefsLocal||savePrefsLocal)(prefs);
+        try{ fb() && await fb().savePrefs(prefs); }catch{}
+        setStatus('Settings saved.');
+      }catch(e){ setStatus('Error: '+(e?.message||e)); }
+    });
+    $('#btnLinkChessCom')?.addEventListener('click', async ()=>{
+      const v=($('#accChessCom')?.value||'').trim(); if(!v) { alert('Enter Chess.com username'); return; }
+      (window.savePrefsLocal||savePrefsLocal)({chesscomUser:v}); try{ fb()&&await fb().savePrefs({chesscomUser:v}); }catch{}
+      if($('#chesscomUser')) $('#chesscomUser').value=v;
+      setStatus('Chess.com account linked.');
+    });
+    $('#btnLinkLichess')?.addEventListener('click', async ()=>{
+      const v=($('#accLichess')?.value||'').trim(); if(!v) { alert('Enter Lichess username'); return; }
+      (window.savePrefsLocal||savePrefsLocal)({lichessUser:v}); try{ fb()&&await fb().savePrefs({lichessUser:v}); }catch{}
+      if($('#lichessUser')) $('#lichessUser').value=v;
+      setStatus('Lichess account linked.');
     });
 
     // Game viewer controls
-    $('#gvPrev')?.addEventListener('click', () => { if(GAMEVIEW.idx>0){ GAMEVIEW.idx--; drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); } });
-    $('#gvNext')?.addEventListener('click', () => { if(GAMEVIEW.idx+1<GAMEVIEW.fens.length){ GAMEVIEW.idx++; drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); } });
-    $('#gvStart')?.addEventListener('click', () => { GAMEVIEW.idx=0; drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); });
-    $('#gvEnd')?.addEventListener('click', () => { GAMEVIEW.idx=Math.max(0,GAMEVIEW.fens.length-1); drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); });
+    $('#gvPrev')?.addEventListener('click', () => { if(GAMEVIEW.idx>0){ GAMEVIEW.idx--; setTimeout(()=>{ drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); }, 0); } });
+    $('#gvNext')?.addEventListener('click', () => { if(GAMEVIEW.idx+1<GAMEVIEW.fens.length){ GAMEVIEW.idx++; setTimeout(()=>{ drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); }, 0); } });
+    $('#gvStart')?.addEventListener('click', () => { GAMEVIEW.idx=0; setTimeout(()=>{ drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); }, 0); });
+    $('#gvEnd')?.addEventListener('click', () => { GAMEVIEW.idx=Math.max(0,GAMEVIEW.fens.length-1); setTimeout(()=>{ drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], true); gvUpdate(); }, 0); });
 
     /********************************************************************
      * Session start buttons
@@ -2652,6 +2861,9 @@
         const cur = bs ? parseInt(bs,10) : curDefault;
         applyBoardSize(cur);
       }catch{}
+
+      // apply unified import prefs
+      try{ (window.applyPrefsToUI||applyPrefsToUI)(); }catch{}
 
       rebuildImportedTable();
       renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); renderSets(); renderSetsForTrain(); renderActiveSetInfo();
@@ -2868,3 +3080,4 @@
   </script>
 </body>
 </html>
+

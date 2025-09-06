@@ -442,6 +442,7 @@
           <!-- Create-set actions moved below the list (left-aligned) -->
           <div id="createSetRow" class="tiny" style="margin-top:8px; display:flex; align-items:center; gap:8px">
             <button id="btnCreateSetFromLast" class="secondary" title="Create a set from the last analysis results">Create set (0 mistakes)</button>
+            <button id="btnAddToExistingSet" class="ghost" title="Add analyzed mistakes to an existing set">Add to existing set</button>
             <span id="createSetInfo" class="muted">-</span>
           </div>
           
@@ -1801,7 +1802,19 @@
      * PGN helpers & analysis (user-only)
      ********************************************************************/
     const DEFAULT_SEV={ inacc:50, mistake:150, blunder:300 };
-    function getSev(){ try{ const o=JSON.parse(localStorage.getItem('pmtt_sev')||'{}'); return {...DEFAULT_SEV, ...o}; }catch{return DEFAULT_SEV;} }
+    function getSev(){
+      try{
+        const fromLs = JSON.parse(localStorage.getItem('pmtt_sev')||'{}');
+        let base = {...DEFAULT_SEV, ...fromLs};
+        try{
+          const p = (window.getPrefs ? window.getPrefs() : {});
+          if(p && p.analysisThresholds && typeof p.analysisThresholds==='object'){
+            base = {...base, ...p.analysisThresholds};
+          }
+        }catch{}
+        return base;
+      }catch{ return DEFAULT_SEV; }
+    }
     function severityFromDrop(cp){ const T=getSev(); const x=Math.abs(Math.round(cp)); if(x>=T.blunder) return 'blunder'; if(x>=T.mistake) return 'mistake'; if(x>=T.inacc) return 'inaccuracy'; return null; }
 
     // Format deltaCp (positive drop) as "centipawn loss" (negative value in pawns)
@@ -3205,11 +3218,45 @@
       const LS_FLAGS = 'pmtt_sev_flags'; // {inacc:boolean, mistake:boolean, blunder:boolean}
       const LS_SEV = 'pmtt_sev'; // thresholds object {inacc, mistake, blunder}
 
-      function loadDepth(){ try{ return Math.max(6, Math.min(40, parseInt(localStorage.getItem(LS_DEPTH)||'12',10)||12)); }catch{ return 12; } }
+      function loadDepth(){
+        try{
+          const v = localStorage.getItem(LS_DEPTH);
+          if(v!=null) return Math.max(6, Math.min(40, parseInt(v,10)||12));
+        }catch{}
+        try{
+          const p = (window.getPrefs ? window.getPrefs() : {});
+          const d = p && p.analysisDepth;
+          if(d!=null) return Math.max(6, Math.min(40, parseInt(d,10)||12));
+        }catch{}
+        return 12;
+      }
       function saveDepth(n){ try{ localStorage.setItem(LS_DEPTH, String(Math.max(6, Math.min(40, parseInt(n,10)||12)))); }catch{} }
-      function loadFlags(){ try{ const o=JSON.parse(localStorage.getItem(LS_FLAGS)||'{}'); return { inacc: o.inacc!==false, mistake: o.mistake!==false, blunder: o.blunder!==false }; }catch{ return {inacc:true, mistake:true, blunder:true}; } }
+      function loadFlags(){
+        try{
+          const o=JSON.parse(localStorage.getItem(LS_FLAGS)||'{}');
+          return { inacc: o.inacc!==false, mistake: o.mistake!==false, blunder: o.blunder!==false };
+        }catch{}
+        try{
+          const p = (window.getPrefs ? window.getPrefs() : {});
+          const o = p && p.analysisInclude;
+          if(o && typeof o==='object') return { inacc: o.inacc!==false, mistake: o.mistake!==false, blunder: o.blunder!==false };
+        }catch{}
+        return {inacc:true, mistake:true, blunder:true};
+      }
       function saveFlags(f){ try{ localStorage.setItem(LS_FLAGS, JSON.stringify({ inacc:!!f.inacc, mistake:!!f.mistake, blunder:!!f.blunder })); }catch{} }
-      function loadSev(){ try{ const d=JSON.parse(localStorage.getItem(LS_SEV)||'{}'); return { inacc: Number.isFinite(d.inacc)?d.inacc:50, mistake: Number.isFinite(d.mistake)?d.mistake:150, blunder: Number.isFinite(d.blunder)?d.blunder:300 }; }catch{ return {inacc:50, mistake:150, blunder:300}; } }
+      function loadSev(){
+        try{
+          const d=JSON.parse(localStorage.getItem(LS_SEV)||'{}');
+          const base = { inacc: Number.isFinite(d.inacc)?d.inacc:50, mistake: Number.isFinite(d.mistake)?d.mistake:150, blunder: Number.isFinite(d.blunder)?d.blunder:300 };
+          return base;
+        }catch{}
+        try{
+          const p = (window.getPrefs ? window.getPrefs() : {});
+          const t = p && p.analysisThresholds;
+          if(t && typeof t==='object') return { inacc: Number.isFinite(t.inacc)?t.inacc:50, mistake: Number.isFinite(t.mistake)?t.mistake:150, blunder: Number.isFinite(t.blunder)?t.blunder:300 };
+        }catch{}
+        return {inacc:50, mistake:150, blunder:300};
+      }
       function saveSev(t){ try{ localStorage.setItem(LS_SEV, JSON.stringify({ inacc:Math.max(0,parseInt(t.inacc,10)||50), mistake:Math.max(0,parseInt(t.mistake,10)||150), blunder:Math.max(0,parseInt(t.blunder,10)||300) })); }catch{} }
 
       function includeSeverity(sev){
@@ -3274,21 +3321,38 @@
         </div>`;
       document.body.appendChild(modal);
 
-      function open(){
+      function fillFromPrefs(){
         try{
-          document.getElementById('anDepth').value = String(loadDepth());
+          const depth = loadDepth();
           const t = loadSev();
-          document.getElementById('sevInacc').value = String(t.inacc);
-          document.getElementById('sevMistake').value = String(t.mistake);
-          document.getElementById('sevBlunder').value = String(t.blunder);
           const f = loadFlags();
-          document.getElementById('incInacc').checked = !!f.inacc;
-          document.getElementById('incMistake').checked = !!f.mistake;
-          document.getElementById('incBlunder').checked = !!f.blunder;
+          const dEl=document.getElementById('anDepth'); if(dEl) dEl.value=String(depth);
+          const si=document.getElementById('sevInacc'); if(si) si.value=String(t.inacc);
+          const sm=document.getElementById('sevMistake'); if(sm) sm.value=String(t.mistake);
+          const sb=document.getElementById('sevBlunder'); if(sb) sb.value=String(t.blunder);
+          const ci=document.getElementById('incInacc'); if(ci) ci.checked=!!f.inacc;
+          const cm=document.getElementById('incMistake'); if(cm) cm.checked=!!f.mistake;
+          const cb=document.getElementById('incBlunder'); if(cb) cb.checked=!!f.blunder;
+        }catch{}
+      }
+      let prefsListener=null;
+      function open(){
+        // Kick off auth to pull prefs in fresh contexts (incognito/new tab)
+        try{ if(window.firebaseAPI && !window.firebaseAPI.ready){ window.firebaseAPI.initAuth(); } }catch{}
+        fillFromPrefs();
+        // Update once remote prefs arrive
+        try{
+          prefsListener = ()=>{ try{ fillFromPrefs(); }catch{} };
+          window.addEventListener('firebase:prefsUpdated', prefsListener);
+          // Safety: also refresh after a short delay
+          setTimeout(()=>{ try{ fillFromPrefs(); }catch{} }, 800);
         }catch{}
         modal.style.display = 'block';
       }
-      function close(){ modal.style.display = 'none'; }
+      function close(){
+        modal.style.display = 'none';
+        try{ if(prefsListener){ window.removeEventListener('firebase:prefsUpdated', prefsListener); prefsListener=null; } }catch{}
+      }
       function reset(){ try{ localStorage.removeItem(LS_DEPTH); localStorage.removeItem(LS_FLAGS); localStorage.removeItem(LS_SEV); }catch{} open(); }
       function save(){
         const depth = parseInt(document.getElementById('anDepth').value,10)||12; saveDepth(depth);
@@ -3300,6 +3364,20 @@
                     mistake: !!document.getElementById('incMistake').checked,
                     blunder: !!document.getElementById('incBlunder').checked };
         saveFlags(f);
+        // Persist to unified prefs in Firestore as well
+        try{
+          const payload = { analysisDepth: depth, analysisThresholds: t, analysisInclude: f };
+          if(window.savePrefsLocal) window.savePrefsLocal(payload);
+          if(window.firebaseAPI){
+            try{ if(!window.firebaseAPI.ready){ window.firebaseAPI.initAuth(); } }catch{}
+            try{
+              if(window.firebaseAPI.savePrefs){
+                if(window.firebaseAPI.ready){ window.firebaseAPI.savePrefs(payload).catch(()=>{}); }
+                else { setTimeout(()=>{ try{ window.firebaseAPI.savePrefs(payload).catch(()=>{}); }catch{} }, 1000); }
+              }
+            }catch{}
+          }
+        }catch{}
         close();
       }
       document.getElementById('btnAnalyzeSettings')?.addEventListener('click', open);
@@ -3310,6 +3388,79 @@
 
       // Expose helpers used below
       window.getAnalysisDepth = loadDepth;
+    })();
+
+    // Add-to-existing-set modal
+    (function(){
+      const LS_SETS = 'pmtt_sets';
+      const loadSetsLocal = () => { try{ return JSON.parse(localStorage.getItem(LS_SETS)||'[]'); }catch{return [];} };
+      const saveSetsLocal = (arr) => { try{ localStorage.setItem(LS_SETS, JSON.stringify(arr)); }catch{} try{ window.firebaseAPI && window.firebaseAPI.saveAllSets && window.firebaseAPI.saveAllSets(arr).catch(()=>{}); }catch{} try{ renderSets && renderSets(); renderSetsForTrain && renderSetsForTrain(); renderTrainSelectList && renderTrainSelectList(); }catch{} };
+      const keyOf = (m) => ((m&&m.fen)||'' ) + '|' + ((m&&m.played)||'');
+
+      // Modal DOM
+      const modal = document.createElement('div');
+      modal.id = 'addToSetModal';
+      modal.style.display = 'none';
+      modal.innerHTML = `
+        <div id="atsBackdrop" style="position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(2px);z-index:50"></div>
+        <div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:51">
+          <div class="card" style="width:min(620px,95vw); max-height:90vh; overflow:auto">
+            <div style="display:flex;align-items:center;gap:10px;justify-content:space-between">
+              <h2>Add to existing set</h2>
+              <button id="atsClose" class="ghost" title="Close">✕</button>
+            </div>
+            <div id="atsInfo" class="tiny muted" style="margin-top:6px">-</div>
+            <div style="max-height:50vh;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:8px">
+              <table style="width:100%">
+                <thead><tr><th>Name</th><th>Count</th><th>Add</th></tr></thead>
+                <tbody id="atsTBody"></tbody>
+              </table>
+            </div>
+            <div class="row" style="margin-top:10px; justify-content:flex-end">
+              <button id="atsCancel" class="ghost">Cancel</button>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+
+      function close(){ modal.style.display='none'; }
+      function open(){
+        const n = (window.LAST_ANALYZED && Array.isArray(window.LAST_ANALYZED.mistakes)) ? window.LAST_ANALYZED.mistakes.length : 0;
+        const info = document.getElementById('atsInfo');
+        if(info) info.textContent = n ? `Last analysis: ${n} mistake(s) ready to add.` : 'No mistakes from the last analysis. Run Analyse mistakes first.';
+        const tb = document.getElementById('atsTBody'); if(tb) tb.innerHTML='';
+        const sets = loadSetsLocal();
+        if(!sets.length){
+          const tr=document.createElement('tr'); tr.innerHTML='<td colspan="3" class="tiny muted">No sets found. Create a set first.</td>'; tb && tb.appendChild(tr);
+        } else {
+          const newKeys = new Set(((window.LAST_ANALYZED && Array.isArray(window.LAST_ANALYZED.mistakes)) ? window.LAST_ANALYZED.mistakes : []).map(keyOf));
+          for(const s of sets){
+            const existing = new Set((s.keys||[]));
+            let addCount=0; for(const k of newKeys){ if(!existing.has(k)) addCount++; }
+            const tr=document.createElement('tr');
+            tr.innerHTML = `<td>${s.name}</td><td>${(s.keys||[]).length}</td><td><button class="ghost" data-setid="${s.id}" ${(!n||addCount===0)?'disabled':''}>Add to set${addCount?` (+${addCount})`:''}</button></td>`;
+            tr.querySelector('button')?.addEventListener('click', ()=>{
+              const sets2 = loadSetsLocal();
+              const idx = sets2.findIndex(x=>x.id===s.id);
+              if(idx<0) return;
+              const ex = new Set((sets2[idx].keys||[]));
+              let added=0; for(const k of newKeys){ if(!ex.has(k)){ ex.add(k); added++; } }
+              sets2[idx].keys = Array.from(ex);
+              saveSetsLocal(sets2);
+              setStatus(`Added ${added} item(s) to set "${sets2[idx].name}".`);
+              try{ const el=document.getElementById('createSetInfo'); if(el) el.textContent = `Added ${added} item(s) to "${sets2[idx].name}"`; }catch{}
+              close();
+            });
+            tb && tb.appendChild(tr);
+          }
+        }
+        modal.style.display='block';
+      }
+
+      document.getElementById('btnAddToExistingSet')?.addEventListener('click', open);
+      document.getElementById('atsBackdrop')?.addEventListener('click', close);
+      document.getElementById('atsClose')?.addEventListener('click', close);
+      document.getElementById('atsCancel')?.addEventListener('click', close);
     })();
     // Simple SPA nav
     function showSection(which){

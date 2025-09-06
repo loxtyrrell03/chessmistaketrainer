@@ -74,6 +74,8 @@
     /* Training view layout: hide sets pane; keep board left + info right */
     #trainSection.training-mode .train-grid{ grid-template-columns:1fr; }
     #trainSection.training-mode .train-grid > .card:nth-of-type(2){ display:none; }
+    /* Hide the top select-a-set panel while training */
+    #trainSection.training-mode #trainSelectView{ display:none; }
     /* Show only selection view when not training */
     #trainSection:not(.training-mode) .train-grid{ display:none; }
     .train-center{ display:flex; flex-direction:column; align-items:center; gap:12px }
@@ -2980,7 +2982,18 @@
     /********************************************************************
      * Session start buttons
      ********************************************************************/
-    $('#btnStart').addEventListener('click', () => {
+    $('#btnStart').addEventListener('click', async () => {
+      // Ensure a set is active; default to first
+      let s = ACTIVE_SET;
+      if(!s){ const sets = loadSets(); if(sets.length){ s = sets[0]; setActiveSet(s); } }
+      if(!s){ alert('Create or select a set first.'); return; }
+
+      // Enter training mode and wait for mistakes to be available
+      enterTrainingMode();
+      renderActiveSetInfo();
+      try{ const info=document.getElementById('mInfo'); if(info) info.textContent='Loading set.'; }catch{}
+      try{ await ensureMistakesForSet(s, 10000); }catch{}
+
       const mode=$('#modeSel').value;
       if(mode==='woodpecker'){ const N=parseInt($('#wpCount').value,10)||10; Session.startWoodpecker(N); }
       else{ Session.startSRS(); }
@@ -3048,7 +3061,7 @@
         const tr = document.createElement('tr');
         tr.style.cursor='pointer';
         tr.innerHTML = `<td>${++i}</td><td>${s.name}</td><td>${s.keys.length}</td><td><button class="ghost" data-id="${s.id}">Train</button></td>`;
-        const start = ()=>{ setActiveSet(s); enterTrainingMode(); renderActiveSetInfo(); Session.startSRS(); };
+        const start = async ()=>{ setActiveSet(s); enterTrainingMode(); renderActiveSetInfo(); try{ const info=document.getElementById('mInfo'); if(info) info.textContent='Loading set.'; }catch{}; try{ await ensureMistakesForSet(s, 10000); }catch{}; Session.startSRS(); };
         tr.addEventListener('click', (ev)=>{ if((ev.target && ev.target.tagName==='BUTTON')) return; start(); });
         tr.querySelector('button')?.addEventListener('click', (ev)=>{ ev.stopPropagation(); start(); });
         tb.appendChild(tr);

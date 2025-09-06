@@ -420,12 +420,8 @@
             <b>Imported Games</b>
             <span class="tiny muted" id="importHelp">Fetched games will appear here.</span>
             <span style="margin-left:auto"></span>
-            <button id="btnAnalyzeImported" class="btn-green" title="Analyse mistakes (server)">Analyse mistakes</button>
-            <button id="btnCreateSetFromLast" class="secondary" title="Create a set from the last analysis results">Create set (0 mistakes)</button>
             <button id="btnClearImports" class="ghost" title="Clear imported games & their mistakes">Clear imports</button>
-          </div>
-          <div id="createSetRow" class="tiny" style="margin-top:6px">
-            <span id="createSetInfo" class="muted">-</span>
+            <button id="btnAnalyzeImported" class="btn-green" title="Analyse mistakes (server)">Analyse mistakes</button>
           </div>
           <div style="max-height:220px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:6px">
             <table id="importTable" style="width:100%">
@@ -442,6 +438,13 @@
               <tbody id="importTBody"></tbody>
             </table>
           </div>$insertion<!-- Game Viewer with fully responsive board -->
+          <!-- Create-set actions moved below the list (left-aligned) -->
+          <div id="createSetRow" class="tiny" style="margin-top:8px; display:flex; align-items:center; gap:8px">
+            <button id="btnCreateSetFromLast" class="secondary" title="Create a set from the last analysis results">Create set (0 mistakes)</button>
+            <span id="createSetInfo" class="muted">-</span>
+          </div>
+          
+          <!-- Game Viewer with fully responsive board -->
           <div id="gameViewer" class="stroke tiny" style="margin-top:10px; display:none">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               <b>Game Viewer</b>

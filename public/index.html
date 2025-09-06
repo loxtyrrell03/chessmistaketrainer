@@ -12,12 +12,12 @@
     ? No frameworks used.
 
     This build addresses your latest requests:
-      • Board-size slider works even in fullscreen (width uses min(100%, var(--board-size))).
-      • Black pieces are truly black; forced non-emoji (solid) glyphs.
-      • Added "Show mistake" button; shows red arrow for the played mistake; clears on Reveal Best or on move.
-      • Dragging shows legal-move dots; removed dotted/focus square when dragging/lifting.
-      • Imports stack across sources (Lichess + Chess.com + Manual) and analyse runs over the full stack.
-      • Stop analysis immediately resets the button; partial results still saved and a set is created if >0 mistakes.
+      â€¢ Board-size slider works even in fullscreen (width uses min(100%, var(--board-size))).
+      â€¢ Black pieces are truly black; forced non-emoji (solid) glyphs.
+      â€¢ Added "Show mistake" button; shows red arrow for the played mistake; clears on Reveal Best or on move.
+      â€¢ Dragging shows legal-move dots; removed dotted/focus square when dragging/lifting.
+      â€¢ Imports stack across sources (Lichess + Chess.com + Manual) and analyse runs over the full stack.
+      â€¢ Stop analysis immediately resets the button; partial results still saved and a set is created if >0 mistakes.
 
     MIT-style: extend/adapt freely.
   -->
@@ -193,7 +193,7 @@
     .sq.sel{outline:3px solid var(--sq-sel);z-index:2}
     .sq.hl{outline:3px solid var(--sq-hl)}
 
-    /* Crisp readable pieces — force monochrome (non-emoji) solid glyphs */
+    /* Crisp readable pieces â€” force monochrome (non-emoji) solid glyphs */
     .piece{
       filter:drop-shadow(0 2px 2px rgba(0,0,0,.25));
       opacity:1 !important; font-weight:900; letter-spacing:0;
@@ -341,23 +341,26 @@
             <div>
               <label>Mode</label>
               <div>
-                <label class="tiny"><input type="radio" name="importMode" id="modeCount" checked> By count</label>
-                <label class="tiny" style="margin-left:10px"><input type="radio" name="importMode" id="modeTime"> By time period</label>
+                <label class="tiny"><input type="radio" name="importMode" id="modeCount" checked> By most recent</label>
+                <label class="tiny" style="margin-left:10px"><input type="radio" name="importMode" id="modeTime"> By period</label>
               </div>
             </div>
             <div id="countWrap2" style="max-width:140px">
-              <label>Count</label>
+              <label>Games</label>
               <input id="importCount2" type="number" min="1" max="100" value="10" />
             </div>
-            <div id="periodWrap" style="display:none; max-width:220px">
+            <div id="periodWrap" style="display:none; max-width:320px">
               <label>Period</label>
-              <select id="importPeriod">
-                <option value="7d">Last 7 days</option>
-                <option value="30d" selected>Last 30 days</option>
-                <option value="90d">Last 90 days</option>
-                <option value="thisMonth">This month</option>
-                <option value="lastMonth">Last month</option>
-              </select>
+              <div style="display:flex; gap:8px; align-items:center">
+                <input id="periodValue" type="number" step="0.1" min="0" value="30" style="max-width:120px"/>
+                <select id="periodUnit">
+                  <option value="minutes">minutes</option>
+                  <option value="hours">hours</option>
+                  <option value="days" selected>days</option>
+                  <option value="weeks">weeks</option>
+                  <option value="months">months</option>
+                </select>
+              </div>
             </div>
           </div>
           <div class="row" style="margin-top:8px; flex-direction:column; align-items:stretch; gap:8px">
@@ -393,7 +396,7 @@
             <input id="lichessUser" type="text" placeholder="e.g., lox123" />
           </div>
           <div style="max-width:120px">
-            <label>Count</label>
+            <label>Games</label>
             <input id="lichessCount" type="number" min="1" max="50" value="5" />
           </div>
           <div style="max-width:220px">
@@ -407,7 +410,7 @@
             <input id="chesscomUser" type="text" placeholder="e.g., lox123" />
           </div>
           <div style="max-width:120px">
-            <label>Count</label>
+            <label>Games</label>
             <input id="chesscomCount" type="number" min="1" max="50" value="5" />
           </div>
           <div style="max-width:220px">
@@ -417,7 +420,7 @@
         </div>
         <div style="margin-top:10px">
           <label>Or paste PGN manually (one or more games)</label>
-          <textarea id="pgnInput" placeholder="[Event &quot;...&quot;] … moves …"></textarea>
+          <textarea id="pgnInput" placeholder="[Event &quot;...&quot;] â€¦ moves â€¦"></textarea>
           <div class="row" style="margin-top:8px">
             <button id="btnImportPGN" class="ghost">Import PGN</button>
           </div>
@@ -611,11 +614,11 @@
             </div>
             <div class="stroke" style="margin-top:10px">
               <div class="small"><b>Current Mistake</b></div>
-              <div class="tiny muted" id="mInfo">—</div>
+              <div class="tiny muted" id="mInfo">â€”</div>
               <div class="tiny" style="margin-top:6px"><b>Goal:</b> find the best move from this position.</div>
-              <div class="tiny"><b>Side to move:</b> <span id="sideToMove">—</span></div>
-              <div class="tiny"><b>Your attempt:</b> <span id="yourMove">—</span></div>
-              <div class="tiny"><b>Feedback:</b> <span id="feedback">—</span></div>
+              <div class="tiny"><b>Side to move:</b> <span id="sideToMove">â€”</span></div>
+              <div class="tiny"><b>Your attempt:</b> <span id="yourMove">â€”</span></div>
+              <div class="tiny"><b>Feedback:</b> <span id="feedback">â€”</span></div>
               <div class="row" style="margin-top:8px; gap:8px">
                 <!-- NEW: Show mistake button (left of Reveal best) -->
                 <button id="btnShowMistake" class="ghost">Show mistake</button>
@@ -691,7 +694,7 @@
             <button id="btnStart">Start session</button>
           </div>
         </div>
-        <div class="tiny muted" id="activeSetInfo" style="margin-top:6px">Active set: —</div>
+        <div class="tiny muted" id="activeSetInfo" style="margin-top:6px">Active set: â€”</div>
       </div>
     </div>
   </div>
@@ -1261,7 +1264,7 @@
     }
     let ACTIVE_SET = null; let ACTIVE_SET_KEYS = new Set();
     function setActiveSet(s){ ACTIVE_SET = s; ACTIVE_SET_KEYS = new Set((s&&s.keys)||[]); setStatus(`Active set: ${s?.name||'-'}`); }
-    function renderActiveSetInfo(){ const el = $('#activeSetInfo'); if(el) el.textContent = `Active set: ${ACTIVE_SET?ACTIVE_SET.name:'—'}`; }
+    function renderActiveSetInfo(){ const el = $('#activeSetInfo'); if(el) el.textContent = `Active set: ${ACTIVE_SET?ACTIVE_SET.name:'â€”'}`; }
 
     function renderSetsForTrain(){
       const tb = $('#trainSetsTBody'); if(!tb) return;
@@ -1603,7 +1606,7 @@
      * SAN helper (UCI -> SAN)
      ********************************************************************/
     function uciToSAN(fen, uci){
-      if(!fen || !uci) return uci || '—';
+      if(!fen || !uci) return uci || 'â€”';
       const cl = ChessLite(); cl.loadFEN(fen);
       const legal = cl.moves();
       const mv = legal.find(m => m.uci === uci);
@@ -1672,7 +1675,7 @@
             };
             sf.postMessage('uci');
             const t0=Date.now(); while(!ready && (Date.now()-t0)<4000){ await sleep(20); }
-            $('#engineStateServer').textContent = ready ? 'ready' : 'loading…';
+            $('#engineStateServer').textContent = ready ? 'ready' : 'loadingâ€¦';
             resolve(true);
           }catch(err){ /* suppress Engine:error in UI */ resolve(false); }
         });
@@ -2007,7 +2010,7 @@
       let i=0;
       for(const pgn of list){
         if(state.stop) break;
-        setStatus(`Analyzing ${++i}/${list.length} — mistakes found: ${all.length}`);
+        setStatus(`Analyzing ${++i}/${list.length} â€” mistakes found: ${all.length}`);
         try{
           let ms=[];
           if(window.SF_BACKEND_URL){
@@ -2016,14 +2019,14 @@
               console.warn('Analyze via SF backend failed, falling back', err);
               if(window.FN_BASE){
                 try{ ms=await analyzeOnBackend([pgn]); }
-                catch(err2){ console.warn('Analyze via Functions failed, falling back to local', err2); ms=await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} — mistakes found: ${all.length}`); }catch{} }); }
+                catch(err2){ console.warn('Analyze via Functions failed, falling back to local', err2); ms=await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} â€” mistakes found: ${all.length}`); }catch{} }); }
               } else {
-                ms=await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} — mistakes found: ${all.length}`); }catch{} });
+                ms=await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} â€” mistakes found: ${all.length}`); }catch{} });
               }
             }
           }
           else if(window.FN_BASE){ ms=await analyzeOnBackend([pgn]); }
-          else { ms = await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} — mistakes found: ${all.length}`); }catch{} }); }
+          else { ms = await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} â€” mistakes found: ${all.length}`); }catch{} }); }
 
           // Ensure PGN and game URL are attached regardless of backend
           try{
@@ -2042,7 +2045,7 @@
               LAST_ANALYZED.mistakes = all.slice();
               try{
                 const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`;
-                setStatus(`Analyzing ${i}/${list.length} — mistakes found: ${all.length}`);
+                setStatus(`Analyzing ${i}/${list.length} â€” mistakes found: ${all.length}`);
               }catch{}
             }
           }
@@ -2063,7 +2066,7 @@
       }catch{}
 
       if(state.stop){
-        setStatus(`Analysis stopped — mistakes found: ${all.length}`);
+        setStatus(`Analysis stopped â€” mistakes found: ${all.length}`);
       }else{
         setStatus(`Done. Added ${all.length} user-mistake(s).`);
       }
@@ -2118,8 +2121,33 @@
       games.sort((a,b)=>((b.end_time||0)-(a.end_time||0)));
       games = games.slice(0, n);
       const out=games.map(g=>g.pgn);
-  appendImportedGames(out,'Chess.com'); return out;
-}
+      appendImportedGames(out,'Chess.com'); return out;
+    }
+
+    // List-only versions (do not mutate Imported Games). Used by unified import.
+    async function fetchLichessList(user, maxN){
+      const n=Math.max(1, Math.min(50, parseInt(maxN,10)||5));
+      const base=(window.FN_LICHESS_URL||`${window.FN_BASE||''}/fetchLichess`).replace(/\/$/,'');
+      const url=`${base}?username=${encodeURIComponent(user)}&max=${n}`;
+      const res=await fetch(url,{headers:{'Accept':'application/json'}}); if(!res.ok) throw new Error(`Lichess proxy failed (${res.status})`);
+      const json=await res.json();
+      let games=(json.games||[]).filter(g=>g&&g.pgn);
+      games.sort((a,b)=>((b.lastMoveAt||b.createdAt||0) - (a.lastMoveAt||a.createdAt||0)));
+      games = games.slice(0, n);
+      return games.map(g=>g.pgn);
+    }
+
+    async function fetchChesscomList(user, maxN){
+      const n=Math.max(1, Math.min(50, parseInt(maxN,10)||5));
+      const base=(window.FN_CHESSCOM_URL||`${window.FN_BASE||''}/fetchChessCom`).replace(/\/$/,'');
+      const url=`${base}?username=${encodeURIComponent(user)}&limit=${n}`;
+      const res=await fetch(url,{headers:{'Accept':'application/json'}}); if(!res.ok) throw new Error(`Chess.com proxy failed (${res.status})`);
+      const json=await res.json();
+      let games=(json.games||[]).filter(g=>g&&g.pgn);
+      games.sort((a,b)=>((b.end_time||0)-(a.end_time||0)));
+      games = games.slice(0, n);
+      return games.map(g=>g.pgn);
+    }
 
   /********************************************************************
    * Unified Import UI logic
@@ -2135,7 +2163,8 @@
       if($('#modeCount')) $('#modeCount').checked = (p.importMode!=='time');
       if($('#importCount')) $('#importCount').value = String(p.importCount||10);
       if($('#importCount2')) $('#importCount2').value = String(p.importCount||10);
-      if($('#importPeriod')) $('#importPeriod').value = p.importPeriod||'30d';
+      const pv = document.getElementById('periodValue'); if(pv) pv.value = String(p.periodValue ?? 30);
+      const pu = document.getElementById('periodUnit'); if(pu) pu.value = p.periodUnit || 'days';
       if($('#accLichess')) $('#accLichess').value = p.lichessUser||'';
       if($('#accChessCom')) $('#accChessCom').value = p.chesscomUser||'';
       if($('#lichessUser')) $('#lichessUser').value = p.lichessUser||'';
@@ -2146,43 +2175,46 @@
   }
   try{ window.getPrefs = getPrefs; window.savePrefsLocal = savePrefsLocal; window.applyPrefsToUI = applyPrefsToUI; }catch{}
 
-  function periodSinceMs(val){
-    const now=new Date();
-    const startOfMonth=(d)=>{ const x=new Date(d.getFullYear(), d.getMonth(), 1, 0,0,0); return x.getTime(); };
-    const startOfPrevMonth=(d)=>{ const x=new Date(d.getFullYear(), d.getMonth()-1, 1, 0,0,0); return x.getTime(); };
-    if(val==='7d') return Date.now()-7*24*3600*1000;
-    if(val==='30d') return Date.now()-30*24*3600*1000;
-    if(val==='90d') return Date.now()-90*24*3600*1000;
-    if(val==='thisMonth') return startOfMonth(now);
-    if(val==='lastMonth') return startOfPrevMonth(now);
-    return Date.now()-30*24*3600*1000;
-  }
+    function periodMsFromControls(){
+      try{
+        const valStr = (document.getElementById('periodValue')?.value || '0').trim();
+        let v = parseFloat(valStr); if(!isFinite(v) || v < 0) v = 0;
+        const unit = (document.getElementById('periodUnit')?.value || 'days');
+        const msPer = { minutes:60*1000, hours:3600*1000, days:24*3600*1000, weeks:7*24*3600*1000, months:30*24*3600*1000 };
+        const mult = msPer[unit] || msPer.days;
+        return v * mult;
+      }catch{ return 30*24*3600*1000; }
+    }
 
   async function importUnified(){
     const provL = !!($('#provLichess') && $('#provLichess').checked);
     const provC = !!($('#provChesscom') && $('#provChesscom').checked);
     if(!provL && !provC){ alert('Select at least one provider'); return; }
     const modeTime = !!($('#modeTime') && $('#modeTime').checked);
-    const count = parseInt($('#importCount')?.value||$('#importCount2')?.value||'10',10)||10;
-    const period = $('#importPeriod')?.value || '30d';
+    const count = Math.max(1, parseInt($('#importCount2')?.value||$('#importCount')?.value||'10',10)||10);
+    const period = null; // deprecated; use periodValue + periodUnit
     const lichUser = ($('#accLichess')?.value||$('#lichessUser')?.value||'').trim();
     const chessUser = ($('#accChessCom')?.value||$('#chesscomUser')?.value||'').trim();
-    const prefs = { provLichess:provL, provChesscom:provC, importMode: modeTime?'time':'count', importCount:count, importPeriod:period, lichessUser:lichUser, chesscomUser:chessUser };
+    const prefs = { provLichess:provL, provChesscom:provC, importMode: modeTime?'time':'count', importCount:count, periodValue: parseFloat(document.getElementById('periodValue')?.value||'30')||30, periodUnit: (document.getElementById('periodUnit')?.value||'days'), lichessUser:lichUser, chesscomUser:chessUser };
     try { (window.savePrefsLocal||savePrefsLocal)(prefs); } catch {}
     try{ if(fb()) fb().savePrefs(prefs).catch(()=>{}); }catch{}
     if(provL && !lichUser){ alert('Enter your Lichess username in Settings'); return; }
     if(provC && !chessUser){ alert('Enter your Chess.com username in Settings'); return; }
-
-    setStatus('Fetching games…');
-    const want = modeTime ? 120 : Math.max(20, count*3);
+    setStatus('Fetching games...');
     const jobs = [];
-    if(provL) jobs.push(fetchLichess(lichUser, want).then(arr=>arr.map(p=>({pgn:p, src:'Lichess'}))).catch(()=>[]));
-    if(provC) jobs.push(fetchChesscom(chessUser, want).then(arr=>arr.map(p=>({pgn:p, src:'Chess.com'}))).catch(()=>[]));
+    if(modeTime){
+      const want = 200; // generous upper bound per provider
+      if(provL) jobs.push(fetchLichessList(lichUser, want).then(arr=>arr.map(p=>({pgn:p, src:'Lichess'}))).catch(()=>[]));
+      if(provC) jobs.push(fetchChesscomList(chessUser, want).then(arr=>arr.map(p=>({pgn:p, src:'Chess.com'}))).catch(()=>[]));
+    } else {
+      const want = Math.max(1, count); // fetch N from each selected provider (list-only)
+      if(provL) jobs.push(fetchLichessList(lichUser, want).then(arr=>arr.map(p=>({pgn:p, src:'Lichess'}))).catch(()=>[]));
+      if(provC) jobs.push(fetchChesscomList(chessUser, want).then(arr=>arr.map(p=>({pgn:p, src:'Chess.com'}))).catch(()=>[]));
+    }
     const results = (await Promise.all(jobs)).flat();
     const withTs = results.map(r=>({ ...r, ms: pgnTimeMs(r.pgn) || 0 }));
     let chosen=[];
-    if(modeTime){
-      const since = periodSinceMs(period);
+    if(modeTime){ const since = Date.now() - periodMsFromControls();
       chosen = withTs.filter(r=>r.ms>=since).sort((a,b)=>b.ms-a.ms);
     } else {
       chosen = withTs.sort((a,b)=>b.ms-a.ms).slice(0, count);
@@ -2233,11 +2265,11 @@
       $('#yourMove').textContent='-'; $('#feedback').textContent='-';
       try{
         const cpl = formatCentipawnLoss(m.deltaCp);
-        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · centipawn loss: ${cpl}`;
+        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> Â· centipawn loss: ${cpl}`;
       }catch{}
       try{
         const cpl = formatCentipawnLoss(m.deltaCp);
-        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · centipawn loss: ${cpl}`;
+        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> Â· centipawn loss: ${cpl}`;
       }catch{}
         // clear arrows
         BOARD.arrows.user = null; BOARD.arrows.best = null; BOARD.arrows.showBest=false; renderArrows();
@@ -2252,7 +2284,7 @@
         if(!active) return;
         const correct = (moveUci === (active.best||''));
         const yourSan = uciToSAN(active.fen, moveUci);
-        $('#yourMove').textContent = yourSan || moveUci || '—';
+        $('#yourMove').textContent = yourSan || moveUci || 'â€”';
 
         // Replace previous attempt arrow with this one
         BOARD.arrows.user = moveUci || null; BOARD.arrows.showBest=false; renderArrows();
@@ -2556,14 +2588,14 @@
       gvHide();
       try{
         const cpl = formatCentipawnLoss(m.deltaCp);
-        $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> · centipawn loss: ${cpl}`;
+        $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> Â· centipawn loss: ${cpl}`;
       }catch{}
-      $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> · <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · ?cp ${Math.round(m.deltaCp)}`;
-      $('#yourMove').textContent='—'; $('#feedback').textContent='—';
+      $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> Â· <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> Â· ?cp ${Math.round(m.deltaCp)}`;
+      $('#yourMove').textContent='â€”'; $('#feedback').textContent='â€”';
       ORIENT_WHITE_BOTTOM = (m.side==='w'); drawBoardMain(m.fen);
       try{
         const cpl = formatCentipawnLoss(m.deltaCp);
-        $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> · centipawn loss: ${cpl}`;
+        $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> Â· centipawn loss: ${cpl}`;
       }catch{}
       // Arrows start clean; will draw on attempt/reveal
       BOARD.arrows.user = null; BOARD.arrows.best = m.best || null; BOARD.arrows.showBest = false; renderArrows();
@@ -2572,8 +2604,8 @@
       // Update info
       try{
         const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent=`FEN: ${m.fen}`;
-        const pgnEl=$('#trainPgn'); if(pgnEl) pgnEl.textContent=`PGN: ${m.pgn ? m.pgn.split('\n')[0] : '—'}`;
-        const linkEl=$('#trainLink'); if(linkEl){ if(m.gameUrl){ linkEl.textContent='Open game'; linkEl.href=m.gameUrl; } else { linkEl.textContent='—'; linkEl.href='#'; } }
+        const pgnEl=$('#trainPgn'); if(pgnEl) pgnEl.textContent=`PGN: ${m.pgn ? m.pgn.split('\n')[0] : 'â€”'}`;
+        const linkEl=$('#trainLink'); if(linkEl){ if(m.gameUrl){ linkEl.textContent='Open game'; linkEl.href=m.gameUrl; } else { linkEl.textContent='â€”'; linkEl.href='#'; } }
       }catch{}
     }
 
@@ -2638,7 +2670,7 @@
       const sel = $('#statsSetSelect'); if(!sel) return;
       const sets = loadSets();
       sel.innerHTML = '';
-      const opt0 = document.createElement('option'); opt0.value=''; opt0.textContent='Select a set…'; sel.appendChild(opt0);
+      const opt0 = document.createElement('option'); opt0.value=''; opt0.textContent='Select a setâ€¦'; sel.appendChild(opt0);
       for(const s of sets){ const o=document.createElement('option'); o.value=s.id; o.textContent=`${s.name} (${s.keys.length})`; sel.appendChild(o);
       }
       if(STATS_SELECTED_SET_ID){ sel.value = STATS_SELECTED_SET_ID; }
@@ -2773,12 +2805,12 @@
 
     $('#btnFetchLichess').addEventListener('click', async () => {
       const u=$('#lichessUser').value.trim(); if(!u) return alert('Enter a Lichess username');
-      try{ const n=parseInt($('#lichessCount')?.value,10)||5; setStatus(`Fetching Lichess games (N=${n})…`); await fetchLichess(u,n); setStatus('Idle'); }catch(e){ setStatus('Error: '+(e?.message||e)); }
+      try{ const n=parseInt($('#lichessCount')?.value,10)||5; setStatus(`Fetching Lichess games (N=${n})â€¦`); await fetchLichess(u,n); setStatus('Idle'); }catch(e){ setStatus('Error: '+(e?.message||e)); }
     });
 
     $('#btnFetchChesscom').addEventListener('click', async () => {
       const u=$('#chesscomUser').value.trim(); if(!u) return alert('Enter a Chess.com username');
-      try{ const n=parseInt($('#chesscomCount')?.value,10)||5; setStatus(`Fetching Chess.com games (N=${n})…`); await fetchChesscom(u,n); setStatus('Idle'); }catch(e){ setStatus('Error: '+(e?.message||e)); }
+      try{ const n=parseInt($('#chesscomCount')?.value,10)||5; setStatus(`Fetching Chess.com games (N=${n})â€¦`); await fetchChesscom(u,n); setStatus('Idle'); }catch(e){ setStatus('Error: '+(e?.message||e)); }
     });
 
     $('#btnImportPGN').addEventListener('click', async () => {
@@ -2799,7 +2831,8 @@
     $('#modeTime')?.addEventListener('change', ()=>{ if($('#modeTime').checked){ $('#periodWrap').style.display='block'; $('#countWrap2').style.display='none'; (window.savePrefsLocal||savePrefsLocal)({importMode:'time'}); try{ fb()&&fb().savePrefs({importMode:'time'}); }catch{} } });
     $('#importCount')?.addEventListener('change', ()=>{ const v=parseInt($('#importCount')?.value||'10',10)||10; if($('#importCount2')) $('#importCount2').value=String(v); (window.savePrefsLocal||savePrefsLocal)({importCount:v}); try{ fb()&&fb().savePrefs({importCount:v}); }catch{} });
     $('#importCount2')?.addEventListener('change', ()=>{ const v=parseInt($('#importCount2')?.value||'10',10)||10; if($('#importCount')) $('#importCount').value=String(v); (window.savePrefsLocal||savePrefsLocal)({importCount:v}); try{ fb()&&fb().savePrefs({importCount:v}); }catch{} });
-    $('#importPeriod')?.addEventListener('change', ()=>{ const v=$('#importPeriod').value; (window.savePrefsLocal||savePrefsLocal)({importPeriod:v}); try{ fb()&&fb().savePrefs({importPeriod:v}); }catch{} });
+    document.getElementById('periodValue')?.addEventListener('change', ()=>{ const v=document.getElementById('periodValue')?.value; (window.savePrefsLocal||savePrefsLocal)({periodValue:parseFloat(v)||30}); try{ fb()&&fb().savePrefs({periodValue:parseFloat(v)||30}); }catch{} });
+    document.getElementById('periodUnit')?.addEventListener('change', ()=>{ const u=document.getElementById('periodUnit')?.value; (window.savePrefsLocal||savePrefsLocal)({periodUnit:u}); try{ fb()&&fb().savePrefs({periodUnit:u}); }catch{} });
     $('#provLichess')?.addEventListener('change', ()=>{ const on=$('#provLichess').checked; (window.savePrefsLocal||savePrefsLocal)({provLichess:on}); try{ fb()&&fb().savePrefs({provLichess:on}); }catch{} });
     $('#provChesscom')?.addEventListener('change', ()=>{ const on=$('#provChesscom').checked; (window.savePrefsLocal||savePrefsLocal)({provChesscom:on}); try{ fb()&&fb().savePrefs({provChesscom:on}); }catch{} });
     $('#accLichess')?.addEventListener('change', ()=>{ const v=$('#accLichess').value.trim(); (window.savePrefsLocal||savePrefsLocal)({lichessUser:v}); try{ fb()&&fb().savePrefs({lichessUser:v}); }catch{}; if($('#lichessUser')) $('#lichessUser').value=v; });
@@ -2812,13 +2845,15 @@
           provChesscom: !!($('#provChesscom') && $('#provChesscom').checked),
           importMode: ($('#modeTime') && $('#modeTime').checked) ? 'time' : 'count',
           importCount: parseInt($('#importCount2')?.value||'10',10)||10,
-          importPeriod: $('#importPeriod')?.value || '30d',
+          periodValue: parseFloat(document.getElementById('periodValue')?.value||'30')||30,
+          periodUnit: (document.getElementById('periodUnit')?.value||'days'),
           lichessUser: ($('#accLichess')?.value||'').trim(),
           chesscomUser: ($('#accChessCom')?.value||'').trim(),
         };
         (window.savePrefsLocal||savePrefsLocal)(prefs);
         try{ fb() && await fb().savePrefs(prefs); }catch{}
         setStatus('Settings saved.');
+        try{ const box=document.getElementById('importSettingsBox'); if(box) box.style.display='none'; }catch{}
       }catch(e){ setStatus('Error: '+(e?.message||e)); }
     });
     $('#btnLinkChessCom')?.addEventListener('click', async ()=>{
@@ -2868,7 +2903,7 @@
       rebuildImportedTable();
       renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); renderSets(); renderSetsForTrain(); renderActiveSetInfo();
       drawBoardMain(null);
-      setStatus('Loading engine…'); await Engine.ensure(); setStatus('Idle');
+      setStatus('Loading engineâ€¦'); await Engine.ensure(); setStatus('Idle');
       // keep boards/arrows sized when window resizes
       window.addEventListener('resize', ()=>{
         try{ CB.main && CB.main.resize(); }catch{}
@@ -3080,4 +3115,22 @@
   </script>
 </body>
 </html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

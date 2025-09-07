@@ -128,45 +128,58 @@ function startEngine() {
   return { analyzeFen, newGame, kill: () => { try { eng.kill('SIGTERM'); } catch {} } };
 }
 
-async function analyzePGNWithEngine(pgn, depth = 12, thr = DEFAULT_THR) {
+async function analyzePGNWithEngine(pgn, depth = 12, thr = DEFAULT_THR, depthFast = 8) {
   const engine = startEngine();
   try {
     const chess = new Chess();
     chess.loadPgn(pgn, { sloppy: true });
     const verboseMoves = chess.history({ verbose: true });
     const game = new Chess();
-    const mistakes = [];
+    const candidates = [];
     engine.newGame(); // reset TT once per game, then reuse across positions
+
+    // Pass 1: fast scan at low depth to find candidate mistakes
     for (const mv of verboseMoves) {
       const fenBefore = game.fen();
       const side = game.turn(); // 'w' or 'b'
-      const { cp: cpBefore, bestmove, pv } = await engine.analyzeFen(fenBefore, depth);
-      // apply the move
+      const { cp: cpBefore1, bestmove: best1 } = await engine.analyzeFen(fenBefore, depthFast);
       game.move({ from: mv.from, to: mv.to, promotion: mv.promotion });
       const fenAfter = game.fen();
-      // If the move played equals engine best move, we can infer zero drop and skip second search
-      const playedUci = (mv.from + mv.to + (mv.promotion ? mv.promotion.toLowerCase() : ''));
-      let drop = 0;
-      if (playedUci === bestmove) {
-        drop = 0;
-      } else {
-        const { cp: cpAfter } = await engine.analyzeFen(fenAfter, depth);
-        drop = Math.max(0, cpBefore + cpAfter);
-      }
-      const sev = severityFromDrop(drop, thr);
-      if (sev) {
-        mistakes.push({
-          fen: fenBefore,
-          side,
-          played: mv.san,
-          best: bestmove,
-          deltaCp: drop,
-          severity: sev,
-          pvUci: pv,
-        });
+      const playedUci = (mv.from + mv.to + (mv.promotion ? String(mv.promotion).toLowerCase() : ''));
+      if (playedUci === best1) { continue; } // correct move => not a mistake
+      const { cp: cpAfter1 } = await engine.analyzeFen(fenAfter, depthFast);
+      const drop1 = Math.max(0, cpBefore1 + cpAfter1);
+      const sev1 = severityFromDrop(drop1, thr);
+      if (sev1) {
+        candidates.push({ fenBefore, fenAfter, side, san: mv.san, playedUci });
       }
     }
-    return mistakes;
+
+    // Pass 2: deep analysis only for candidates
+    const out = [];
+    for (const c of candidates) {
+      const { cp: cpBefore2, bestmove: best2, pv } = await engine.analyzeFen(c.fenBefore, depth);
+      let drop2 = 0;
+      if (c.playedUci === best2) {
+        // Deep search considers it correct after all; skip
+        continue;
+      } else {
+        const { cp: cpAfter2 } = await engine.analyzeFen(c.fenAfter, depth);
+        drop2 = Math.max(0, cpBefore2 + cpAfter2);
+      }
+      const sev2 = severityFromDrop(drop2, thr);
+      if (!sev2) continue;
+      out.push({
+        fen: c.fenBefore,
+        side: c.side,
+        played: c.san,
+        best: best2,
+        deltaCp: drop2,
+        severity: sev2,
+        pvUci: pv,
+      });
+    }
+    return out;
   } finally {
     engine.kill();
   }
@@ -191,18 +204,19 @@ app.get('/', (req, res) => {
 // Body: { pgn: string, depth?: number, thresholds?: { inacc, mistake, blunder } }
 app.post('/analyze', async (req, res) => {
   try {
-    const { pgn, depth, thresholds } = req.body || {};
+    const { pgn, depth, thresholds, depthFast } = req.body || {};
     if (!pgn || typeof pgn !== 'string') {
       res.status(400).json({ error: 'Missing pgn' });
       return;
     }
     const d = Math.max(6, Math.min(18, parseInt(depth || 12, 10) || 12));
+    const dFast = Math.max(4, Math.min(12, parseInt(depthFast || 8, 10) || 8));
     const thr = {
       inacc: Math.max(0, thresholds?.inacc ?? DEFAULT_THR.inacc),
       mistake: Math.max(0, thresholds?.mistake ?? DEFAULT_THR.mistake),
       blunder: Math.max(0, thresholds?.blunder ?? DEFAULT_THR.blunder),
     };
-    const mistakes = await analyzePGNWithEngine(pgn, d, thr);
+    const mistakes = await analyzePGNWithEngine(pgn, d, thr, dFast);
     res.status(200).json({ mistakes });
   } catch (e) {
     console.error(e);

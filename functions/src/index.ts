@@ -6,7 +6,7 @@
 import { onRequest } from "firebase-functions/v2/https";
 import { setGlobalOptions } from "firebase-functions/v2/options";
 import * as logger from "firebase-functions/logger";
-import type { Request, Response } from "firebase-functions/v2/https";
+import type { Request, Response } from "express";
 
 // Optional runtime deps (declared in package.json):
 //  - chess.js for PGN parsing
@@ -200,6 +200,7 @@ export const analyzePGNs = onRequest({ timeoutSeconds: 300 }, async (req: Reques
     const pgns = Array.isArray(body.pgns) ? body.pgns.filter(s => typeof s === 'string' && s.trim()) : [];
     if (!pgns.length) { res.status(400).json({ error: "Missing pgns[]" }); return; }
     const depth = Math.max(6, Math.min(18, parseInt(String(body.depth||12),10) || 12));
+    const depthFast = 8; // quick first-pass depth
     const thr: Sev = {
       inacc: Math.max(0, (body.thresholds?.inacc ?? 50)),
       mistake: Math.max(0, (body.thresholds?.mistake ?? 150)),
@@ -220,7 +221,8 @@ export const analyzePGNs = onRequest({ timeoutSeconds: 300 }, async (req: Reques
 
     for (const pgn of pgns) {
       const chess = new Chess();
-      chess.loadPgn(pgn, { sloppy: true });
+      // chess.js v1 types no longer expose `sloppy`; use strict:false to allow permissive parsing
+      chess.loadPgn(pgn, { strict: false });
       // Re-iterate from start to get sequence
       const game = new Chess();
       const moves = chess.history({ verbose: true });
@@ -235,38 +237,44 @@ export const analyzePGNs = onRequest({ timeoutSeconds: 300 }, async (req: Reques
           for(const nm of usernames){ if(w===nm || w.includes(nm)) { sideWanted='w'; break; } if(b===nm || b.includes(nm)) { sideWanted='b'; break; } }
         }catch{}
       }
+      // Pass 1: shallow scan to find candidates
+      const candidates: { fenBefore:string; fenAfter:string; side:'w'|'b'; san:string; uci:string }[] = [];
       for (const mv of moves) {
         const fenBefore = game.fen();
         const side = game.turn();
         if (sideWanted && side !== sideWanted) { game.move({ from: mv.from, to: mv.to, promotion: mv.promotion }); continue; }
-        const { cp: cpBefore, bestmove, pv } = await engine.analyze(fenBefore, depth);
-        // apply move
+        const { cp: cpBefore1, bestmove: best1 } = await engine.analyze(fenBefore, depthFast);
         game.move({ from: mv.from, to: mv.to, promotion: mv.promotion });
         const fenAfter = game.fen();
-        // Skip second search when the played move equals engine best move
         const playedUci = (mv.from + mv.to + (mv.promotion ? String(mv.promotion).toLowerCase() : ''));
-        let drop = 0;
-        if (playedUci === bestmove) {
-          drop = 0;
-        } else {
-          const { cp: cpAfter } = await engine.analyze(fenAfter, depth);
-          drop = Math.max(0, cpBefore + cpAfter);
+        if (playedUci === best1) { continue; }
+        const { cp: cpAfter1 } = await engine.analyze(fenAfter, depthFast);
+        const drop1 = Math.max(0, cpBefore1 + cpAfter1);
+        if (severityFromDrop(drop1, thr)) {
+          candidates.push({ fenBefore, fenAfter, side, san: mv.san, uci: playedUci });
         }
-        const sev = severityFromDrop(drop, thr);
-        if (sev) {
-          mistakes.push({
-            id: `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}`,
-            fen: fenBefore,
-            side,
-            played: mv.san,
-            best: bestmove,
-            deltaCp: drop,
-            severity: sev,
-            nextReview: Date.now(),
-            ef: 2.5, reps: 0, interval: 0,
-            pvUci: pv,
-          });
-        }
+      }
+
+      // Pass 2: deep analysis on candidates only
+      for (const c of candidates) {
+        const { cp: cpBefore2, bestmove: best2, pv } = await engine.analyze(c.fenBefore, depth);
+        if (c.uci === best2) { continue; }
+        const { cp: cpAfter2 } = await engine.analyze(c.fenAfter, depth);
+        const drop2 = Math.max(0, cpBefore2 + cpAfter2);
+        const sev2 = severityFromDrop(drop2, thr);
+        if (!sev2) continue;
+        mistakes.push({
+          id: `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}`,
+          fen: c.fenBefore,
+          side: c.side,
+          played: c.san,
+          best: best2,
+          deltaCp: drop2,
+          severity: sev2,
+          nextReview: Date.now(),
+          ef: 2.5, reps: 0, interval: 0,
+          pvUci: pv,
+        });
       }
     }
 

@@ -2091,7 +2091,7 @@
           if(line.startsWith('info')){
             if(!active) return;
             // Track perf/depth from any info line
-            try{ const md=line.match(/\bdepth\s+(\d+)/); if(md){ const nd=parseInt(md[1],10)||0; if(nd!==curDepth){ curDepth=nd; updateMeta(); } } }catch{}
+            try{ const md=line.match(/\bdepth\s+(\d+)/); if(md){ const nd=parseInt(md[1],10)||0; if(nd>curDepth){ curDepth=nd; updateMeta(); } } }catch{}
             try{ const msd=line.match(/\bseldepth\s+(\d+)/); if(msd){ const nsd=parseInt(msd[1],10)||0; if(nsd!==curSelDepth){ curSelDepth=nsd; } } }catch{}
             try{ const mnps=line.match(/\bnps\s+(\d+)/); if(mnps){ lastNps = parseInt(mnps[1],10)||0; updateMeta(); } }catch{}
 
@@ -2178,6 +2178,7 @@
         if(!ensure()) return;
         curFen=fen; lines.clear(); clearUI();
         BOARD.arrows.engine=null; renderArrows();
+        try{ curDepth = 0; updateMeta(); }catch{}
 
         // If not ready yet, queue this position to run immediately after 'readyok'
         if(!ready){

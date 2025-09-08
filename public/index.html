@@ -39,6 +39,7 @@
         }catch{}
       });
     })();
+    try{ window.EngineLive = EngineLive; }catch{}
   </script>
   <!--
     Personal Chess Mistake Trainer (single-file app)
@@ -667,35 +668,30 @@
               <div class="tiny mono" id="trainPgn" style="word-break:break-word">PGN: -</div>
               <div class="tiny">Link: <a id="trainLink" href="#" target="_blank" rel="noopener">-</a></div>
             </div>
+            <!-- Engine Analysis panel moved below Game Info -->
+            <div class="stroke tiny" style="margin-top:10px" id="enginePanel">
+              <div class="row" style="align-items:center; justify-content:space-between; gap:10px">
+                <div style="display:flex; align-items:center; gap:8px">
+                  <b>Engine</b>
+                  <span id="engineStateLive" class="tiny muted">off</span>
+                  <span id="engineMeta" class="tiny mono muted">-</span>
+                  <span id="enginePerf" class="tiny mono muted" title="nodes per second">0 kn/s</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:10px">
+                  <button id="engineSettingsBtn" class="ghost" title="Engine settings" style="padding:2px 8px">⚙</button>
+                  <label class="switch" title="Toggle engine analysis">
+                    <input type="checkbox" id="engineToggle">
+                    <span class="slider"></span>
+                  </label>
+                </div>
+              </div>
+              <div id="engineLines" class="mono" style="margin-top:6px; white-space:pre-wrap"></div>
+            </div>
             <div class="row" style="margin-top:10px">
               <button id="btnExitTrain" class="ghost">Exit</button>
             </div>
 
           </div>
-        </div>
-        <!-- Engine Analysis panel under the board area -->
-        <div class="stroke tiny" style="margin-top:10px" id="enginePanel">
-          <div class="row" style="align-items:center; justify-content:space-between; gap:10px">
-            <div style="display:flex; align-items:center; gap:8px">
-              <b>Engine</b>
-              <span id="engineStateLive" class="tiny muted">off</span>
-              <span id="engineMeta" class="tiny mono muted">-</span>
-              <span id="enginePerf" class="tiny mono muted" title="nodes per second">0 kn/s</span>
-            </div>
-            <div style="display:flex; align-items:center; gap:10px">
-              <div class="tiny" style="display:flex; align-items:center; gap:6px">
-                <span class="muted">Lines</span>
-                <button id="mpDec" class="ghost" style="padding:2px 8px">-</button>
-                <span id="mpVal" class="mono">3</span>
-                <button id="mpInc" class="ghost" style="padding:2px 8px">+</button>
-              </div>
-              <label class="switch" title="Toggle engine analysis">
-                <input type="checkbox" id="engineToggle">
-                <span class="slider"></span>
-              </label>
-            </div>
-          </div>
-          <div id="engineLines" class="mono" style="margin-top:6px; white-space:pre-wrap"></div>
         </div>
       </div>
       <div class="card">
@@ -1195,6 +1191,83 @@
         e.preventDefault();
       }
     }, true);
+
+    // Engine Settings modal (PV, Depth)
+    (function(){
+      function buildModal(){
+        const modal = document.createElement('div');
+        modal.id = 'engineSettingsModal';
+        modal.style.display = 'none';
+        modal.innerHTML = `
+          <div id="engSetBackdrop" style="position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(2px);z-index:70"></div>
+          <div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:71">
+            <div class="card" style="width:min(480px, 95vw); max-height:90vh; overflow:auto">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                <h2>Engine Settings</h2>
+                <button id="engSetClose" class="ghost" title="Close">×</button>
+              </div>
+              <div class="row" style="margin-top:10px">
+                <div style="max-width:140px">
+                  <label>PV (lines)</label>
+                  <input id="engPvInput" type="number" min="1" max="10" value="3" />
+                </div>
+                <div class="stroke" style="flex:1">
+                  <div class="small"><b>Depth</b> <span id="engDepthVal" class="mono muted" style="margin-left:6px">16</span></div>
+                  <input id="engDepthInput" type="range" min="1" max="100" value="16" style="width:100%; margin-top:8px" />
+                </div>
+              </div>
+              <div class="row" style="margin-top:12px; justify-content:flex-end">
+                <button id="engSetCancel" class="ghost">Cancel</button>
+                <button id="engSetSave" class="secondary">Save</button>
+              </div>
+            </div>
+          </div>`;
+        document.body.appendChild(modal);
+        return modal;
+      }
+      let modalEl = null;
+      function ensureModal(){ if(!modalEl) modalEl = buildModal(); return modalEl; }
+      function open(){
+        const m = ensureModal();
+        // preload values from EngineLive
+        try{
+          const LS_PV='pmtt_eng_pv', LS_DEPTH='pmtt_eng_depth';
+          let pv = (window.EngineLive && window.EngineLive.getMultiPV) ? window.EngineLive.getMultiPV() : null;
+          let d  = (window.EngineLive && window.EngineLive.getDepth) ? window.EngineLive.getDepth() : null;
+          if(pv==null){ try{ pv = Math.max(1, Math.min(10, parseInt(localStorage.getItem(LS_PV)||'',10)||3)); }catch{ pv=3; } }
+          if(d==null){ try{ d  = Math.max(1, Math.min(100, parseInt(localStorage.getItem(LS_DEPTH)||'',10)||16)); }catch{ d=16; } }
+          const pvEl = document.getElementById('engPvInput'); if(pvEl) pvEl.value = String(pv);
+          const dEl = document.getElementById('engDepthInput'); if(dEl) dEl.value = String(d);
+          const dvEl= document.getElementById('engDepthVal'); if(dvEl) dvEl.textContent = String(d);
+        }catch{}
+        m.style.display = 'block';
+      }
+      function close(){ try{ const m=ensureModal(); m.style.display='none'; }catch{} }
+      let wiredOnce = false;
+      function wire(){
+        if(wiredOnce) return; wiredOnce = true;
+        ensureModal();
+        document.getElementById('engSetBackdrop')?.addEventListener('click', close);
+        document.getElementById('engSetClose')?.addEventListener('click', close);
+        document.getElementById('engSetCancel')?.addEventListener('click', close);
+        const dEl = document.getElementById('engDepthInput');
+        if(dEl){ dEl.addEventListener('input', ()=>{ const dv=document.getElementById('engDepthVal'); if(dv) dv.textContent=String(dEl.value); }); }
+        document.getElementById('engSetSave')?.addEventListener('click', ()=>{
+          try{
+            const LS_PV='pmtt_eng_pv', LS_DEPTH='pmtt_eng_depth';
+            const pv = Math.max(1, Math.min(10, parseInt(document.getElementById('engPvInput')?.value,10)||3));
+            const d  = Math.max(1, Math.min(100, parseInt(document.getElementById('engDepthInput')?.value,10)||16));
+            try{ localStorage.setItem(LS_PV, String(pv)); localStorage.setItem(LS_DEPTH, String(d)); }catch{}
+            if(window.EngineLive){
+              if(window.EngineLive.setMultiPV) window.EngineLive.setMultiPV(pv);
+              if(window.EngineLive.setDepth) window.EngineLive.setDepth(d);
+            }
+          }catch{}
+          close();
+        });
+      }
+      document.getElementById('engineSettingsBtn')?.addEventListener('click', ()=>{ open(); wire(); });
+    })();
 
     /********************************************************************
      * Game viewer (Import page)
@@ -1925,8 +1998,12 @@
       const lines = new Map(); // multipv -> {scoreStr, pvUci:[], pvSan:[]}
       let engineName = '-';
       let lastNps = 0;
-      let multiPV = 3;
-      let depth = 16;
+      const LS_ENG_PV = 'pmtt_eng_pv';
+      const LS_ENG_DEPTH = 'pmtt_eng_depth';
+      function loadPv(){ try{ return Math.max(1, Math.min(10, parseInt(localStorage.getItem(LS_ENG_PV)||'',10)||3)); }catch{ return 3; } }
+      function loadDepth(){ try{ return Math.max(1, Math.min(100, parseInt(localStorage.getItem(LS_ENG_DEPTH)||'',10)||16)); }catch{ return 16; } }
+      let multiPV = loadPv();
+      let depth = loadDepth();
 
       function setState(txt){
         dlog('state ->', txt);
@@ -1937,7 +2014,7 @@
       function updateMeta(){
         try{ const m=$('#engineMeta'); if(m) m.textContent = engineName; }catch{}
         try{ const p=$('#enginePerf'); if(p){ const knps=Math.round(lastNps/1000); p.textContent = `${knps} kn/s`; } }catch{}
-        try{ const v=$('#mpVal'); if(v) v.textContent = String(multiPV); }catch{}
+        // depth/multipv are applied internally; panel shows in settings modal
       }
       function formatScore(line){
         const mMate=line.match(/score\s+mate\s+(-?\d+)/);
@@ -2138,8 +2215,25 @@
       // Small debug surface for manual testing from DevTools
       function ping(){ try{ ensure(); sf && sf.postMessage('uci'); setTimeout(()=>sf && sf.postMessage('isready'), 250); }catch(e){ derr('ping failed', e);} }
       try{ window.EngineLiveDebug = { ping, ensure: ()=>ensure(), post:(s)=>sf && sf.postMessage(String(s)) }; }catch{}
-      function setMultiPV(n){ multiPV = Math.max(1, Math.min(10, parseInt(n,10)||1)); updateMeta(); try{ ensure(); if(ready) sf.postMessage('setoption name MultiPV value '+multiPV); if(active && curFen) analyzeDebounced(curFen); }catch{} }
-      return { enable, disable, analyzeDebounced, setMultiPV };
+      function setMultiPV(n){
+        multiPV = Math.max(1, Math.min(10, parseInt(n,10)||1));
+        try{ localStorage.setItem(LS_ENG_PV, String(multiPV)); }catch{}
+        updateMeta();
+        try{ ensure(); if(ready) sf.postMessage('setoption name MultiPV value '+multiPV); if(active && curFen) analyzeDebounced(curFen); }catch{}
+      }
+      function setDepth(n){
+        depth = Math.max(1, Math.min(100, parseInt(n,10)||depth));
+        try{ localStorage.setItem(LS_ENG_DEPTH, String(depth)); }catch{}
+        updateMeta();
+        try{
+          ensure();
+          if(active && ready){ try{ sf.postMessage('stop'); }catch{} }
+          if(active && curFen) analyzeDebounced(curFen);
+        }catch{}
+      }
+      function getMultiPV(){ return multiPV; }
+      function getDepth(){ return depth; }
+      return { enable, disable, analyzeDebounced, setMultiPV, setDepth, getMultiPV, getDepth };
     })();
     async function analyzeOnServer(pgn, depth){
       const base=(window.SF_BACKEND_URL||'').replace(/\/$/,''); if(!base) throw new Error('SF_BACKEND_URL not set');
@@ -3339,9 +3433,7 @@
         const tog=$('#engineToggle');
         tog && tog.addEventListener('change', ()=>{ if(tog.checked){ EngineLive.enable(); if(BOARD.current) EngineLive.analyzeDebounced(BOARD.current); } else { EngineLive.disable(); } });
         // MultiPV stepper
-        const dec=$('#mpDec'), inc=$('#mpInc');
-        dec && dec.addEventListener('click', ()=>{ const v=parseInt($('#mpVal')?.textContent||'3',10)||3; EngineLive.setMultiPV(Math.max(1,v-1)); });
-        inc && inc.addEventListener('click', ()=>{ const v=parseInt($('#mpVal')?.textContent||'3',10)||3; EngineLive.setMultiPV(Math.min(10,v+1)); });
+// Removed inline Lines +/- controls; configure via Engine settings modal
       }catch{}
     })();
 

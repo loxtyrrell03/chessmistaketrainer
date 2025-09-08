@@ -455,6 +455,7 @@
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
             <b>Imported Games</b>
             <span class="tiny muted" id="importHelp">Fetched games will appear here.</span>
+            <span class="tiny mono" id="importMistakes" style="color:#cbd5e1">Mistakes: 0</span>
             <span style="margin-left:auto"></span>
             <button id="btnClearImports" class="ghost" title="Clear imported games & their mistakes">Clear imports</button>
             <button id="btnAnalyzeImported" class="btn-green" title="Analyse mistakes (server)">Analyse mistakes</button>
@@ -1162,7 +1163,21 @@
     const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
     const uid = () => 'm_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
     function tsToDate(ts){ try{ const d=new Date(ts); return d.toLocaleDateString()+' '+d.toLocaleTimeString(); }catch{return '-';} }
-    function setStatus(msg){ try{ const h=document.getElementById("importHelp"); if(h) h.textContent=msg; }catch{} }
+    function setStatus(msg){
+      try{
+        if(typeof msg === 'string'){
+          // Suppress legacy per-mistake messages; also update counter if present
+          if(/mistakes found:\s*(\d+)/i.test(msg)){
+            try{ const m = msg.match(/mistakes found:\s*(\d+)/i); if(m) setMistakeCounter(parseInt(m[1],10)||0); }catch{}
+            return;
+          }
+          if(/^Analyzing\s+\d+\/\d+/.test(msg)) return;
+          if(/^Done\. Added\s+/i.test(msg)) msg = 'Analysis finished';
+        }
+        const h=document.getElementById('importHelp'); if(h) h.textContent=msg;
+      }catch{}
+    }
+    function setMistakeCounter(n){ try{ const el=document.getElementById('importMistakes'); if(el) el.textContent = `Mistakes: ${n}`; }catch{} }
 
     /********************************************************************
      * Game viewer (Import page)
@@ -1401,7 +1416,6 @@
     function setActiveSet(s){
       ACTIVE_SET = s;
       ACTIVE_SET_KEYS = expandKeys((s&&s.keys)||[]);
-      setStatus(`Active set: ${s?.name||'-'}`);
     }
     function renderActiveSetInfo(){ const el = $('#activeSetInfo'); if(el) el.textContent = `Active set: ${ACTIVE_SET?ACTIVE_SET.name:'â€”'}`; }
 
@@ -2090,13 +2104,38 @@
       const url=`${base}/analyze`;
       const thr=getSev();
       depth = parseInt(depth||window.getAnalysisDepth?.()||12,10)||12;
-      const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pgn,depth,thresholds:thr})});
+      const depthFast = (window.getFastDepth ? window.getFastDepth() : 12);
+      const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pgn,depth,thresholds:thr,depthFast})});
       if(!res.ok) throw new Error(`Stockfish backend error ${res.status}`);
       const data=await res.json(); const mistakes=data.mistakes||[];
       try{
         mistakes.forEach(m=>{ m.pgn=pgn; const h=parsePGNHeaders(pgn); const urlHdr=h.Site||h.Link||''; if(urlHdr && /^https?:\/\//i.test(urlHdr)) m.gameUrl=urlHdr; });
       }catch{}
       return mistakes;
+    }
+
+    // Server: fast pass only
+    async function scanOnServer(pgn, depthFast){
+      const base=(window.SF_BACKEND_URL||'').replace(/\/$/,''); if(!base) throw new Error('SF_BACKEND_URL not set');
+      const url=`${base}/scan`;
+      const thr=getSev();
+      const dFast = parseInt(depthFast||window.getFastDepth?.()||12,10)||12;
+      const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pgn,depthFast:dFast,thresholds:thr})});
+      if(!res.ok) throw new Error(`Stockfish scan error ${res.status}`);
+      const data=await res.json();
+      return Array.isArray(data.candidates)?data.candidates:[];
+    }
+
+    // Server: deep pass on candidates
+    async function analyzeCandidatesOnServer(candidates, depth){
+      const base=(window.SF_BACKEND_URL||'').replace(/\/$/,''); if(!base) throw new Error('SF_BACKEND_URL not set');
+      const url=`${base}/analyzeCandidates`;
+      const thr=getSev();
+      const d = parseInt(depth||window.getAnalysisDepth?.()||12,10)||12;
+      const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({candidates,depth:d,thresholds:thr})});
+      if(!res.ok) throw new Error(`Stockfish analyzeCandidates error ${res.status}`);
+      const data=await res.json();
+      return Array.isArray(data.mistakes)?data.mistakes:[];
     }
 
     // NEW: keep a stacked list of imported games across sources
@@ -2186,8 +2225,19 @@
       inferUsernames();
       const all=[];
       let i=0;
+      let phaseTimer = null;
       for(const pgn of list){
         if(state.stop) break;
+        try{
+          const fastDepth = (window.getFastDepth ? window.getFastDepth() : 12);
+          setStatus(`Fast pass at depth: ${fastDepth} — Game ${i+1}/${list.length}`);
+          setMistakeCounter(all.length);
+          try{
+            const deep = parseInt(window.getAnalysisDepth?.()||12,10)||12;
+            if(phaseTimer) { clearTimeout(phaseTimer); phaseTimer = null; }
+            phaseTimer = setTimeout(()=>{ try{ setStatus(`Deep analysis at depth: ${deep} - Game ${i+1}/${list.length}`); }catch{} }, 1500);
+          }catch{}
+        }catch{}
         setStatus(`Analyzing ${++i}/${list.length} â€” mistakes found: ${all.length}`);
         try{
           let ms=[];
@@ -2216,12 +2266,21 @@
             });
           }catch{}
 
+          // Update status: deep analysis phase for this game
+          try{ if(phaseTimer){ clearTimeout(phaseTimer); phaseTimer=null; } }catch{}
+          try{
+            const deep = parseInt(window.getAnalysisDepth?.()||12,10)||12;
+            setStatus(`Deep analysis at depth: ${deep} - Game ${i}/${list.length}`);
+            await sleep(20);
+          }catch{}
+
           // Apply user and severity filters
           ms = filterMistakesToUserOnly(ms).filter(m => (window.includeSeverity ? window.includeSeverity(m.severity) : true));
           if(ms.length){
             for(const m of ms){
               all.push(m);
               LAST_ANALYZED.mistakes = all.slice();
+              try{ setMistakeCounter(all.length); }catch{}
               try{
                 const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`;
                 setStatus(`Analyzing ${i}/${list.length} â€” mistakes found: ${all.length}`);
@@ -2251,22 +2310,107 @@
       }
     }
 
-    // Local fallback (slow)
+    // New two-step analyzer that uses backend scan + deep endpoints when available
+    async function analyzeImportedWithBackendAbortable2(state){
+      const imported = window.importedGames || [];
+      const list = imported.filter(x => x && x.sel!==false).map(x => x.pgn);
+      if(!list.length){ alert('No imported games found. Import games first.'); return; }
+      inferUsernames();
+      const all=[];
+      let i=0;
+      for(const pgn of list){
+        if(state.stop) break;
+        const idx = i+1;
+        const fastDepth = (window.getFastDepth ? window.getFastDepth() : 12);
+        setStatus(`Fast pass at depth: ${fastDepth} - Game ${idx}/${list.length}`);
+        setMistakeCounter(all.length);
+        let ms=[];
+        try{
+          if(window.SF_BACKEND_URL){
+            let candidates=[];
+            try{ candidates = await scanOnServer(pgn, fastDepth); }
+            catch(e){ console.warn('scan failed; fallback to /analyze', e); ms = await analyzeOnServer(pgn, window.getAnalysisDepth ? window.getAnalysisDepth() : 12); }
+            if(!ms.length && Array.isArray(candidates)){
+              const deep = parseInt(window.getAnalysisDepth?.()||12,10)||12;
+              setStatus(`Deep analysis at depth: ${deep} - Game ${idx}/${list.length}`);
+              ms = await analyzeCandidatesOnServer(candidates, deep);
+            }
+          } else if(window.FN_BASE){
+            ms = await analyzeOnBackend([pgn]);
+          } else {
+            ms = await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ setMistakeCounter(all.length); }catch{} });
+          }
+        }catch(e){ console.warn('Analyze failed:', e); }
+
+        // Attach PGN and URL
+        try{
+          const hdr = parsePGNHeaders(pgn);
+          const urlHdr = hdr.Site || hdr.Link || '';
+          (ms||[]).forEach(m => { if(!m.pgn) m.pgn = pgn; if(!m.gameUrl && urlHdr && /^https?:\/\//i.test(urlHdr)) m.gameUrl = urlHdr; });
+        }catch{}
+
+        // Filter and accumulate
+        ms = filterMistakesToUserOnly(ms).filter(m => (window.includeSeverity ? window.includeSeverity(m.severity) : true));
+        for(const m of (ms||[])){
+          all.push(m); LAST_ANALYZED.mistakes = all.slice();
+          try{ setMistakeCounter(all.length); }catch{}
+          try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; }catch{}
+        }
+        i++;
+      }
+      if(all.length) addMistakes(all);
+
+      const srcSet = new Set(imported.map(x => x.source || 'Imported'));
+      const tagBase = (srcSet.size===1 ? Array.from(srcSet)[0] : 'Imported');
+      const tagName = `${tagBase}${state.stop ? ' (partial)' : ''} ${new Date().toLocaleString()}`;
+      LAST_ANALYZED = { mistakes: all.slice(), suggestedName: tagName };
+      try{ const btn=$('#btnCreateSetFromLast'); const info=$('#createSetInfo'); if(btn){ btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; } if(info) info.textContent = all.length>0 ? `Ready: ${all.length} mistake(s) detected in last analysis.` : '-'; }catch{}
+
+      setStatus(state.stop ? 'Analysis stopped' : 'Analysis finished');
+    }
+
+    // Local fallback (two-pass)
     async function analyzeManualLocal(pgn, onFound){
-      const cl=ChessLite(); const seq=cl.loadPGN(pgn).filter(x=>x.san);
-      const mistakes=[]; const cl2=ChessLite(); cl2.reset();
+      const clRead = ChessLite();
+      const seq = clRead.loadPGN(pgn).filter(x=>x.san);
+      const game = ChessLite(); game.reset();
+      const mistakes = [];
       const sideWanted = userSideForPGN(pgn);
       const depth = parseInt(window.getAnalysisDepth?.()||12,10)||12;
+      const depthFast = (window.getFastDepth ? parseInt(window.getFastDepth(),10)||12 : 12);
+
+      // Pass 1: shallow scan to find candidates
+      const candidates = [];
       for(const mv of seq){
-        const fenBefore=cl2.fen(); const sideToMove=cl2.turn();
-        const { cp:cpBefore, bestmove } = await Engine.analyze(fenBefore, depth);
-        const uci=cl2.parseSANtoMove(mv.san); if(!uci) continue;
-        cl2.moveUci(uci); const fenAfter=cl2.fen();
-        const { cp:cpAfter } = await Engine.analyze(fenAfter, depth);
-        const drop=Math.max(0, cpBefore + cpAfter); const sev=severityFromDrop(drop);
-        const include = (window.includeSeverity ? window.includeSeverity(sev) : true);
-        if(sev && include && sideWanted && sideToMove===sideWanted){
-          const m = { id:uid(), fen:fenBefore, side:sideToMove, played:mv.san, best:bestmove, deltaCp:drop, severity:sev, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn };
+        const fenBefore = game.fen();
+        const side = game.turn();
+        if(sideWanted && side !== sideWanted){
+          const skipUci = game.parseSANtoMove(mv.san); if(skipUci) game.moveUci(skipUci);
+          continue;
+        }
+        const { cp: cpBefore1, bestmove: best1 } = await Engine.analyze(fenBefore, depthFast);
+        const playedUci = game.parseSANtoMove(mv.san); if(!playedUci) continue;
+        game.moveUci(playedUci);
+        const fenAfter = game.fen();
+        if(playedUci === best1) { continue; }
+        const { cp: cpAfter1 } = await Engine.analyze(fenAfter, depthFast);
+        const drop1 = Math.max(0, cpBefore1 + cpAfter1);
+        if(severityFromDrop(drop1)){
+          candidates.push({ fenBefore, fenAfter, side, san: mv.san, uci: playedUci });
+        }
+      }
+
+      // Pass 2: deep analysis on candidates only
+      try{ setStatus(`Deep analysis at depth: ${depth}`); await sleep(10); }catch{}
+      for(const c of candidates){
+        const { cp: cpBefore2, bestmove: best2 } = await Engine.analyze(c.fenBefore, depth);
+        if(c.uci === best2) { continue; }
+        const { cp: cpAfter2 } = await Engine.analyze(c.fenAfter, depth);
+        const drop2 = Math.max(0, cpBefore2 + cpAfter2);
+        const sev2 = severityFromDrop(drop2);
+        const include = (window.includeSeverity ? window.includeSeverity(sev2) : true);
+        if(sev2 && include){
+          const m = { id:uid(), fen:c.fenBefore, side:c.side, played:c.san, best:best2, deltaCp:drop2, severity:sev2, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn };
           mistakes.push(m);
           try{ if(typeof onFound==='function') onFound(m); }catch{}
         }
@@ -2960,7 +3104,12 @@
           if(btn) btn.textContent='Create set (0 mistakes)';
           if(info) info.textContent='-';
         }catch{}
-        try{ await analyzeImportedWithBackendAbortable(ANALYZE_STATE); }catch(e){ setStatus('Error: '+(e?.message||e)); }
+        try{
+          const fd = (window.getFastDepth ? window.getFastDepth() : 12);
+          setStatus(`Fast pass at depth: ${fd}`);
+          setMistakeCounter(0);
+        }catch{}
+        try{ await (window.analyzeImportedWithBackendAbortable2 ? analyzeImportedWithBackendAbortable2 : analyzeImportedWithBackendAbortable)(ANALYZE_STATE); }catch(e){ setStatus('Error: '+(e?.message||e)); }
         // ensure button reset (in case stop wasn't pressed)
         btnAnalyze.dataset.state='idle';
         btnAnalyze.textContent='Analyse mistakes';
@@ -3464,6 +3613,7 @@
 
       // Expose helpers used below
       window.getAnalysisDepth = loadDepth;
+      window.getFastDepth = function(){ return 12; };
     })();
 
     // Add-to-existing-set modal

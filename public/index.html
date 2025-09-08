@@ -1194,7 +1194,7 @@
       }
     }, true);
 
-    // Engine Settings modal (PV, Depth)
+    // Engine Settings modal (PV, Depth, Arrows)
     (function(){
       function buildModal(){
         const modal = document.createElement('div');
@@ -1212,6 +1212,10 @@
                 <div style="max-width:140px">
                   <label>PV (lines)</label>
                   <input id="engPvInput" type="number" min="1" max="10" value="3" />
+                </div>
+                <div style="max-width:140px">
+                  <label>Arrows</label>
+                  <input id="engArrowInput" type="number" min="0" max="10" value="1" />
                 </div>
                 <div class="stroke" style="flex:1">
                   <div class="small"><b>Depth</b> <span id="engDepthVal" class="mono muted" style="margin-left:6px">16</span></div>
@@ -1233,14 +1237,19 @@
         const m = ensureModal();
         // preload values from EngineLive
         try{
-          const LS_PV='pmtt_eng_pv', LS_DEPTH='pmtt_eng_depth';
+          const LS_PV='pmtt_eng_pv', LS_DEPTH='pmtt_eng_depth', LS_ARROWS='pmtt_eng_arrows';
           let pv = (window.EngineLive && window.EngineLive.getMultiPV) ? window.EngineLive.getMultiPV() : null;
           let d  = (window.EngineLive && window.EngineLive.getDepth) ? window.EngineLive.getDepth() : null;
+          let arrows = (window.EngineLive && window.EngineLive.getArrowCount) ? window.EngineLive.getArrowCount() : null;
           if(pv==null){ try{ pv = Math.max(1, Math.min(10, parseInt(localStorage.getItem(LS_PV)||'',10)||3)); }catch{ pv=3; } }
           if(d==null){ try{ d  = Math.max(1, Math.min(100, parseInt(localStorage.getItem(LS_DEPTH)||'',10)||16)); }catch{ d=16; } }
+          if(arrows==null){ try{ arrows = Math.max(0, Math.min(10, parseInt(localStorage.getItem(LS_ARROWS)||'',10)||1)); }catch{ arrows=1; } }
+          // cap arrows by pv
+          arrows = Math.max(0, Math.min(pv, arrows));
           const pvEl = document.getElementById('engPvInput'); if(pvEl) pvEl.value = String(pv);
           const dEl = document.getElementById('engDepthInput'); if(dEl) dEl.value = String(d);
           const dvEl= document.getElementById('engDepthVal'); if(dvEl) dvEl.textContent = String(d);
+          const aEl = document.getElementById('engArrowInput'); if(aEl){ aEl.max=String(pv); aEl.value = String(arrows); }
         }catch{}
         m.style.display = 'block';
       }
@@ -1254,15 +1263,21 @@
         document.getElementById('engSetCancel')?.addEventListener('click', close);
         const dEl = document.getElementById('engDepthInput');
         if(dEl){ dEl.addEventListener('input', ()=>{ const dv=document.getElementById('engDepthVal'); if(dv) dv.textContent=String(dEl.value); }); }
+        // When PV changes, adjust Arrows max immediately
+        const pvEl = document.getElementById('engPvInput');
+        const aEl = document.getElementById('engArrowInput');
+        if(pvEl && aEl){ pvEl.addEventListener('input', ()=>{ try{ const pv=Math.max(1, Math.min(10, parseInt(pvEl.value,10)||1)); aEl.max=String(pv); if(parseInt(aEl.value,10)>pv) aEl.value=String(pv); }catch{} }); }
         document.getElementById('engSetSave')?.addEventListener('click', ()=>{
           try{
-            const LS_PV='pmtt_eng_pv', LS_DEPTH='pmtt_eng_depth';
+            const LS_PV='pmtt_eng_pv', LS_DEPTH='pmtt_eng_depth', LS_ARROWS='pmtt_eng_arrows';
             const pv = Math.max(1, Math.min(10, parseInt(document.getElementById('engPvInput')?.value,10)||3));
             const d  = Math.max(1, Math.min(100, parseInt(document.getElementById('engDepthInput')?.value,10)||16));
-            try{ localStorage.setItem(LS_PV, String(pv)); localStorage.setItem(LS_DEPTH, String(d)); }catch{}
+            const arrows = Math.max(0, Math.min(pv, parseInt(document.getElementById('engArrowInput')?.value,10)||1));
+            try{ localStorage.setItem(LS_PV, String(pv)); localStorage.setItem(LS_DEPTH, String(d)); localStorage.setItem(LS_ARROWS, String(arrows)); }catch{}
             if(window.EngineLive){
               if(window.EngineLive.setMultiPV) window.EngineLive.setMultiPV(pv);
               if(window.EngineLive.setDepth) window.EngineLive.setDepth(d);
+              if(window.EngineLive.setArrowCount) window.EngineLive.setArrowCount(arrows);
             }
           }catch{}
           close();
@@ -2012,10 +2027,13 @@
       let curSelDepth = 0; // optional seldepth
       const LS_ENG_PV = 'pmtt_eng_pv';
       const LS_ENG_DEPTH = 'pmtt_eng_depth';
+      const LS_ENG_ARROWS = 'pmtt_eng_arrows';
       function loadPv(){ try{ return Math.max(1, Math.min(10, parseInt(localStorage.getItem(LS_ENG_PV)||'',10)||3)); }catch{ return 3; } }
       function loadDepth(){ try{ return Math.max(1, Math.min(100, parseInt(localStorage.getItem(LS_ENG_DEPTH)||'',10)||16)); }catch{ return 16; } }
+      function loadArrows(){ try{ return Math.max(0, Math.min(10, parseInt(localStorage.getItem(LS_ENG_ARROWS)||'',10)||1)); }catch{ return 1; } }
       let multiPV = loadPv();
       let depth = loadDepth();
+      let arrowCount = Math.min(loadArrows(), multiPV);
 
       function setState(txt){
         dlog('setState', 'state ->', txt, '| flags:', {ready, active, pending, gotUci});
@@ -2029,6 +2047,21 @@
         try{ const d=$('#engineDepth'); if(d){ d.textContent = `depth: ${depth}/${curDepth||0}`; } }catch{}
       }
       function clearReadyRetryTimers(){ try{ readyRetryTimers.forEach(t=>clearTimeout(t)); readyRetryTimers=[]; }catch{} }
+
+      function recalcEngineArrowsFromLines(){
+        try{
+          if(!arrowCount || arrowCount<=0){ BOARD.arrows.engine=null; renderArrows(); return; }
+          const arr=[];
+          for(let i=1;i<=multiPV;i++){
+            const ln=lines.get(i);
+            const mv=(ln && Array.isArray(ln.pvUci) && ln.pvUci.length)? ln.pvUci[0] : null;
+            if(mv) arr.push(mv);
+            if(arr.length>=arrowCount) break;
+          }
+          BOARD.arrows.engine = arr.length? arr : null;
+          renderArrows();
+        }catch{}
+      }
 
       function restartWorker(reason){
         try{
@@ -2165,12 +2198,8 @@
             const nextScoreStr = hadScore ? scoreStr : (prev.scoreStr||scoreStr);
             const nextScoreStrW = hadScore ? scoreStrW : (prev.scoreStrW||scoreStrW);
             lines.set(idx, { scoreStr: nextScoreStr, scoreStrW: nextScoreStrW, pvUci: nextPvUci, pvSan: nextPvSan });
-
-            // Draw the first PV arrow
-            if(idx===1 && nextPvUci.length){
-              BOARD.arrows.engine = nextPvUci[0];
-              renderArrows();
-            }
+            // Recompute engine arrows from available PVs (top -> down)
+            recalcEngineArrowsFromLines();
             updateUI();
           }
 
@@ -2292,7 +2321,11 @@
         multiPV = Math.max(1, Math.min(10, parseInt(n,10)||1));
         try{ localStorage.setItem(LS_ENG_PV, String(multiPV)); }catch{}
         updateMeta();
+        // Cap arrowCount by new multiPV
+        arrowCount = Math.max(0, Math.min(arrowCount, multiPV));
         try{ ensure(); if(ready) postSF('setoption name MultiPV value '+multiPV); if(active && curFen) analyzeDebounced(curFen); }catch{}
+        // Refresh arrows
+        recalcEngineArrowsFromLines();
       }
       function setDepth(n){
         depth = Math.max(1, Math.min(100, parseInt(n,10)||depth));
@@ -2304,9 +2337,15 @@
           if(active && curFen) analyzeDebounced(curFen);
         }catch{}
       }
+      function setArrowCount(n){
+        arrowCount = Math.max(0, Math.min(parseInt(n,10)||0, multiPV));
+        try{ localStorage.setItem(LS_ENG_ARROWS, String(arrowCount)); }catch{}
+        recalcEngineArrowsFromLines();
+      }
+      function getArrowCount(){ return arrowCount; }
       function getMultiPV(){ return multiPV; }
       function getDepth(){ return depth; }
-      return { enable, disable, analyzeDebounced, setMultiPV, setDepth, getMultiPV, getDepth };
+      return { enable, disable, analyzeDebounced, setMultiPV, setDepth, setArrowCount, getArrowCount, getMultiPV, getDepth };
     })();
     async function analyzeOnServer(pgn, depth){
       const base=(window.SF_BACKEND_URL||'').replace(/\/$/,''); if(!base) throw new Error('SF_BACKEND_URL not set');
@@ -2916,15 +2955,15 @@
       if(!ORIENT_WHITE_BOTTOM){ col=7-col; row=7-row; }
       const cellW=rectW/8, cellH=rectH/8; return { x:dpr*((col+0.5)*cellW), y:dpr*((row+0.5)*cellH) };
     }
-    function drawArrow(ctx,dpr,from,to,color, dashed){
+    function drawArrow(ctx,dpr,from,to,color, dashed, alpha){
       const outer=document.getElementById('trainBoard'); if(!outer) return;
       const rect=outer.getBoundingClientRect();
       const a=sqCenterPx(from, rect.width, rect.height, dpr);
       const b=sqCenterPx(to, rect.width, rect.height, dpr);
       ctx.save();
       if(dashed && ctx.setLineDash) ctx.setLineDash([10*dpr, 8*dpr]);
-      // Make arrows semi-transparent regardless of dashed/solid
-      ctx.globalAlpha = 0.7;
+      // Make arrows semi-transparent; allow caller override per arrow
+      ctx.globalAlpha = (typeof alpha==='number') ? alpha : 0.7;
       ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=6*dpr; ctx.lineCap='round'; ctx.lineJoin='round';
       // Compute arrowhead geometry and shorten shaft so tip sits at the end
       const ang=Math.atan2(b.y-a.y,b.x-a.x);
@@ -2949,7 +2988,19 @@
       const cyan = getComputedStyle(document.documentElement).getPropertyValue('--arrow-engine').trim()||'#00bcd4';
       const u=BOARD.arrows.user; if(u){ drawArrow(ctx,dpr,u.slice(0,2),u.slice(2,4),red,false); }
       const b=BOARD.arrows.best; if(b && BOARD.arrows.showBest){ drawArrow(ctx,dpr,b.slice(0,2),b.slice(2,4),green,false); }
-      const e=BOARD.arrows.engine; if(e){ drawArrow(ctx,dpr,e.slice(0,2),e.slice(2,4),cyan,false); }
+      const e=BOARD.arrows.engine;
+      if(Array.isArray(e) && e.length){
+        const n=e.length; const maxA=0.85, minA=0.30; // best least transparent
+        // Draw weakest first so best ends up on top
+        for(let i=n-1;i>=0;i--){
+          const mv=e[i]||''; if(!mv || mv.length<4) continue;
+          const a = (n===1) ? maxA : (maxA - (i*(maxA-minA)/(n-1)));
+          drawArrow(ctx,dpr,mv.slice(0,2),mv.slice(2,4),cyan,false,a);
+        }
+      } else if(e){
+        // Backward-compat: single engine arrow string
+        drawArrow(ctx,dpr,e.slice(0,2),e.slice(2,4),cyan,false,0.85);
+      }
     }
 
     function drawBoardInto(rootId, fen, whiteBottom){

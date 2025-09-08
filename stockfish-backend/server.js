@@ -128,7 +128,7 @@ function startEngine() {
   return { analyzeFen, newGame, kill: () => { try { eng.kill('SIGTERM'); } catch {} } };
 }
 
-async function analyzePGNWithEngine(pgn, depth = 12, thr = DEFAULT_THR, depthFast = 8) {
+async function analyzePGNWithEngine(pgn, depth = 12, thr = DEFAULT_THR, depthFast = 12) {
   const engine = startEngine();
   try {
     const chess = new Chess();
@@ -210,7 +210,7 @@ app.post('/analyze', async (req, res) => {
       return;
     }
     const d = Math.max(6, Math.min(18, parseInt(depth || 12, 10) || 12));
-    const dFast = Math.max(4, Math.min(12, parseInt(depthFast || 8, 10) || 8));
+    const dFast = Math.max(4, Math.min(12, parseInt(depthFast || 12, 10) || 12));
     const thr = {
       inacc: Math.max(0, thresholds?.inacc ?? DEFAULT_THR.inacc),
       mistake: Math.max(0, thresholds?.mistake ?? DEFAULT_THR.mistake),

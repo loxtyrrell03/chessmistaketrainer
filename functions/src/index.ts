@@ -200,7 +200,7 @@ export const analyzePGNs = onRequest({ timeoutSeconds: 300 }, async (req: Reques
     const pgns = Array.isArray(body.pgns) ? body.pgns.filter(s => typeof s === 'string' && s.trim()) : [];
     if (!pgns.length) { res.status(400).json({ error: "Missing pgns[]" }); return; }
     const depth = Math.max(6, Math.min(18, parseInt(String(body.depth||12),10) || 12));
-    const depthFast = 8; // quick first-pass depth
+    const depthFast = 12; // quick first-pass depth
     const thr: Sev = {
       inacc: Math.max(0, (body.thresholds?.inacc ?? 50)),
       mistake: Math.max(0, (body.thresholds?.mistake ?? 150)),

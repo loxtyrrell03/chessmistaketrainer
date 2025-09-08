@@ -4,6 +4,42 @@
   <meta charset="utf-8" />
   <title>Personal Chess Mistake Trainer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script>
+    // Replace mojibake em/en dash sequences that can appear as "â€”" / "â€“"
+    (function(){
+      function sanitizeNodeText(root){
+        try{
+          var walker = document.createTreeWalker(root || document.body, NodeFilter.SHOW_TEXT);
+          var node;
+          while((node = walker.nextNode())){
+            var t = node.nodeValue;
+            if(!t) continue;
+            var nt = t.replace(/â€”/g, '-').replace(/â€“/g, '-');
+            if(nt !== t) node.nodeValue = nt;
+          }
+        }catch{}
+      }
+      document.addEventListener('DOMContentLoaded', function(){
+        sanitizeNodeText(document.body);
+        try{
+          var mo = new MutationObserver(function(muts){
+            for(var i=0;i<muts.length;i++){
+              var m = muts[i];
+              if(m.type==='childList'){
+                m.addedNodes && m.addedNodes.forEach && m.addedNodes.forEach(function(n){
+                  if(n && n.nodeType===1) sanitizeNodeText(n);
+                  else if(n && n.nodeType===3) sanitizeNodeText(n.parentNode||document.body);
+                });
+              } else if(m.type==='characterData'){
+                sanitizeNodeText(m.target.parentNode||document.body);
+              }
+            }
+          });
+          mo.observe(document.body, { childList:true, subtree:true, characterData:true });
+        }catch{}
+      });
+    })();
+  </script>
   <!--
     Personal Chess Mistake Trainer (single-file app)
 

@@ -1990,13 +1990,21 @@
      ********************************************************************/
     const EngineLive = (() => {
       const DEBUG = (window.DEBUG_ENGINE ?? true);
-      const dlog = (...args)=>{ try{ if(DEBUG) console.log('[EngineLive]', ...args); }catch{} };
-      const derr = (...args)=>{ try{ if(DEBUG) console.error('[EngineLive]', ...args); }catch{} };
+      let __seq = 0;
+      const ts = () => {
+        try{ return new Date().toISOString() + ' +' + (Math.round((performance.now?.()||0))+'ms'); }catch{ return new Date().toISOString(); }
+      };
+      const dlog = (...args)=>{ try{ if(DEBUG) console.log('[EngineLive]', ts(), (++__seq)+':', ...args); }catch{} };
+      const derr = (...args)=>{ try{ if(DEBUG) console.error('[EngineLive]', ts(), (++__seq)+':', ...args); }catch{} };
 
       let sf = null, ready = false, active = false, pending = false;
       let gotUci = false;
       let queuedFen = null;
       let curFen = null, analyzeTimer = null;
+      let handshakeToken = 0;
+      let readyRetryTimers = [];
+      let lastRestartAt = 0;
+      let restartCount = 0;
       const lines = new Map(); // multipv -> {scoreStr, pvUci:[], pvSan:[]}
       let engineName = '-';
       let lastNps = 0;
@@ -2010,7 +2018,7 @@
       let depth = loadDepth();
 
       function setState(txt){
-        dlog('state ->', txt);
+        dlog('setState', 'state ->', txt, '| flags:', {ready, active, pending, gotUci});
         try{ const s = $('#engineStateLive'); if(s) s.textContent = txt; }catch{}
         try{ if(txt==='off'||txt==='error'||txt==='messageerror'){ evalBarVisible(false); } }catch{}
       }
@@ -2019,6 +2027,26 @@
         try{ const m=$('#engineMeta'); if(m) m.textContent = engineName; }catch{}
         try{ const p=$('#enginePerf'); if(p){ const knps=Math.round(lastNps/1000); p.textContent = `${knps} kn/s`; } }catch{}
         try{ const d=$('#engineDepth'); if(d){ d.textContent = `depth: ${depth}/${curDepth||0}`; } }catch{}
+      }
+      function clearReadyRetryTimers(){ try{ readyRetryTimers.forEach(t=>clearTimeout(t)); readyRetryTimers=[]; }catch{} }
+
+      function restartWorker(reason){
+        try{
+          const now=Date.now();
+          if(now - lastRestartAt < 1500){ dlog('restartWorker throttled'); return; }
+          lastRestartAt = now;
+          restartCount++;
+        }catch{}
+        dlog('restartWorker', { reason, restartCount });
+        try{ clearReadyRetryTimers(); }catch{}
+        try{ if(sf && sf.terminate){ sf.terminate(); } }catch{}
+        sf = null; ready = false; gotUci = false;
+        setState('loading');
+        const ok = ensure();
+        if(ok && active && curFen){
+          // Re-run analysis once new worker comes up
+          analyzeDebounced(curFen);
+        }
       }
       function formatScore(line){
         const mMate=line.match(/score\s+mate\s+(-?\d+)/);
@@ -2038,6 +2066,8 @@
           return out;
         }catch{ return pvUci; }
       }
+      function clearReadyRetryTimers(){ try{ readyRetryTimers.forEach(t=>clearTimeout(t)); readyRetryTimers=[]; }catch{} }
+
       function updateUI(){
         const el=$('#engineLines'); if(!el) return;
         const keys=Array.from({length: multiPV}, (_,i)=>i+1);
@@ -2058,7 +2088,10 @@
         try{
           // Use our bridge worker so stdout/stderr are forwarded to main thread
           // and engine assets resolve relative to /engine/
-          sf = new Worker('/engine/stockfish-worker.js');
+          const __wv = (function(){ try{ if(DEBUG){ window.ENGINE_WV = window.ENGINE_WV || Date.now(); return '?v='+window.ENGINE_WV; } }catch{} return ''; })();
+          const workerUrl = '/engine/stockfish-worker.js' + __wv;
+          sf = new Worker(workerUrl);
+          try{ dlog('worker url', workerUrl); }catch{}
           // Expose for DevTools validation
           try{ window._engineWorker = sf; }catch{}
           dlog('worker created');
@@ -2074,12 +2107,14 @@
 
         sf.onmessage = (e) => {
           const line = (''+(e.data||e)).trim();
-          if(DEBUG && line) dlog('worker ->', line.slice(0,240));
+          if(DEBUG && line) dlog('onmessage', 'worker ->', line.slice(0,500));
 
           if(line === 'uciok'){ gotUci=true; try{ sf.postMessage('isready'); }catch{} return; }
           if(line === 'readyok'){
             ready=true; setState('ready');
-            if(queuedFen){ const f=queuedFen; queuedFen=null; go(f); }
+            clearReadyRetryTimers();
+            // If a position is queued (e.g. after stop/isready handshake), start analysis now
+            if(queuedFen){ const f=queuedFen; queuedFen=null; goNow(f); }
             return;
           }
 
@@ -2096,10 +2131,9 @@
             try{ const msd=line.match(/\bseldepth\s+(\d+)/); if(msd){ const nsd=parseInt(msd[1],10)||0; if(nsd!==curSelDepth){ curSelDepth=nsd; } } }catch{}
             try{ const mnps=line.match(/\bnps\s+(\d+)/); if(mnps){ lastNps = parseInt(mnps[1],10)||0; updateMeta(); } }catch{}
 
-            // Only process PV lines that include multipv; ignore generic info to avoid wiping values
+            // Prefer PV lines with explicit multipv, but also handle engines that omit it for PV #1
             const m=line.match(/\bmultipv\s+(\d+)/);
-            if(!m) return;
-            const idx = parseInt(m[1],10)||1;
+            const idx = m ? (parseInt(m[1],10)||1) : 1;
             const scoreStr = formatScore(line);
             // compute eval for white, then adapt to bar orientation
             let cpWhite = 0;
@@ -2145,6 +2179,8 @@
           }
 
           // Emit loader errors to UI as text
+          if(line.startsWith('bestmove')){ dlog('bestmove', line); /* no state change needed; handshake waits for readyok */ }
+
           if(/^stockfish importScripts error:/.test(line) || /^stockfish worker error:/.test(line)){
             try{
               const el=$('#engineLines');
@@ -2169,9 +2205,28 @@
           }catch{}
         };
 
-        try{ dlog('post -> uci'); sf.postMessage('uci'); }catch(e){ derr('post uci failed', e);}        
+        try{ postSF('uci'); }catch(e){ derr('post uci failed', e);}        
         // caller (enable) will set label to "loading"
         return true;
+      }
+
+      // Helper to log and send commands to the worker
+      function postSF(cmd){
+        try{
+          dlog('post ->', cmd);
+          sf && sf.postMessage && sf.postMessage(cmd);
+        }catch(e){ derr('post failed', cmd, e); }
+      }
+
+      // Issue the actual search commands (assumes engine is idle/ready)
+      function goNow(fen){
+        dlog('goNow begin', { fen, multiPV, depth, ready, active });
+        try{ postSF('ucinewgame'); }catch{}
+        try{ postSF('position fen '+fen); }catch{}
+        try{ postSF('setoption name Threads value 1'); }catch{}
+        try{ postSF('setoption name MultiPV value '+multiPV); }catch{}
+        try{ postSF('go depth '+depth); }catch{}
+        dlog('goNow end');
       }
 
       function go(fen){
@@ -2181,33 +2236,35 @@
         BOARD.arrows.engine=null; renderArrows();
         try{ curDepth = 0; updateMeta(); }catch{}
 
-        // If not ready yet, queue this position to run immediately after 'readyok'
+        // If the engine core isn't ready yet, queue and kick uci
         if(!ready){
           queuedFen = fen;
-          try{ sf.postMessage('uci'); }catch{}
+          try{ postSF('uci'); }catch{}
           return;
         }
 
-        pending=true;
-        try{ dlog('post -> stop'); sf.postMessage('stop'); }catch(e){ derr('post stop failed', e); }
-        dlog('post -> ucinewgame'); sf.postMessage('ucinewgame');
-        dlog('post -> position fen', fen);
-        sf.postMessage('position fen '+fen);
-        dlog('post -> setoption Threads=1'); sf.postMessage('setoption name Threads value 1');
-        dlog('post -> setoption MultiPV='+multiPV); sf.postMessage('setoption name MultiPV value '+multiPV);
-        dlog('post -> go depth '+depth); sf.postMessage('go depth '+depth);
-      }
+        // Fast path: do not wait for readyok; UCI is sequential.
+        // Send stop then immediately (or after a tiny delay) post new search commands.
+        queuedFen = null; // we'll launch immediately
+        pending = true;
+        try{ postSF('stop'); }catch(e){ derr('post stop failed', e); }
+        // Small delay helps some builds finish flushing before new position
+        try{ setTimeout(()=>{ if(active && curFen===fen){ dlog('fast goNow'); goNow(fen); } }, 10); }catch{ goNow(fen); }
+        // No readyok timers on the fast path
+        }
 
       function analyzeDebounced(fen){
         if(!active) return;
         curFen=fen;
         clearTimeout(analyzeTimer);
-        analyzeTimer=setTimeout(()=>go(fen), 200);
+        dlog('analyzeDebounced scheduled', { fen });
+        analyzeTimer=setTimeout(()=>{ dlog('analyzeDebounced firing', { fen }); go(fen); }, 80);
       }
 
       function enable(){
         active=true;
-        setState('loading');
+        // Reflect correct state immediately when engine is already initialized
+        setState(ready ? 'ready' : 'loading');
         dlog('enable');
         updateMeta();
         try{ evalBarVisible(true); updateEvalBar(EVALBAR.lastCpWhite||0); }catch{}
@@ -2222,6 +2279,7 @@
         lines.clear();
         clearUI();
         try{ dlog('post -> stop'); sf && sf.postMessage('stop'); }catch{}
+        clearReadyRetryTimers();
         BOARD.arrows.engine=null; renderArrows();
         try{ evalBarVisible(false); }catch{}
         try{ curDepth=0; updateMeta(); }catch{}
@@ -2234,7 +2292,7 @@
         multiPV = Math.max(1, Math.min(10, parseInt(n,10)||1));
         try{ localStorage.setItem(LS_ENG_PV, String(multiPV)); }catch{}
         updateMeta();
-        try{ ensure(); if(ready) sf.postMessage('setoption name MultiPV value '+multiPV); if(active && curFen) analyzeDebounced(curFen); }catch{}
+        try{ ensure(); if(ready) postSF('setoption name MultiPV value '+multiPV); if(active && curFen) analyzeDebounced(curFen); }catch{}
       }
       function setDepth(n){
         depth = Math.max(1, Math.min(100, parseInt(n,10)||depth));
@@ -2242,7 +2300,7 @@
         updateMeta();
         try{
           ensure();
-          if(active && ready){ try{ sf.postMessage('stop'); }catch{} }
+          if(active && ready){ try{ postSF('stop'); }catch{} }
           if(active && curFen) analyzeDebounced(curFen);
         }catch{}
       }
@@ -3004,10 +3062,11 @@
             const tmp=ChessLite(); tmp.loadFEN(BOARD.current); const mv=tmp.moveUci(uci);
             if(!mv.ok) return 'snapback';
             const nextFen = tmp.fen();
+            try{ console.log('[Train]', new Date().toISOString(), 'onDrop move', { uci, nextFen }); }catch{}
             BOARD.chess.loadFEN(nextFen); BOARD.current=nextFen;
             // Remember last move squares for highlight re-application
             BOARD.lastFromTo = { from: source, to: target };
-            try{ if($('#engineToggle')?.checked) EngineLive.analyzeDebounced(nextFen); }catch{}
+            try{ if($('#engineToggle')?.checked){ console.log('[EngineLive]', new Date().toISOString(), 'schedule analyzeDebounced after onDrop'); EngineLive.analyzeDebounced(nextFen); } }catch{}
             try{ $('#sideToMove').textContent = BOARD.chess.turn()==='w'?'White':'Black'; }catch{}
             try{ const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent = `FEN: ${nextFen}`; }catch{}
             BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
@@ -3023,6 +3082,7 @@
     }
 
     function drawBoardMain(fen){
+      try{ console.log('[Train]', new Date().toISOString(), 'drawBoardMain()', { fen, engineToggle: !!document.getElementById('engineToggle')?.checked }); }catch{}
       const board = ensureMainBoard(); if(!board) return;
       if(!fen){
         try{ const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent='FEN: -'; }catch{}
@@ -3130,6 +3190,7 @@
     }
 
     function loadMistakeOnBoard(m){
+      try{ console.log('[Train]', new Date().toISOString(), 'loadMistakeOnBoard()', { fen: m && m.fen, id: m && m.id, side: m && m.side }); }catch{}
       if(!m){ drawBoardMain(null); return; }
       gvHide();
       try{
@@ -3198,7 +3259,7 @@
     });
 
     $('#btnBack')?.addEventListener('click', () => Session.back());
-    $('#btnNext').addEventListener('click', () => Session.next());
+    $('#btnNext').addEventListener('click', () => { try{ console.log('[Train]', new Date().toISOString(), 'Next clicked'); }catch{} Session.next(); });
     $('#btnFlip').addEventListener('click', () => { ORIENT_WHITE_BOTTOM=!ORIENT_WHITE_BOTTOM; if(Session.active) drawBoardMain(Session.active.fen); });
     
     $('#btnExitTrain').addEventListener('click', () => {
@@ -3486,7 +3547,11 @@
       // Engine toggle handlers
       try{
         const tog=$('#engineToggle');
-        tog && tog.addEventListener('change', ()=>{ if(tog.checked){ EngineLive.enable(); if(BOARD.current) EngineLive.analyzeDebounced(BOARD.current); } else { EngineLive.disable(); } });
+        tog && tog.addEventListener('change', ()=>{
+          try{ console.log('[EngineLive]', new Date().toISOString(), 'toggle change ->', tog.checked ? 'ON' : 'OFF'); }catch{}
+          if(tog.checked){ EngineLive.enable(); if(BOARD.current) EngineLive.analyzeDebounced(BOARD.current); }
+          else { EngineLive.disable(); }
+        });
         // MultiPV stepper
 // Removed inline Lines +/- controls; configure via Engine settings modal
       }catch{}

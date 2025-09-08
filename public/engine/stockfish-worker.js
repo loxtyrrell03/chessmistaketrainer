@@ -3,20 +3,25 @@
 
 // Configure Module and file resolution BEFORE loading the engine
 self.Module = self.Module || {};
+var __WDEBUG = true;
+function ts(){ try { return new Date().toISOString() + ' +' + (Math.round((self.performance?.now?.()||0))+'ms'); } catch { return new Date().toISOString(); } }
+function wlog(){ try { if(__WDEBUG) self.postMessage('[bridge] '+ts()+': '+Array.prototype.map.call(arguments, String).join(' ')); } catch {} }
 // Ensure the global variable name that Emscripten expects is defined
 // Stockfish(Module) reads properties from this object; keep it identical to self.Module
 var Module = self.Module;
 
 // Minimal diagnostics to confirm bridge is running
-try { self.postMessage('[bridge] boot'); } catch {}
+try { wlog('boot'); } catch {}
 
 // Important: give pthread helper a definite main script URL (string or Blob)
 // Using an absolute URL avoids any basePath ambiguity inside nested workers.
+let __ver = '';
+try { const __u = new URL(self.location && self.location.href || ''); __ver = __u.search || ''; } catch {}
 try {
   // Use absolute to be robust against base URL quirks
-  self.Module.mainScriptUrlOrBlob = '/engine/stockfish.js';
+  self.Module.mainScriptUrlOrBlob = '/engine/stockfish.js' + __ver;
 } catch {
-  self.Module.mainScriptUrlOrBlob = '/engine/stockfish.js';
+  self.Module.mainScriptUrlOrBlob = '/engine/stockfish.js' + __ver;
 }
 
 // Ensure both the wasm and the pthread helper resolve in this folder.
@@ -25,9 +30,13 @@ self.Module.locateFile = function(requestedPath /*, prefix */) {
   try {
     const name = String(requestedPath).split('?')[0].split('/').pop();
     // Always serve engine assets from /engine/
-    return '/engine/' + name;
+    const r = '/engine/' + name + __ver;
+    wlog('locateFile', requestedPath, '->', r);
+    return r;
   } catch {
-    return '/engine/' + requestedPath;
+    const r = '/engine/' + requestedPath + __ver;
+    wlog('locateFile-catch', requestedPath, '->', r);
+    return r;
   }
 };
 
@@ -37,39 +46,55 @@ self.Module.printErr = function(text) { try { self.postMessage(String(text)); } 
 
 let engine = null;
 const queue = [];
+let __pendingReadyTimer = null;
+function __armReadyokWatch(){ try { if(__pendingReadyTimer) clearTimeout(__pendingReadyTimer); __pendingReadyTimer = setTimeout(()=>{ try{ wlog('readyok timeout; re-posting isready'); engine && engine.postMessage && engine.postMessage('isready'); }catch(e){ wlog('retry isready failed', e&&e.message?e.message:String(e)); } }, 800); }catch{} }
+function __clearReadyokWatch(){ try{ if(__pendingReadyTimer){ clearTimeout(__pendingReadyTimer); __pendingReadyTimer=null; wlog('readyok observed'); } }catch{} }
 // Capture messages that may arrive before the engine and handler are ready
 self.onmessage = function(e) {
   try {
     const msg = e && e.data != null ? e.data : e;
     // If engine is not initialized yet, buffer the message
-    if (!engine) { queue.push(msg); return; }
-    engine.postMessage(msg);
+    if (__WDEBUG) wlog('<- main', JSON.stringify(msg));
+    if (!engine) { queue.push(msg); wlog('queueing (engine not ready). size=', queue.length); return; }
+    try {
+      engine.postMessage(msg);
+      if (__WDEBUG) wlog('-> engine', JSON.stringify(msg));
+      if (String(msg).trim() === 'isready') __armReadyokWatch();
+    } catch (e2) {
+      wlog('engine.postMessage failed', (e2 && e2.message ? e2.message : String(e2)));
+      // Re-enqueue and retry shortly
+      try{
+        queue.push(msg);
+        setTimeout(()=>{ try{ const q = queue.shift(); engine && engine.postMessage && engine.postMessage(q); wlog('retry -> engine', JSON.stringify(q)); if(String(q).trim()==='isready') __armReadyokWatch(); }catch(ex){ wlog('retry failed', ex&&ex.message?ex.message:String(ex)); } }, 50);
+      }catch{}
+    }
   } catch {}
 };
 
 // Load the Emscripten factory and create the engine instance
 try {
-  importScripts('/engine/stockfish.js');
+  wlog('importScripts /engine/stockfish.js'+__ver);
+  importScripts('/engine/stockfish.js'+__ver);
   if (typeof Stockfish === 'function') {
     const attach = (inst) => {
       engine = inst;
-      try { self.postMessage('[bridge] engine created'); } catch {}
+      try { wlog('engine created'); } catch {}
 
       // Hook outputs: prefer message listener; also set print hooks as fallback
       try {
         if (engine && typeof engine.addMessageListener === 'function') {
-          engine.addMessageListener(function(line){ try { self.postMessage(String(line)); } catch {} });
-          try { self.postMessage('[bridge] addMessageListener installed'); } catch {}
+          engine.addMessageListener(function(line){ try { __WDEBUG && wlog('engine->', String(line).slice(0,500)); self.postMessage(String(line)); } catch {} });
+          try { wlog('addMessageListener installed'); } catch {}
         } else {
-          try { self.postMessage('[bridge] addMessageListener not available'); } catch {}
+          try { wlog('addMessageListener not available'); } catch {}
         }
         if (engine) {
           engine.print = function(t){ try { self.postMessage(String(t)); } catch {} };
           engine.printErr = function(t){ try { self.postMessage(String(t)); } catch {} };
-          try { self.postMessage('[bridge] print hooks set'); } catch {}
+          try { wlog('print hooks set'); } catch {}
         }
       } catch (hookErr) {
-        try { self.postMessage('[bridge] hook error: ' + (hookErr && hookErr.message ? hookErr.message : String(hookErr))); } catch {}
+        try { wlog('hook error:', (hookErr && hookErr.message ? hookErr.message : String(hookErr))); } catch {}
       }
 
       // Bridge engine -> main
@@ -77,7 +102,9 @@ try {
         engine.onmessage = function(e) {
           try {
             const msg = e && e.data != null ? e.data : e;
+            try { __WDEBUG && wlog('engine.onmessage ->', String(msg).slice(0,500)); } catch {}
             self.postMessage(msg);
+            try { if(String(msg).trim()==='readyok') __clearReadyokWatch(); }catch{}
           } catch {}
         };
       }
@@ -86,23 +113,34 @@ try {
       self.onmessage = function(e) {
         try {
           const msg = e && e.data != null ? e.data : e;
-          engine && engine.postMessage && engine.postMessage(msg);
+          if (__WDEBUG) wlog('<- main (bridge active)', JSON.stringify(msg));
+          try {
+            engine && engine.postMessage && engine.postMessage(msg);
+            if (__WDEBUG) wlog('-> engine (bridge active)', JSON.stringify(msg));
+            if (String(msg).trim() === 'isready') __armReadyokWatch();
+          } catch (ex) {
+            wlog('engine.postMessage (bridge active) failed', (ex && ex.message ? ex.message : String(ex)));
+            try{
+              // Retry once after a short delay
+              setTimeout(()=>{ try{ engine && engine.postMessage && engine.postMessage(msg); wlog('retry -> engine (bridge active)', JSON.stringify(msg)); if (String(msg).trim()==='isready') __armReadyokWatch(); }catch(ex2){ wlog('retry failed (bridge active)', ex2 && ex2.message ? ex2.message : String(ex2)); } }, 50);
+            }catch{}
+          }
         } catch {}
       };
 
       // Flush queued messages and send UCI
-      try { self.postMessage('[bridge] flush ' + queue.length + ' queued'); } catch {}
-      while (queue.length) { try { engine.postMessage(queue.shift()); } catch {} }
-      try { engine.postMessage('uci'); self.postMessage('[bridge] sent uci'); } catch (e) { try { self.postMessage('[bridge] post uci error: ' + (e && e.message ? e.message : String(e))); } catch {} }
+      try { wlog('flush', String(queue.length), 'queued'); } catch {}
+      while (queue.length) { try { const q = queue.shift(); engine.postMessage(q); __WDEBUG && wlog('flushed -> engine', JSON.stringify(q)); } catch {} }
+      try { engine.postMessage('uci'); wlog('sent uci'); } catch (e) { try { wlog('post uci error:', (e && e.message ? e.message : String(e))); } catch {} }
     };
 
     try {
       const maybe = Stockfish(Module);
       if (maybe && typeof maybe.then === 'function') {
         // Promise resolves to engine instance
-        maybe.then((inst)=>{ try { self.postMessage('[bridge] ready'); } catch {} ; attach(inst); });
+        maybe.then((inst)=>{ try { wlog('module ready (promise)'); } catch {} ; attach(inst); });
       } else if (maybe && maybe.ready && typeof maybe.ready.then === 'function') {
-        maybe.ready.then(()=>{ try { self.postMessage('[bridge] ready'); } catch {} ; attach(maybe); });
+        maybe.ready.then(()=>{ try { wlog('module ready (ready.then)'); } catch {} ; attach(maybe); });
       } else {
         attach(maybe);
       }

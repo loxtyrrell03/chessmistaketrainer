@@ -2952,22 +2952,27 @@
           return true;
         },
         onDrop: (source, target, piece, newPos, oldPos) => {
-          if(source===target) return 'snapback';
-          let uci = source + target;
           try{
-            const legal = BOARD.chess.moves().filter(m=>m.from===source && m.to===target);
-            if(legal.length){ let move=legal[0]; const q=legal.find(m=>m.promotion==='q'); if(q) move=q; if(move.promotion) uci+=move.promotion; }
-          }catch{}
-          const tmp=ChessLite(); tmp.loadFEN(BOARD.current); const mv=tmp.moveUci(uci);
-          if(!mv.ok) return 'snapback';
-          const nextFen = tmp.fen();
-          BOARD.chess.loadFEN(nextFen); BOARD.current=nextFen;
-          try{ if($('#engineToggle')?.checked) EngineLive.analyzeDebounced(nextFen); }catch{}
-          try{ $('#sideToMove').textContent = BOARD.chess.turn()==='w'?'White':'Black'; }catch{}
-          try{ const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent = `FEN: ${nextFen}`; }catch{}
-          BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
-          try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
-          Session.answer(uci);
+            if(source===target) return 'snapback';
+            let uci = source + target;
+            try{
+              const legal = BOARD.chess.moves().filter(m=>m.from===source && m.to===target);
+              if(legal.length){ let move=legal[0]; const q=legal.find(m=>m.promotion==='q'); if(q) move=q; if(move.promotion) uci+=move.promotion; }
+            }catch{}
+            const tmp=ChessLite(); tmp.loadFEN(BOARD.current); const mv=tmp.moveUci(uci);
+            if(!mv.ok) return 'snapback';
+            const nextFen = tmp.fen();
+            BOARD.chess.loadFEN(nextFen); BOARD.current=nextFen;
+            try{ if($('#engineToggle')?.checked) EngineLive.analyzeDebounced(nextFen); }catch{}
+            try{ $('#sideToMove').textContent = BOARD.chess.turn()==='w'?'White':'Black'; }catch{}
+            try{ const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent = `FEN: ${nextFen}`; }catch{}
+            BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
+            try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
+            try{ Session.answer(uci); }catch{}
+          }catch(e){
+            try{ console && console.warn && console.warn('onDrop error', e); }catch{}
+            return 'snapback';
+          }
         }
       });
       return CB.main;
@@ -3023,7 +3028,7 @@
           // clear old arrows, then answer
           BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
           try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
-          Session.answer(uci);
+          try{ Session.answer(uci); }catch{}
         }
         BOARD.selected=null; showHints();
       }
@@ -3075,7 +3080,7 @@
         drawBoardMain(tmp.fen());
         BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
         try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
-        Session.answer(uci);
+        try{ Session.answer(uci); }catch{}
       }
       BOARD.selected=null; showHints();
     }

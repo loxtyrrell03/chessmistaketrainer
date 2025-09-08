@@ -670,12 +670,13 @@
             </div>
             <!-- Engine Analysis panel moved below Game Info -->
             <div class="stroke tiny" style="margin-top:10px" id="enginePanel">
-              <div class="row" style="align-items:center; justify-content:space-between; gap:10px">
-                <div style="display:flex; align-items:center; gap:8px">
+              <div class="row" style="align-items:center; justify-content:space-between; gap:10px; width:100%">
+                <div style="display:flex; align-items:center; gap:8px; flex:1; flex-wrap:wrap">
                   <b>Engine</b>
                   <span id="engineStateLive" class="tiny muted">off</span>
                   <span id="engineMeta" class="tiny mono muted">-</span>
                   <span id="enginePerf" class="tiny mono muted" title="nodes per second">0 kn/s</span>
+                  <span id="engineDepth" class="tiny mono muted" title="depth">depth: -/-</span>
                 </div>
                 <div style="display:flex; align-items:center; gap:10px">
                   <button id="engineSettingsBtn" class="ghost" title="Engine settings" style="padding:2px 8px">⚙</button>
@@ -1998,6 +1999,8 @@
       const lines = new Map(); // multipv -> {scoreStr, pvUci:[], pvSan:[]}
       let engineName = '-';
       let lastNps = 0;
+      let curDepth = 0; // current depth reported by engine
+      let curSelDepth = 0; // optional seldepth
       const LS_ENG_PV = 'pmtt_eng_pv';
       const LS_ENG_DEPTH = 'pmtt_eng_depth';
       function loadPv(){ try{ return Math.max(1, Math.min(10, parseInt(localStorage.getItem(LS_ENG_PV)||'',10)||3)); }catch{ return 3; } }
@@ -2014,7 +2017,7 @@
       function updateMeta(){
         try{ const m=$('#engineMeta'); if(m) m.textContent = engineName; }catch{}
         try{ const p=$('#enginePerf'); if(p){ const knps=Math.round(lastNps/1000); p.textContent = `${knps} kn/s`; } }catch{}
-        // depth/multipv are applied internally; panel shows in settings modal
+        try{ const d=$('#engineDepth'); if(d){ d.textContent = `depth: ${depth}/${curDepth||0}`; } }catch{}
       }
       function formatScore(line){
         const mMate=line.match(/score\s+mate\s+(-?\d+)/);
@@ -2087,8 +2090,15 @@
 
           if(line.startsWith('info')){
             if(!active) return;
-            const m=line.match(/multipv\s+(\d+)/);
-            const idx = m?parseInt(m[1],10):1;
+            // Track perf/depth from any info line
+            try{ const md=line.match(/\bdepth\s+(\d+)/); if(md){ const nd=parseInt(md[1],10)||0; if(nd!==curDepth){ curDepth=nd; updateMeta(); } } }catch{}
+            try{ const msd=line.match(/\bseldepth\s+(\d+)/); if(msd){ const nsd=parseInt(msd[1],10)||0; if(nsd!==curSelDepth){ curSelDepth=nsd; } } }catch{}
+            try{ const mnps=line.match(/\bnps\s+(\d+)/); if(mnps){ lastNps = parseInt(mnps[1],10)||0; updateMeta(); } }catch{}
+
+            // Only process PV lines that include multipv; ignore generic info to avoid wiping values
+            const m=line.match(/\bmultipv\s+(\d+)/);
+            if(!m) return;
+            const idx = parseInt(m[1],10)||1;
             const scoreStr = formatScore(line);
             // compute eval for white, then adapt to bar orientation
             let cpWhite = 0;
@@ -2109,19 +2119,21 @@
                 const pawns = (cpWhite/100).toFixed(2);
                 scoreStrW = (cpWhite>=0?`+${pawns}`:pawns);
               }
-              if(idx===1) updateEvalBar(cpWhite);
+              if(idx===1 && (mMate || mCp)) updateEvalBar(cpWhite);
             }catch{}
+            const prev = lines.get(idx) || {};
             const pvIdx=line.indexOf(' pv ');
-            const pvUci = pvIdx>=0 ? line.slice(pvIdx+4).trim().split(/\s+/) : [];
-            const pvSan = curFen ? pvToSANs(curFen, pvUci) : pvUci;
-            lines.set(idx, { scoreStr, scoreStrW, pvUci, pvSan });
-
-            // nps tracking
-            try{ const mnps=line.match(/\bnps\s+(\d+)/); if(mnps){ lastNps = parseInt(mnps[1],10)||0; updateMeta(); } }catch{}
+            const nextPvUci = pvIdx>=0 ? line.slice(pvIdx+4).trim().split(/\s+/) : (prev.pvUci||[]);
+            const nextPvSan = (pvIdx>=0 && curFen) ? pvToSANs(curFen, nextPvUci) : (prev.pvSan||nextPvUci);
+            // If line had no explicit score, keep previous display string
+            const hadScore = /score\s+(cp|mate)\s+(-?\d+)/.test(line);
+            const nextScoreStr = hadScore ? scoreStr : (prev.scoreStr||scoreStr);
+            const nextScoreStrW = hadScore ? scoreStrW : (prev.scoreStrW||scoreStrW);
+            lines.set(idx, { scoreStr: nextScoreStr, scoreStrW: nextScoreStrW, pvUci: nextPvUci, pvSan: nextPvSan });
 
             // Draw the first PV arrow
-            if(idx===1 && pvUci.length){
-              BOARD.arrows.engine = pvUci[0];
+            if(idx===1 && nextPvUci.length){
+              BOARD.arrows.engine = nextPvUci[0];
               renderArrows();
             }
             updateUI();
@@ -2210,6 +2222,7 @@
         try{ dlog('post -> stop'); sf && sf.postMessage('stop'); }catch{}
         BOARD.arrows.engine=null; renderArrows();
         try{ evalBarVisible(false); }catch{}
+        try{ curDepth=0; updateMeta(); }catch{}
       }
 
       // Small debug surface for manual testing from DevTools
@@ -2791,7 +2804,7 @@
       'P':'?'+VS15,'N':'?'+VS15,'B':'?'+VS15,'R':'?'+VS15,'Q':'?'+VS15,'K':'?'+VS15,
       'p':'?'+VS15,'n':'?'+VS15,'b':'?'+VS15,'r':'?'+VS15,'q':'?'+VS15,'k':'?'+VS15
     };
-    const BOARD = { current:null, selected:null, highlights:new Set(), chess:ChessLite(), arrows:{ user:null, best:null, engine:null, showBest:false } };
+    const BOARD = { current:null, selected:null, highlights:new Set(), chess:ChessLite(), arrows:{ user:null, best:null, engine:null, showBest:false }, lastFromTo:null };
     const CB = { main:null, extras:{} };
     // Evaluation bar state
     const EVALBAR = { lastCpWhite: 0 };
@@ -2950,6 +2963,9 @@
           try{
             CB.main.orientation(ORIENT_WHITE_BOTTOM ? 'white' : 'black');
             CB.main.position(BOARD.current || 'start', false);
+            // Re-apply last-move square highlights after DOM sync
+            clearLastMoveHighlights('#board');
+            const lm = BOARD.lastFromTo; if(lm){ addLastMoveSquare('#board', lm.from); addLastMoveSquare('#board', lm.to); }
           }catch{}
         },
         onDragStart: (source, piece) => {
@@ -2971,6 +2987,8 @@
             if(!mv.ok) return 'snapback';
             const nextFen = tmp.fen();
             BOARD.chess.loadFEN(nextFen); BOARD.current=nextFen;
+            // Remember last move squares for highlight re-application
+            BOARD.lastFromTo = { from: source, to: target };
             try{ if($('#engineToggle')?.checked) EngineLive.analyzeDebounced(nextFen); }catch{}
             try{ $('#sideToMove').textContent = BOARD.chess.turn()==='w'?'White':'Black'; }catch{}
             try{ const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent = `FEN: ${nextFen}`; }catch{}

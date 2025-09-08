@@ -2347,6 +2347,7 @@
       function getDepth(){ return depth; }
       return { enable, disable, analyzeDebounced, setMultiPV, setDepth, setArrowCount, getArrowCount, getMultiPV, getDepth };
     })();
+    try{ window.EngineLive = EngineLive; }catch{}
     async function analyzeOnServer(pgn, depth){
       const base=(window.SF_BACKEND_URL||'').replace(/\/$/,''); if(!base) throw new Error('SF_BACKEND_URL not set');
       const url=`${base}/analyze`;

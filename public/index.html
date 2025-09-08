@@ -2937,6 +2937,13 @@
           // After animation, mark last moved squares
           highlightLastMoveFromDiff('#board', oldPos, newPos);
         },
+        // Defer DOM sync until after snap completes to avoid ghost piece
+        onSnapEnd: () => {
+          try{
+            CB.main.orientation(ORIENT_WHITE_BOTTOM ? 'white' : 'black');
+            CB.main.position(BOARD.current || 'start', false);
+          }catch{}
+        },
         onDragStart: (source, piece) => {
           try{
             const turn = BOARD.chess.turn();
@@ -2955,8 +2962,6 @@
           if(!mv.ok) return 'snapback';
           const nextFen = tmp.fen();
           BOARD.chess.loadFEN(nextFen); BOARD.current=nextFen;
-          CB.main.orientation(ORIENT_WHITE_BOTTOM ? 'white' : 'black');
-          CB.main.position(nextFen, true);
           try{ if($('#engineToggle')?.checked) EngineLive.analyzeDebounced(nextFen); }catch{}
           try{ $('#sideToMove').textContent = BOARD.chess.turn()==='w'?'White':'Black'; }catch{}
           try{ const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent = `FEN: ${nextFen}`; }catch{}

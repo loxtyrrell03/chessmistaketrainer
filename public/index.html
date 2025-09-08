@@ -188,6 +188,10 @@
       aspect-ratio:1 / 1; /* always square */
       background:#ddd;border-radius:12px;overflow:hidden;border:1px solid #c7cdd8;position:relative
     }
+    /* Evaluation bar (left of main board) */
+    .eval-bar{ width:14px; border-radius:10px; overflow:hidden; border:1px solid #2a3142; background:#0a0a0a; flex:0 0 14px; display:none; position:relative }
+    .eval-bar .eval-fill{ position:absolute; left:0; right:0; bottom:0; height:50%; background:#f5f5f5 }
+    .eval-bar .tick{ position:absolute; left:0; right:0; top:50%; height:1px; background:#2a3142; opacity:.6 }
     /* Cursor hint when hovering near corner */
     .board.resize-corner-hover{ cursor:nwse-resize; }
     /* Drag handle for resizing the main board */
@@ -285,6 +289,10 @@
     #statsBoard [data-square].last-move{
       /* slightly transparent yellow to reduce intensity */
       background: rgba(255, 213, 79, 0.6) !important;
+    }
+    /* Prevent native browser drag on chessboard piece images */
+    #board img, #gvBoard img, #statsBoard img {
+      -webkit-user-drag: none; /* vendor-prefixed; JS handler also prevents native drag */
     }
   </style>
 </head>
@@ -627,6 +635,7 @@
       <div class="card">
         <h2>Board</h2>
         <div class="board-wrap" style="margin-top:10px">
+          <div id="evalBar" class="eval-bar" aria-hidden="true"><div class="eval-fill"></div><div class="tick"></div></div>
           <div class="board" id="trainBoard">
             <div id="board" aria-label="chessboard"></div>
             <div id="resizeHandle" class="resize-handle" title="Drag to resize"></div>
@@ -1178,6 +1187,14 @@
       }catch{}
     }
     function setMistakeCounter(n){ try{ const el=document.getElementById('importMistakes'); if(el) el.textContent = `Mistakes: ${n}`; }catch{} }
+
+    // Disable native HTML5 drag inside chess boards (we use chessboard.js's own drag)
+    document.addEventListener('dragstart', function (e) {
+      const t = e.target;
+      if (t && t.tagName === 'IMG' && (t.closest('#board') || t.closest('#gvBoard') || t.closest('#statsBoard'))) {
+        e.preventDefault();
+      }
+    }, true);
 
     /********************************************************************
      * Game viewer (Import page)
@@ -1914,6 +1931,7 @@
       function setState(txt){
         dlog('state ->', txt);
         try{ const s = $('#engineStateLive'); if(s) s.textContent = txt; }catch{}
+        try{ if(txt==='off'||txt==='error'||txt==='messageerror'){ evalBarVisible(false); } }catch{}
       }
       function clearUI(){ try{ const el=$('#engineLines'); if(el) el.textContent=''; }catch{} }
       function updateMeta(){
@@ -1946,7 +1964,8 @@
         for(const k of keys){
           const ln=lines.get(k); if(!ln) continue;
           const san = (ln.pvSan||[]).slice(0,6).join(' ');
-          parts.push(`${k}. ${ln.scoreStr}  ${san}`);
+          const scoreOut = (ln.scoreStrW || ln.scoreStr);
+          parts.push(`${k}. ${scoreOut}  ${san}`);
         }
         el.textContent = parts.join("\n");
       }
@@ -1994,10 +2013,31 @@
             const m=line.match(/multipv\s+(\d+)/);
             const idx = m?parseInt(m[1],10):1;
             const scoreStr = formatScore(line);
+            // compute eval for white, then adapt to bar orientation
+            let cpWhite = 0;
+            let scoreStrW = scoreStr;
+            try{
+              const mMate=line.match(/score\s+mate\s+(-?\d+)/);
+              const mCp=line.match(/score\s+cp\s+(-?\d+)/);
+              const turnWhite = /\sw\s/.test(curFen||' ');
+              if(mMate){
+                const mate=parseInt(mMate[1],10)||0; // positive = mate for side to move
+                // derive white-centric cp and string (# for white, #- for black)
+                const whiteMating = (turnWhite && mate>0) || (!turnWhite && mate<0);
+                scoreStrW = whiteMating ? ('#'+Math.abs(mate)) : ('#-'+Math.abs(mate));
+                const cp = mate>0 ? 10000 : -10000; cpWhite = turnWhite ? cp : -cp;
+              } else if(mCp){
+                const cp=parseInt(mCp[1],10)||0;
+                cpWhite = turnWhite ? cp : -cp;
+                const pawns = (cpWhite/100).toFixed(2);
+                scoreStrW = (cpWhite>=0?`+${pawns}`:pawns);
+              }
+              if(idx===1) updateEvalBar(cpWhite);
+            }catch{}
             const pvIdx=line.indexOf(' pv ');
             const pvUci = pvIdx>=0 ? line.slice(pvIdx+4).trim().split(/\s+/) : [];
             const pvSan = curFen ? pvToSANs(curFen, pvUci) : pvUci;
-            lines.set(idx, { scoreStr, pvUci, pvSan });
+            lines.set(idx, { scoreStr, scoreStrW, pvUci, pvSan });
 
             // nps tracking
             try{ const mnps=line.match(/\bnps\s+(\d+)/); if(mnps){ lastNps = parseInt(mnps[1],10)||0; updateMeta(); } }catch{}
@@ -2079,6 +2119,7 @@
         setState('loading');
         dlog('enable');
         updateMeta();
+        try{ evalBarVisible(true); updateEvalBar(EVALBAR.lastCpWhite||0); }catch{}
         const ok = ensure();
         if(ok && BOARD.current) analyzeDebounced(BOARD.current);
       }
@@ -2091,6 +2132,7 @@
         clearUI();
         try{ dlog('post -> stop'); sf && sf.postMessage('stop'); }catch{}
         BOARD.arrows.engine=null; renderArrows();
+        try{ evalBarVisible(false); }catch{}
       }
 
       // Small debug surface for manual testing from DevTools
@@ -2657,6 +2699,23 @@
     };
     const BOARD = { current:null, selected:null, highlights:new Set(), chess:ChessLite(), arrows:{ user:null, best:null, engine:null, showBest:false } };
     const CB = { main:null, extras:{} };
+    // Evaluation bar state
+    const EVALBAR = { lastCpWhite: 0 };
+
+    function ensureEvalBar(){ try{ const bar=document.getElementById('evalBar'); if(!bar) return null; const outer=document.getElementById('trainBoard'); if(!outer) return bar; const r=outer.getBoundingClientRect(); bar.style.height = r.height+'px'; return bar; }catch{ return null; } }
+    function evalBarVisible(on){ const bar=ensureEvalBar(); if(!bar) return; bar.style.display = on ? 'block' : 'none'; }
+    // White-centric proportion of the bar (0..1); 0.5 = equal
+    function cpToPercentWhite(cpWhite){ const RANGE=1000; let p = 0.5 + (Math.max(-RANGE, Math.min(RANGE, cpWhite)) / (2*RANGE)); return Math.max(0, Math.min(1, p)); }
+    function updateEvalBar(cpWhite){
+      EVALBAR.lastCpWhite = cpWhite;
+      const bar=ensureEvalBar(); if(!bar) return;
+      const fill=bar.querySelector('.eval-fill'); if(!fill) return;
+      const p = cpToPercentWhite(cpWhite);
+      // Height reflects white advantage proportion; anchor to the side of the white pieces
+      fill.style.height = Math.round(p*100)+'%';
+      if(ORIENT_WHITE_BOTTOM){ fill.style.bottom = '0'; fill.style.top = ''; }
+      else { fill.style.top = '0'; fill.style.bottom = ''; }
+    }
 
     function ensureArrowCanvas(){
       const outer = document.getElementById('trainBoard'); if(!outer) return null;
@@ -2665,6 +2724,7 @@
       const rect = outer.getBoundingClientRect();
       const dpr = Math.min(2, (window.devicePixelRatio || 1));
       cv.width = Math.max(1, Math.floor(rect.width*dpr)); cv.height = Math.max(1, Math.floor(rect.height*dpr)); cv.style.width=rect.width+'px'; cv.style.height=rect.height+'px';
+      try{ const bar=document.getElementById('evalBar'); if(bar){ bar.style.height = rect.height+'px'; } }catch{}
       return { cv, dpr, rect };
     }
     function sqCenterPx(sq, rectW, rectH, dpr){
@@ -2831,6 +2891,7 @@
       clearLastMoveHighlights('#board');
       try{ board.resize(); }catch{}
       BOARD.selected=null; BOARD.highlights.clear(); setBoardFonts(); renderArrows();
+      try{ updateEvalBar(EVALBAR.lastCpWhite||0); }catch{}
       try{ if($('#engineToggle')?.checked) EngineLive.analyzeDebounced(fen); }catch{}
     }
 

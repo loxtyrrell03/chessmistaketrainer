@@ -3941,6 +3941,83 @@
       window.getFastDepth = function(){ return 12; };
     })();
 
+    // PGN Import modal (paste or load .pgn/.txt)
+    (function(){
+      function buildModal(){
+        const modal=document.createElement('div');
+        modal.id='pgnImportModal';
+        modal.style.display='none';
+        modal.innerHTML = `
+          <div id="pgnBackdrop" style="position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(2px);z-index:70"></div>
+          <div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:71">
+            <div class="card" style="width:min(720px,95vw); max-height:90vh; overflow:auto">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                <h2>Import PGN</h2>
+                <button id="pgnClose" class="ghost" title="Close">×</button>
+              </div>
+              <div class="tiny muted" style="margin:6px 0 10px 0">Paste one or more complete PGN games below, or load a .pgn file. Multiple games supported.</div>
+              <textarea id="pgnText" rows="14" style="width:100%; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace"></textarea>
+              <input type="file" id="pgnFile" accept=".pgn,.PGN,.txt" multiple style="display:none" />
+              <div class="row" style="margin-top:10px; justify-content:space-between; align-items:center">
+                <div class="tiny muted">Tip: Each game should include header tags like [Event "…"].</div>
+                <div>
+                  <button id="pgnLoadBtn" class="ghost" style="margin-right:8px">Load file…</button>
+                  <button id="pgnCancel" class="ghost">Cancel</button>
+                  <button id="pgnImport" class="secondary">Import</button>
+                </div>
+              </div>
+            </div>
+          </div>`;
+        document.body.appendChild(modal);
+        return modal;
+      }
+      let modalEl=null;
+      function ensure(){ if(!modalEl) modalEl=buildModal(); return modalEl; }
+      function open(){ const m=ensure(); m.style.display='block'; }
+      function close(){ try{ ensure().style.display='none'; }catch{} }
+
+      function splitPgns(text){
+        try{
+          const s=String(text||'').replace(/\r/g,'').trim();
+          if(!s) return [];
+          const out=[]; const re=/(\s*\[[^\]]+\]\s*)+([\s\S]*?)(?=(\s*\[[^\]]+\]\s*)+|$)/g;
+          let m; while((m=re.exec(s))){ const block=(m[0]||'').trim(); if(block) out.push(block); }
+          if(!out.length) return [s];
+          return out;
+        }catch{ return []; }
+      }
+
+      function wire(){
+        ensure();
+        const $g=id=>document.getElementById(id);
+        $g('pgnBackdrop')?.addEventListener('click', close);
+        $g('pgnClose')?.addEventListener('click', close);
+        $g('pgnCancel')?.addEventListener('click', close);
+        $g('pgnLoadBtn')?.addEventListener('click', ()=>{ $g('pgnFile')?.click(); });
+        $g('pgnFile')?.addEventListener('change', async (ev)=>{
+          try{
+            const files=Array.from(ev.target.files||[]);
+            if(!files.length) return;
+            const texts=await Promise.all(files.map(f=>f.text().catch(()=>'')));
+            const cur=$g('pgnText').value||'';
+            const add=texts.filter(Boolean).join('\n\n');
+            $g('pgnText').value = (cur? (cur.replace(/\s+$/,'')+'\n\n') : '') + add;
+          }catch{}
+        });
+        $g('pgnImport')?.addEventListener('click', ()=>{
+          try{
+            const raw=$g('pgnText')?.value||'';
+            const games=splitPgns(raw).filter(g=>/\[Event\s+\"/.test(g)||/\[Site\s+\"/.test(g));
+            if(!games.length){ try{ setStatus('No PGN games found to import.'); }catch{} close(); return; }
+            appendImportedGames(games, 'Imported');
+            try{ setStatus(`Imported ${games.length} game${games.length!==1?'s':''}.`); }catch{}
+          }catch(e){ try{ setStatus('Import failed: '+(e?.message||e)); }catch{} }
+          close();
+        });
+      }
+      document.getElementById('btnOpenPGN')?.addEventListener('click', ()=>{ open(); wire(); });
+    })();
+
     // Add-to-existing-set modal
     (function(){
       const LS_SETS = 'pmtt_sets';

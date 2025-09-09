@@ -4572,11 +4572,6 @@
       document.getElementById('navStats')?.classList.toggle('active', which==='stats');
       document.getElementById('navSets')?.classList.toggle('active', which==='sets');
       document.getElementById('navTrain')?.classList.toggle('active', which==='train');
-      // When leaving Train, make sure the live engine is turned OFF
-      if(which !== 'train'){
-        try{ window.EngineLive && window.EngineLive.disable && window.EngineLive.disable(); }catch{}
-        try{ const t=document.getElementById('engineToggle'); if(t && t.checked){ t.checked=false; } }catch{}
-      }
       if(which==='train' || which==='stats'){
         setTimeout(()=>{
           try{ ensureMainBoard(); CB.main && CB.main.resize(); if(BOARD.current) CB.main.position(BOARD.current, false); else CB.main.clear(true); }catch{}

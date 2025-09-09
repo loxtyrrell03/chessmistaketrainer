@@ -1411,6 +1411,40 @@
      ********************************************************************/
     // Key helpers: tolerate historical variations (SAN vs UCI stored in sets/records)
     const UCI_RE = /^[a-h][1-8][a-h][1-8][qrbn]?$/i;
+    // === NEW: snapshot + hydrate helpers ===
+    function snapshotMistake(m){
+      return {
+        id: m.id || uid(),
+        fen: m.fen, side: m.side, played: m.played, best: m.best, deltaCp: m.deltaCp,
+        pgn: m.pgn || null, gameUrl: m.gameUrl || null,
+        ef: m.ef ?? 2.5, reps: m.reps ?? 0, interval: m.interval ?? 0,
+        nextReview: m.nextReview ?? nowTs()
+      };
+    }
+
+    async function hydrateMistakesFromSet(set){
+      if(!set || !Array.isArray(set.items) || !set.items.length) return;
+      const existing = loadMistakes();
+      const toAdd = [];
+      for(const item of set.items){
+        // Use robust key comparison
+        const wantKeys = new Set(keysForMistake(item));
+        const found = existing.some(m => {
+          const have = keysForMistake(m);
+          for(const k of have){ if(wantKeys.has(k)) return true; }
+          return false;
+        });
+        if(!found){
+          const snap = {...item};
+          snap.id = snap.id || uid();
+          snap.nextReview = nowTs(); // make it available in SRS immediately
+          toAdd.push(snap);
+        }
+      }
+      if(toAdd.length){
+        saveMistakes([...existing, ...toAdd]);
+      }
+    }
     const isUci = (s) => !!(s && UCI_RE.test(String(s)));
     function normFenKey(fen){
       try{
@@ -1497,6 +1531,26 @@
       }catch{}
       return out;
     }
+    async function ensureMistakesForSet(targetSet, timeoutMs){
+      function hasSome(){
+        const all = loadMistakes();
+        if(!all || !all.length) return false;
+        if(!targetSet || !targetSet.keys || !targetSet.keys.length) return all.length>0;
+        const keySet = expandKeys(targetSet.keys);
+        return all.some(m => {
+          const ks = keysForMistake(m);
+          for(const k of ks){ if(keySet.has(k)) return true; }
+          return false;
+        });
+      }
+      if(hasSome()) return;
+      await new Promise((res)=>{
+        let done=false;
+        const onUpd=()=>{ if(!done && hasSome()){ done=true; try{ window.removeEventListener('firebase:mMistakesUpdated', onUpd); }catch{} res(); } };
+        try{ window.addEventListener('firebase:mMistakesUpdated', onUpd); }catch{}
+        setTimeout(()=>{ if(!done){ done=true; try{ window.removeEventListener('firebase:mMistakesUpdated', onUpd); }catch{} res(); } }, Math.max(500, timeoutMs||3000));
+      });
+    }
     function loadSets(){ try{ return JSON.parse(localStorage.getItem(LS_SETS)||'[]'); }catch{return [];} }
     function saveSets(arr){
       localStorage.setItem(LS_SETS, JSON.stringify(arr));
@@ -1513,7 +1567,15 @@
       const keys = Array.from(new Set(mistakes.map(keyOf)));
       const existing = findExistingSetByNameAndKeys(name||'', keys);
       if(existing) return existing; // avoid duplicates
-      const set = { id: uid(), name: name || `Set ${new Date().toLocaleString()}`, keys, created: nowTs() };
+      const items = mistakes.map(snapshotMistake);
+      const set = {
+        id: uid(),
+        name: name || `Set ${new Date().toLocaleString()}`,
+        keys,
+        items,          // NEW: denormalized snapshot
+        version: 2,     // marker for future migrations
+        created: nowTs()
+      };
       const sets = loadSets(); sets.unshift(set); saveSets(sets); return set;
     }
 
@@ -1538,7 +1600,7 @@
         const sets = loadSets().filter(x => x.id!==id); saveSets(sets);
         try{ if(fb()) fb().deleteSetRemote(id).catch(()=>{}); }catch{}
       }));
-      async function ensureMistakesForSet(targetSet, timeoutMs){
+      async function ensureMistakesForSetLegacy(targetSet, timeoutMs){
         function hasSome(){
           const all = loadMistakes();
           if(!all || !all.length) return false;
@@ -1563,8 +1625,15 @@
         enterTrainingMode();
         renderActiveSetInfo();
         try{ const info=document.getElementById('mInfo'); if(info) info.textContent='Loading set…'; }catch{}
+        await hydrateMistakesFromSet(s);
         await ensureMistakesForSet(s, 10000);
-        Session.startSRS();
+        const due = pickDueSRS();
+        if(!due.length){
+          const N = (Array.isArray(s.items) && s.items.length) ? s.items.length : s.keys.length;
+          Session.startWoodpecker(Math.max(1, N));
+        } else {
+          Session.startSRS();
+        }
       }));
       tb.querySelectorAll('input.setNameInput').forEach(inp => inp.addEventListener('change', () => {
         const id = inp.getAttribute('data-setid'); const sets = loadSets();
@@ -2928,8 +2997,8 @@
         BOARD.arrows.user = null; BOARD.arrows.best = null; BOARD.arrows.showBest=false; renderArrows();
         try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
         if(queue.length===0){
-          if(mode==='srs'){ queue = pickDueSRS(); if(queue.length===0){ $('#mInfo').textContent='No SRS items due now. ??'; active=null; drawBoardMain(null); return; } }
-          else { $('#mInfo').textContent='Woodpecker set complete. ?'; active=null; drawBoardMain(null); return; }
+          if(mode==='srs'){ queue = pickDueSRS(); if(queue.length===0){ $('#mInfo').textContent='No SRS items due now. 🙂'; active=null; drawBoardMain(null); return; } }
+          else { $('#mInfo').textContent='Woodpecker set complete. 🎉'; active=null; drawBoardMain(null); return; }
         }
         if(active){ history.push({ item: active, pending: pendingFirstTry }); }
         active = queue.shift(); pendingFirstTry=true; loadMistakeOnBoard(active); updateNavButtons();
@@ -3545,24 +3614,27 @@
 
     $('#btnClearImports')?.addEventListener('click', () => {
       const toRemove = new Set((window.importedGames||[]).map(r=>r.pgn));
-      // Remove mistakes created from these imports (match by pgn)
+
+      // NEW: Ask user; default is to KEEP mistakes (recommended)
       if(toRemove.size){
-        let list=loadMistakes();
-        list=list.filter(m => !toRemove.has(m.pgn));
-        saveMistakes(list);
+        const drop = window.confirm('Also remove mistakes created from these imports?\n\nRecommended: Choose "Cancel" to keep mistakes so saved sets continue to work.');
+        if(drop){
+          let list = loadMistakes();
+          list = list.filter(m => !toRemove.has(m.pgn));
+          saveMistakes(list);
+        }
       }
+
       // Clear table + viewer + state
       window.importedGames = [];
       try{ if(fb()) fb().clearImportsRemote().catch(()=>{}); }catch{}
       rebuildImportedTable();
       const help=$('#importHelp'); if(help) help.textContent='Imported games cleared.';
       gvHide();
-      // reset create-set affordance
+
+      // leave LAST_ANALYZED as-is
       try{
-        LAST_ANALYZED = { mistakes: [], suggestedName: '' };
-        const btn=$('#btnCreateSetFromLast'); const info=$('#createSetInfo');
-        if(btn){ btn.textContent = 'Create set (0 mistakes)'; }
-        if(info){ info.textContent='-'; }
+        LAST_ANALYZED = { mistakes: LAST_ANALYZED.mistakes || [], suggestedName: LAST_ANALYZED.suggestedName || '' };
       }catch{}
     });
 
@@ -3668,11 +3740,21 @@
       enterTrainingMode();
       renderActiveSetInfo();
       try{ const info=document.getElementById('mInfo'); if(info) info.textContent='Loading set.'; }catch{}
+      await hydrateMistakesFromSet(s);
       try{ await ensureMistakesForSet(s, 10000); }catch{}
 
       const mode=$('#modeSel').value;
-      if(mode==='woodpecker'){ const N=parseInt($('#wpCount').value,10)||10; Session.startWoodpecker(N); }
-      else{ Session.startSRS(); }
+      if(mode==='woodpecker'){
+        const N=parseInt($('#wpCount').value,10)||10; Session.startWoodpecker(N);
+      } else {
+        const due = pickDueSRS();
+        if(!due.length){
+          const N = (Array.isArray(s.items) && s.items.length) ? s.items.length : s.keys.length;
+          Session.startWoodpecker(Math.max(1, N));
+        } else {
+          Session.startSRS();
+        }
+      }
     });
     $('#modeSel').addEventListener('change', () => { $('#wpCountWrap').style.display = ($('#modeSel').value==='woodpecker') ? 'block' : 'none'; });
 
@@ -3693,6 +3775,26 @@
 
       rebuildImportedTable();
       renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); renderSets(); renderSetsForTrain(); renderActiveSetInfo();
+      // One-time backfill: add snapshot items to old sets that have none
+      try{
+        const sets = loadSets();
+        let changed = false;
+        const all = loadMistakes();
+        for(const s of sets){
+          if(!Array.isArray(s.items)){
+            const items = [];
+            const keySet = expandKeys(s.keys||[]);
+            for(const m of all){
+              const ks = keysForMistake(m);
+              for(const k of ks){ if(keySet.has(k)){ items.push(snapshotMistake(m)); break; } }
+            }
+            s.items = items;
+            s.version = 2;
+            changed = true;
+          }
+        }
+        if(changed) saveSets(sets);
+      }catch{}
       drawBoardMain(null);
       try{ setTrainNavEnabled(false); tvUpdate(); }catch{}
       setStatus('Loading engineâ€¦'); await Engine.ensure(); setStatus('Idle');
@@ -3740,7 +3842,7 @@
         const tr = document.createElement('tr');
         tr.style.cursor='pointer';
         tr.innerHTML = `<td>${++i}</td><td>${s.name}</td><td>${s.keys.length}</td><td><button class="ghost" data-id="${s.id}">Train</button></td>`;
-        const start = async ()=>{ setActiveSet(s); enterTrainingMode(); renderActiveSetInfo(); try{ const info=document.getElementById('mInfo'); if(info) info.textContent='Loading set.'; }catch{}; try{ await ensureMistakesForSet(s, 10000); }catch{}; Session.startSRS(); };
+        const start = async ()=>{ setActiveSet(s); enterTrainingMode(); renderActiveSetInfo(); try{ const info=document.getElementById('mInfo'); if(info) info.textContent='Loading set.'; }catch{}; await hydrateMistakesFromSet(s); try{ await ensureMistakesForSet(s, 10000); }catch{}; const due = pickDueSRS(); if(!due.length){ const N = (Array.isArray(s.items) && s.items.length) ? s.items.length : s.keys.length; Session.startWoodpecker(Math.max(1, N)); } else { Session.startSRS(); } };
         tr.addEventListener('click', (ev)=>{ if((ev.target && ev.target.tagName==='BUTTON')) return; start(); });
         tr.querySelector('button')?.addEventListener('click', (ev)=>{ ev.stopPropagation(); start(); });
         tb.appendChild(tr);

@@ -3396,7 +3396,9 @@
       }catch{}
       $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> Â· <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> Â· ?cp ${Math.round(m.deltaCp)}`;
       $('#yourMove').textContent='â€”'; $('#feedback').textContent='â€”';
-      ORIENT_WHITE_BOTTOM = (m.side==='w'); drawBoardMain(m.fen);
+      ORIENT_WHITE_BOTTOM = (m.side==='w');
+      try{ initTrainViewFromMistake(m); }catch{}
+      drawBoardMain(m.fen);
       try{
         const cpl = formatCentipawnLoss(m.deltaCp);
         $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> Â· centipawn loss: ${cpl}`;
@@ -4363,6 +4365,7 @@
   </script>
 </body>
 </html>
+
 
 
 

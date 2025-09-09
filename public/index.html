@@ -1403,7 +1403,18 @@
         const wrap = document.getElementById('moveList'); if(!wrap) return;
         wrap.querySelectorAll('.mv.active').forEach(el=>el.classList.remove('active'));
         const cur = wrap.querySelector(`.mv[data-idx="${TRAINVIEW.idx}"]`);
-        if(cur){ cur.classList.add('active'); try{ if(typeof cur.scrollIntoView==='function'){ cur.scrollIntoView({block:'nearest', inline:'nearest'}); } }catch{} }
+        if(cur){
+          cur.classList.add('active');
+          // Keep the selected move visible inside the moveList scroller only
+          try{
+            const cr = (typeof cur.getBoundingClientRect==='function') ? cur.getBoundingClientRect() : null;
+            const pr = (typeof (wrap).getBoundingClientRect==='function') ? (wrap).getBoundingClientRect() : null;
+            if(cr && pr){
+              if(cr.top < pr.top){ wrap.scrollTop += (cr.top - pr.top) - 4; }
+              else if(cr.bottom > pr.bottom){ wrap.scrollTop += (cr.bottom - pr.bottom) + 4; }
+            }
+          }catch{}
+        }
       }catch{}
     }
     function resetTrainToggles(){
@@ -4605,11 +4616,12 @@
           const tag = (t && t.tagName ? String(t.tagName).toLowerCase() : '');
           if(tag==='input' || tag==='textarea' || tag==='select' || (t && t.isContentEditable)) return;
           if(ev.metaKey || ev.ctrlKey || ev.altKey) return;
+          const anyViewer = !!(document.getElementById('tvControls') || document.getElementById('gvPrev') || document.getElementById('gvNext'));
           let handled=false;
           if(ev.key==='ArrowLeft') handled = clickFirstEnabled(['tvPrev','gvPrev']);
           else if(ev.key==='ArrowRight') handled = clickFirstEnabled(['tvNext','gvNext']);
-          else if(ev.key==='ArrowUp') handled = clickFirstEnabled(['tvStart','gvStart']);
-          else if(ev.key==='ArrowDown') handled = clickFirstEnabled(['tvEnd','gvEnd']);
+          else if(ev.key==='ArrowUp') { if(anyViewer){ ev.preventDefault(); ev.stopPropagation(); } handled = clickFirstEnabled(['tvStart','gvStart']); }
+          else if(ev.key==='ArrowDown') { if(anyViewer){ ev.preventDefault(); ev.stopPropagation(); } handled = clickFirstEnabled(['tvEnd','gvEnd']); }
           if(handled){ ev.preventDefault(); ev.stopPropagation(); }
         }catch{}
       });

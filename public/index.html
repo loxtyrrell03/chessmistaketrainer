@@ -637,9 +637,21 @@
         <h2>Board</h2>
         <div class="board-wrap" style="margin-top:10px">
           <div id="evalBar" class="eval-bar" aria-hidden="true"><div class="eval-fill"></div><div class="tick"></div></div>
-          <div class="board" id="trainBoard">
-            <div id="board" aria-label="chessboard"></div>
-            <div id="resizeHandle" class="resize-handle" title="Drag to resize"></div>
+          <div class="train-block" style="display:flex; flex-direction:column; gap:8px; align-items:stretch">
+            <div class="board" id="trainBoard">
+              <div id="board" aria-label="chessboard"></div>
+              <div id="resizeHandle" class="resize-handle" title="Drag to resize"></div>
+            </div>
+            <!-- Train viewer controls (navigate game mainline) -->
+            <div id="tvControls" class="tiny" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
+              <span id="tvStatus" class="mono">-</span>
+              <div style="margin-left:auto; display:flex; gap:6px">
+                <button id="tvStart" class="ghost" title="Start">«</button>
+                <button id="tvPrev" class="ghost" title="Prev">‹</button>
+                <button id="tvNext" class="ghost" title="Next">›</button>
+                <button id="tvEnd" class="ghost" title="End">»</button>
+              </div>
+            </div>
           </div>
           <div style="flex:1;min-width:260px">
             <div class="legend tiny">
@@ -1183,6 +1195,7 @@
         }
         const h=document.getElementById('importHelp'); if(h) h.textContent=msg;
       }catch{}
+      try{ initTrainViewFromMistake(m); }catch{}
     }
     function setMistakeCounter(n){ try{ const el=document.getElementById('importMistakes'); if(el) el.textContent = `Mistakes: ${n}`; }catch{} }
 
@@ -1299,6 +1312,45 @@
       const idx = GAMEVIEW.idx;
       lbl.textContent = total ? `Move ${idx}/${total}` : '-';
       setBoardFonts(); /* keep font sizes responsive */
+    }
+
+    /********************************************************************
+     * Train viewer (Train page main board)
+     ********************************************************************/
+    const TRAINVIEW = { fens: [], idx: 0, total: 0 };
+    function tvUpdate(){
+      const lbl = document.getElementById('tvStatus'); if(!lbl) return;
+      const total = TRAINVIEW.total; const idx = TRAINVIEW.idx;
+      lbl.textContent = total ? `Move ${idx}/${total}` : '-';
+      try{ setBoardFonts(); }catch{}
+    }
+    function setTrainNavEnabled(on){
+      ['tvStart','tvPrev','tvNext','tvEnd'].forEach(id=>{ try{ const b=document.getElementById(id); if(b) b.disabled = !on; }catch{} });
+    }
+    function initTrainViewFromMistake(m){
+      try{
+        if(!m || !m.pgn){ TRAINVIEW.fens=[]; TRAINVIEW.idx=0; TRAINVIEW.total=0; setTrainNavEnabled(false); tvUpdate(); return; }
+        const cl = ChessLite(); cl.reset();
+        const startFen = cl.fen();
+        const mixed = cl.loadPGN(m.pgn);
+        const fens = [startFen, ...mixed.filter(x=>x && x.san).map(x=>x.fenAfter)];
+        TRAINVIEW.fens = fens; TRAINVIEW.total = Math.max(0, fens.length-1);
+        // Find the index of the active mistake position within the mainline
+        let idx = fens.findIndex(f=>f===m.fen);
+        if(idx < 0){
+          const norm = s => String(s||'').split(' ').slice(0,4).join(' ');
+          const want = norm(m.fen);
+          idx = fens.findIndex(f=>norm(f)===want);
+        }
+        TRAINVIEW.idx = Math.max(0, idx>=0 ? idx : 0);
+        setTrainNavEnabled(!!fens.length);
+        tvUpdate();
+      }catch(e){ try{ console.warn('TRAINVIEW init error', e); }catch{}; TRAINVIEW.fens=[]; TRAINVIEW.idx=0; TRAINVIEW.total=0; setTrainNavEnabled(false); tvUpdate(); }
+    }
+    function resetTrainToggles(){
+      try{ BOARD.arrows.user=null; BOARD.arrows.showBest=false; renderArrows(); }catch{}
+      try{ document.getElementById('btnReveal')?.setAttribute('aria-pressed','false'); }catch{}
+      try{ document.getElementById('btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
     }
 
     /********************************************************************
@@ -2971,13 +3023,13 @@
       // Compute arrowhead geometry and shorten shaft so tip sits at the end
       const ang=Math.atan2(c.y-a.y,c.x-a.x);
       const ux=Math.cos(ang), uy=Math.sin(ang);
-      const headLen=(18*dpr)*kHead; // length along axis (can differ from shaft scale)
-      const headWidth=(16*dpr)*kHead; // base width (can differ from shaft scale)
+      const headLen=(12*dpr)*kHead; // shorter head so tip stays within target square
+      const headWidth=(14*dpr)*kHead; // slightly narrower head for balance
       const px=-uy, py=ux; // unit perpendicular
       // Place triangle so a chosen point along its axis aligns to the square center.
       // Let P be the alignment point along [B..T] with fraction p (0=base midpoint, 1=tip).
       // Then B = P - p*L*u and T = P + (1-p)*L*u.
-      const pAlign = (typeof align==='number' && isFinite(align)) ? Math.max(0, Math.min(1, align)) : (1/3); // default: centroid alignment
+      const pAlign = (typeof align==='number' && isFinite(align)) ? Math.max(0, Math.min(1, align)) : 1.0; // default: tip aligns to square center
       const bx = c.x - ux*(pAlign*headLen), by = c.y - uy*(pAlign*headLen); // base midpoint
       const tx = c.x + ux*((1-pAlign)*headLen), ty = c.y + uy*((1-pAlign)*headLen); // tip
       const lx=bx+px*(headWidth/2), ly=by+py*(headWidth/2);
@@ -3005,14 +3057,15 @@
           const mv=e[i]||''; if(!mv || mv.length<4) continue;
           const a = (n===1) ? maxA : (maxA - (i*(maxA-minA)/(n-1)));
           const s = (n===1) ? maxS : (maxS - (i*(maxS-minS)/(n-1)));
-          // For the top move arrow (i==0), align closer to tip and use slightly smaller head than shaft scale
-          const align = (i===0) ? 0.50 : (1/3);
-          const h = (i===0) ? (s*0.8) : s; // shrink head ~20% for top arrow only
+          // Align arrow tip to the target square center for all engine arrows
+          const align = 1.0;
+          // Use slightly smaller head than shaft scale for clarity
+          const h = (i===0) ? (s*0.8) : (s*0.9);
           drawArrow(ctx,dpr,mv.slice(0,2),mv.slice(2,4),cyan,false,a,s,align,h);
         }
       } else if(e){
         // Backward-compat: single engine arrow string
-        drawArrow(ctx,dpr,e.slice(0,2),e.slice(2,4),cyan,false,0.85,2.00,0.50,2.00*0.8);
+        drawArrow(ctx,dpr,e.slice(0,2),e.slice(2,4),cyan,false,0.85,2.00,1.0,2.00*0.8);
       }
     }
 
@@ -3324,7 +3377,15 @@
 
     $('#btnBack')?.addEventListener('click', () => Session.back());
     $('#btnNext').addEventListener('click', () => { try{ console.log('[Train]', new Date().toISOString(), 'Next clicked'); }catch{} Session.next(); });
-    $('#btnFlip').addEventListener('click', () => { ORIENT_WHITE_BOTTOM=!ORIENT_WHITE_BOTTOM; if(Session.active) drawBoardMain(Session.active.fen); });
+    $('#btnFlip').addEventListener('click', () => {
+      ORIENT_WHITE_BOTTOM = !ORIENT_WHITE_BOTTOM;
+      if(TRAINVIEW && TRAINVIEW.fens && TRAINVIEW.fens.length){
+        const i = Math.max(0, Math.min(TRAINVIEW.idx||0, TRAINVIEW.fens.length-1));
+        drawBoardMain(TRAINVIEW.fens[i]);
+      } else if(Session.active){
+        drawBoardMain(Session.active.fen);
+      }
+    });
     
     $('#btnExitTrain').addEventListener('click', () => {
       showSection('train');
@@ -3559,6 +3620,30 @@
     $('#gvStart')?.addEventListener('click', () => { GAMEVIEW.idx=0; setTimeout(()=>{ drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], GAMEVIEW.whiteBottom); gvUpdate(); }, 0); });
     $('#gvEnd')?.addEventListener('click', () => { GAMEVIEW.idx=Math.max(0,GAMEVIEW.fens.length-1); setTimeout(()=>{ drawBoardInto('gvBoard', GAMEVIEW.fens[GAMEVIEW.idx], GAMEVIEW.whiteBottom); gvUpdate(); }, 0); });
 
+    // Train viewer controls (operate on main board, ignore explored lines)
+    $('#tvPrev')?.addEventListener('click', () => {
+      if(!TRAINVIEW.fens.length) return;
+      if(TRAINVIEW.idx>0){ TRAINVIEW.idx--; }
+      else { return; }
+      setTimeout(()=>{ drawBoardMain(TRAINVIEW.fens[TRAINVIEW.idx]); tvUpdate(); resetTrainToggles(); }, 0);
+    });
+    $('#tvNext')?.addEventListener('click', () => {
+      if(!TRAINVIEW.fens.length) return;
+      if(TRAINVIEW.idx+1<TRAINVIEW.fens.length){ TRAINVIEW.idx++; }
+      else { return; }
+      setTimeout(()=>{ drawBoardMain(TRAINVIEW.fens[TRAINVIEW.idx]); tvUpdate(); resetTrainToggles(); }, 0);
+    });
+    $('#tvStart')?.addEventListener('click', () => {
+      if(!TRAINVIEW.fens.length) return;
+      TRAINVIEW.idx=0;
+      setTimeout(()=>{ drawBoardMain(TRAINVIEW.fens[TRAINVIEW.idx]); tvUpdate(); resetTrainToggles(); }, 0);
+    });
+    $('#tvEnd')?.addEventListener('click', () => {
+      if(!TRAINVIEW.fens.length) return;
+      TRAINVIEW.idx=Math.max(0, TRAINVIEW.fens.length-1);
+      setTimeout(()=>{ drawBoardMain(TRAINVIEW.fens[TRAINVIEW.idx]); tvUpdate(); resetTrainToggles(); }, 0);
+    });
+
     /********************************************************************
      * Session start buttons
      ********************************************************************/
@@ -3598,6 +3683,7 @@
       rebuildImportedTable();
       renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); renderSets(); renderSetsForTrain(); renderActiveSetInfo();
       drawBoardMain(null);
+      try{ setTrainNavEnabled(false); tvUpdate(); }catch{}
       setStatus('Loading engineâ€¦'); await Engine.ensure(); setStatus('Idle');
       // keep boards/arrows sized when window resizes
       window.addEventListener('resize', ()=>{
@@ -3660,6 +3746,7 @@
       const sec = document.getElementById('trainSection'); if(!sec) return;
       sec.classList.remove('training-mode');
       try{ drawBoardMain(null); }catch{}
+      try{ setTrainNavEnabled(false); tvUpdate(); }catch{}
     }
     // Pointer-based resize on the corner handle
     function setupBoardResizeHandle(){

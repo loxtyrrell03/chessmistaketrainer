@@ -2956,7 +2956,7 @@
       if(!ORIENT_WHITE_BOTTOM){ col=7-col; row=7-row; }
       const cellW=rectW/8, cellH=rectH/8; return { x:dpr*((col+0.5)*cellW), y:dpr*((row+0.5)*cellH) };
     }
-    function drawArrow(ctx,dpr,from,to,color, dashed, alpha, scale){
+    function drawArrow(ctx,dpr,from,to,color, dashed, alpha, scale, align, headScale){
       const outer=document.getElementById('trainBoard'); if(!outer) return;
       const rect=outer.getBoundingClientRect();
       const a=sqCenterPx(from, rect.width, rect.height, dpr);
@@ -2966,18 +2966,20 @@
       // Make arrows semi-transparent; allow caller override per arrow
       ctx.globalAlpha = (typeof alpha==='number') ? alpha : 0.7;
       const k = (typeof scale==='number' && isFinite(scale) && scale>0) ? scale : 1;
+      const kHead = (typeof headScale==='number' && isFinite(headScale) && headScale>0) ? headScale : k;
       ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=(6*dpr)*k; ctx.lineCap='round'; ctx.lineJoin='round';
       // Compute arrowhead geometry and shorten shaft so tip sits at the end
       const ang=Math.atan2(c.y-a.y,c.x-a.x);
       const ux=Math.cos(ang), uy=Math.sin(ang);
-      const headLen=(18*dpr)*k; // length along axis
-      const headWidth=(16*dpr)*k; // base width
+      const headLen=(18*dpr)*kHead; // length along axis (can differ from shaft scale)
+      const headWidth=(16*dpr)*kHead; // base width (can differ from shaft scale)
       const px=-uy, py=ux; // unit perpendicular
-      // Place triangle so its centroid is at c (destination square center)
-      // For an isosceles triangle with base midpoint B and tip T: centroid G = (T + 2B)/3.
-      // With |T-B| = headLen along +u, solve: B = G - (headLen/3)u, T = G + (2*headLen/3)u.
-      const bx = c.x - ux*(headLen/3), by = c.y - uy*(headLen/3); // base midpoint
-      const tx = c.x + ux*(2*headLen/3), ty = c.y + uy*(2*headLen/3); // tip
+      // Place triangle so a chosen point along its axis aligns to the square center.
+      // Let P be the alignment point along [B..T] with fraction p (0=base midpoint, 1=tip).
+      // Then B = P - p*L*u and T = P + (1-p)*L*u.
+      const pAlign = (typeof align==='number' && isFinite(align)) ? Math.max(0, Math.min(1, align)) : (1/3); // default: centroid alignment
+      const bx = c.x - ux*(pAlign*headLen), by = c.y - uy*(pAlign*headLen); // base midpoint
+      const tx = c.x + ux*((1-pAlign)*headLen), ty = c.y + uy*((1-pAlign)*headLen); // tip
       const lx=bx+px*(headWidth/2), ly=by+py*(headWidth/2);
       const rx=bx-px*(headWidth/2), ry=by-py*(headWidth/2);
       // Draw shaft only up to base midpoint
@@ -3003,11 +3005,14 @@
           const mv=e[i]||''; if(!mv || mv.length<4) continue;
           const a = (n===1) ? maxA : (maxA - (i*(maxA-minA)/(n-1)));
           const s = (n===1) ? maxS : (maxS - (i*(maxS-minS)/(n-1)));
-          drawArrow(ctx,dpr,mv.slice(0,2),mv.slice(2,4),cyan,false,a,s);
+          // For the top move arrow (i==0), align closer to tip and use slightly smaller head than shaft scale
+          const align = (i===0) ? 0.50 : (1/3);
+          const h = (i===0) ? (s*0.8) : s; // shrink head ~20% for top arrow only
+          drawArrow(ctx,dpr,mv.slice(0,2),mv.slice(2,4),cyan,false,a,s,align,h);
         }
       } else if(e){
         // Backward-compat: single engine arrow string
-        drawArrow(ctx,dpr,e.slice(0,2),e.slice(2,4),cyan,false,0.85,2.00);
+        drawArrow(ctx,dpr,e.slice(0,2),e.slice(2,4),cyan,false,0.85,2.00,0.50,2.00*0.8);
       }
     }
 

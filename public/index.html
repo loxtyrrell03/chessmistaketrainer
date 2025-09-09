@@ -187,7 +187,7 @@
       /* board width controlled via --board-size; stays square */
       width: min(100%, var(--board-size));
       aspect-ratio:1 / 1; /* always square */
-      background:#ddd;border-radius:12px;overflow:hidden;border:1px solid #c7cdd8;position:relative
+      background:transparent;border-radius:12px;overflow:hidden;border:1px solid #c7cdd8;position:relative
     }
     /* Evaluation bar (left of main board) */
     .eval-bar{ width:14px; border-radius:10px; overflow:hidden; border:1px solid #2a3142; background:#0a0a0a; flex:0 0 14px; display:none; position:relative }
@@ -213,7 +213,7 @@
       width:100%;
       max-width:540px;
       aspect-ratio:1 / 1;
-      background:#ddd;border-radius:12px;overflow:hidden;border:1px solid #c7cdd8;position:relative
+      background:transparent;border-radius:12px;overflow:hidden;border:1px solid #c7cdd8;position:relative
     }
 
     /* Ensure chessboard.js containers fill their wrappers */
@@ -3979,7 +3979,9 @@
     function applyBoardSize(v){
       // Allow large sizes so fullscreen resizing isn't capped artificially
       const hi = 2400; // upper bound; final width still limited by layout (min(100%, var(--board-size)))
-      const size = Math.max(320, Math.min(hi, parseInt(v,10)||520));
+      let size = Math.max(320, Math.min(hi, parseInt(v,10)||520));
+      // Snap to nearest multiple of 8 to avoid leftover grey borders from rounding
+      size = size - (size % 8);
       document.documentElement.style.setProperty('--board-size', size+'px');
       const lbl=$('#boardSizeVal'); if(lbl) lbl.textContent = `(${size})`;
       localStorage.setItem('pmtt_board_size', String(size));
@@ -3987,6 +3989,21 @@
       try{ Object.values(CB.extras||{}).forEach(b=>{ try{ b && b.resize && b.resize(); }catch{} }); }catch{}
       setBoardFonts();
       renderArrows();
+    }
+    // Ensure main board width snaps to 8px grid even when constrained by layout (e.g., window resize)
+    function snapMainBoardToGrid(){
+      try{
+        const outer = document.getElementById('trainBoard'); if(!outer) return;
+        const avail = Math.floor(outer.parentElement ? outer.parentElement.clientWidth : outer.clientWidth);
+        if(!avail) return;
+        const snapped = avail - (avail % 8);
+        if(snapped>0){
+          const curr = getComputedStyle(document.documentElement).getPropertyValue('--board-size').trim();
+          const currPx = parseInt(curr||'0',10)||0;
+          if(currPx !== snapped){ document.documentElement.style.setProperty('--board-size', snapped+'px'); }
+          try{ CB.main && CB.main.resize(); }catch{}
+        }
+      }catch{}
     }
     // Train page: selection list (click to start training)
     function renderTrainSelectList(){
@@ -4008,7 +4025,7 @@
       const sec = document.getElementById('trainSection'); if(!sec) return;
       sec.classList.add('training-mode');
       try{ gvHide(); }catch{}
-      setTimeout(()=>{ try{ ensureMainBoard(); CB.main && CB.main.resize(); }catch{} setBoardFonts(); renderArrows(); }, 0);
+      setTimeout(()=>{ try{ ensureMainBoard(); snapMainBoardToGrid(); CB.main && CB.main.resize(); }catch{} setBoardFonts(); renderArrows(); }, 0);
     }
     function showTrainSelectionMode(){
       const sec = document.getElementById('trainSection'); if(!sec) return;
@@ -4596,6 +4613,8 @@
           if(handled){ ev.preventDefault(); ev.stopPropagation(); }
         }catch{}
       });
+      // Snap board to grid on window resize to avoid leftover background
+      try{ window.addEventListener('resize', ()=>{ snapMainBoardToGrid(); }); }catch{}
     })();
 
     // Sets page actions (create empty set, de-duped by name+content)

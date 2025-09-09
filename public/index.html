@@ -2486,7 +2486,10 @@
       const thr=getSev();
       depth = parseInt(depth||window.getAnalysisDepth?.()||12,10)||12;
       const depthFast = (window.getFastDepth ? window.getFastDepth() : 12);
-      const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pgn,depth,thresholds:thr,depthFast})});
+      const mode = (window.getAnalysisMode ? window.getAnalysisMode() : 'double');
+      const payload = { pgn, depth, thresholds: thr };
+      if(mode !== 'single'){ payload.depthFast = depthFast; }
+      const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       if(!res.ok) throw new Error(`Stockfish backend error ${res.status}`);
       const data=await res.json(); const mistakes=data.mistakes||[];
       try{
@@ -2691,6 +2694,53 @@
       }
     }
 
+    // Single-layer analyzer (deep only)
+    async function analyzeImportedSingleFlow(state){
+      const imported = window.importedGames || [];
+      const list = imported.filter(x => x && x.sel!==false).map(x => x.pgn);
+      if(!list.length){ alert('No imported games found. Import games first.'); return; }
+      inferUsernames();
+      const all=[];
+      let i=0;
+      for(const pgn of list){
+        if(state.stop) break;
+        const idx = i+1;
+        const deep = parseInt(window.getAnalysisDepth?.()||12,10)||12;
+        try{ setStatus(`Deep analysis at depth: ${deep} - Game ${idx}/${list.length}`); setMistakeCounter(all.length); }catch{}
+        let ms=[];
+        try{
+          if(window.SF_BACKEND_URL){
+            ms = await analyzeOnServer(pgn, deep);
+          } else if(window.FN_BASE){
+            ms = await analyzeOnBackend([pgn]);
+          } else {
+            ms = await analyzeManualLocalSingle(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ setMistakeCounter(all.length); }catch{} });
+          }
+        }catch(e){ console.warn('Analyze failed:', e); }
+        // Attach PGN and URL
+        try{
+          const hdr = parsePGNHeaders(pgn);
+          const urlHdr = hdr.Site || hdr.Link || '';
+          (ms||[]).forEach(m => { if(!m.pgn) m.pgn = pgn; if(!m.gameUrl && urlHdr && /^https?:\/\//i.test(urlHdr)) m.gameUrl = urlHdr; });
+        }catch{}
+        // Filter and accumulate
+        ms = filterMistakesToUserOnly(ms).filter(m => (window.includeSeverity ? window.includeSeverity(m.severity) : true));
+        for(const m of (ms||[])){
+          all.push(m); LAST_ANALYZED.mistakes = all.slice();
+          try{ setMistakeCounter(all.length); }catch{}
+          try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; }catch{}
+        }
+        i++;
+      }
+      if(all.length) addMistakes(all);
+      const srcSet = new Set(imported.map(x => x.source || 'Imported'));
+      const tagBase = (srcSet.size===1 ? Array.from(srcSet)[0] : 'Imported');
+      const tagName = `${tagBase}${state.stop ? ' (partial)' : ''} ${new Date().toLocaleString()}`;
+      LAST_ANALYZED = { mistakes: all.slice(), suggestedName: tagName };
+      try{ const btn=$('#btnCreateSetFromLast'); const info=$('#createSetInfo'); if(btn){ btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; } if(info) info.textContent = all.length>0 ? `Ready: ${all.length} mistake(s) detected in last analysis.` : '-'; }catch{}
+      setStatus(state.stop ? 'Analysis stopped' : 'Analysis finished');
+    }
+
     // New two-step analyzer that uses backend scan + deep endpoints when available
     async function analyzeImportedWithBackendAbortable2(state){
       const imported = window.importedGames || [];
@@ -2792,6 +2842,39 @@
         const include = (window.includeSeverity ? window.includeSeverity(sev2) : true);
         if(sev2 && include){
           const m = { id:uid(), fen:c.fenBefore, side:c.side, played:c.san, best:best2, deltaCp:drop2, severity:sev2, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn };
+          mistakes.push(m);
+          try{ if(typeof onFound==='function') onFound(m); }catch{}
+        }
+      }
+      return mistakes;
+    }
+
+    // Local fallback single-layer (deep on every move)
+    async function analyzeManualLocalSingle(pgn, onFound){
+      const clRead = ChessLite();
+      const seq = clRead.loadPGN(pgn).filter(x=>x.san);
+      const game = ChessLite(); game.reset();
+      const mistakes = [];
+      const sideWanted = userSideForPGN(pgn);
+      const depth = parseInt(window.getAnalysisDepth?.()||12,10)||12;
+      for(const mv of seq){
+        const fenBefore = game.fen();
+        const side = game.turn();
+        if(sideWanted && side !== sideWanted){
+          const skipUci = game.parseSANtoMove(mv.san); if(skipUci) game.moveUci(skipUci);
+          continue;
+        }
+        const { cp: cpBefore2, bestmove: best2 } = await Engine.analyze(fenBefore, depth);
+        const playedUci = game.parseSANtoMove(mv.san); if(!playedUci) continue;
+        if(playedUci === best2){ game.moveUci(playedUci); continue; }
+        game.moveUci(playedUci);
+        const fenAfter = game.fen();
+        const { cp: cpAfter2 } = await Engine.analyze(fenAfter, depth);
+        const drop2 = Math.max(0, cpBefore2 + cpAfter2);
+        const sev2 = severityFromDrop(drop2);
+        const include = (window.includeSeverity ? window.includeSeverity(sev2) : true);
+        if(sev2 && include){
+          const m = { id:uid(), fen:fenBefore, side, played: mv.san, best:best2, deltaCp:drop2, severity:sev2, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn };
           mistakes.push(m);
           try{ if(typeof onFound==='function') onFound(m); }catch{}
         }
@@ -3583,11 +3666,21 @@
           if(info) info.textContent='-';
         }catch{}
         try{
-          const fd = (window.getFastDepth ? window.getFastDepth() : 12);
-          setStatus(`Fast pass at depth: ${fd}`);
+          const mode = (window.getAnalysisMode ? window.getAnalysisMode() : 'double');
+          if(mode !== 'single'){
+            const fd = (window.getFastDepth ? window.getFastDepth() : 12);
+            setStatus(`Fast pass at depth: ${fd}`);
+          } else {
+            const deep = parseInt(window.getAnalysisDepth?.()||12,10)||12;
+            setStatus(`Deep analysis at depth: ${deep}`);
+          }
           setMistakeCounter(0);
         }catch{}
-        try{ await (window.analyzeImportedWithBackendAbortable2 ? analyzeImportedWithBackendAbortable2 : analyzeImportedWithBackendAbortable)(ANALYZE_STATE); }catch(e){ setStatus('Error: '+(e?.message||e)); }
+        try{
+          const mode = (window.getAnalysisMode ? window.getAnalysisMode() : 'double');
+          const fn = (mode==='single') ? analyzeImportedSingleFlow : (window.analyzeImportedWithBackendAbortable2 ? analyzeImportedWithBackendAbortable2 : analyzeImportedWithBackendAbortable);
+          await fn(ANALYZE_STATE);
+        }catch(e){ setStatus('Error: '+(e?.message||e)); }
         // ensure button reset (in case stop wasn't pressed)
         btnAnalyze.dataset.state='idle';
         btnAnalyze.textContent='Analyse mistakes';
@@ -3977,6 +4070,8 @@
     // Analysis settings modal
     (function(){
       const LS_DEPTH = 'pmtt_an_depth';
+      const LS_FAST = 'pmtt_an_fast_depth';
+      const LS_MODE = 'pmtt_an_mode';
       const LS_FLAGS = 'pmtt_sev_flags'; // {inacc:boolean, mistake:boolean, blunder:boolean}
       const LS_SEV = 'pmtt_sev'; // thresholds object {inacc, mistake, blunder}
 
@@ -3993,6 +4088,32 @@
         return 12;
       }
       function saveDepth(n){ try{ localStorage.setItem(LS_DEPTH, String(Math.max(6, Math.min(40, parseInt(n,10)||12)))); }catch{} }
+      function loadFastDepth(){
+        try{
+          const v = localStorage.getItem(LS_FAST);
+          if(v!=null) return Math.max(6, Math.min(40, parseInt(v,10)||12));
+        }catch{}
+        try{
+          const p = (window.getPrefs ? window.getPrefs() : {});
+          const d = p && (p.analysisFastDepth ?? p.fastDepth);
+          if(d!=null) return Math.max(6, Math.min(40, parseInt(d,10)||12));
+        }catch{}
+        return 12;
+      }
+      function saveFastDepth(n){ try{ localStorage.setItem(LS_FAST, String(Math.max(6, Math.min(40, parseInt(n,10)||12)))); }catch{} }
+      function loadMode(){
+        try{
+          const v = localStorage.getItem(LS_MODE);
+          if(v) return (v==='single'?'single':'double');
+        }catch{}
+        try{
+          const p = (window.getPrefs ? window.getPrefs() : {});
+          const m = p && p.analysisMode;
+          if(m) return (m==='single'?'single':'double');
+        }catch{}
+        return 'double';
+      }
+      function saveMode(m){ try{ localStorage.setItem(LS_MODE, (m==='single'?'single':'double')); }catch{} }
       function loadFlags(){
         try{
           const o=JSON.parse(localStorage.getItem(LS_FLAGS)||'{}');
@@ -4045,9 +4166,20 @@
               <button id="anSettingsClose" class="ghost" title="Close">✕</button>
             </div>
             <div id="anSettingsCloud" class="tiny muted" style="margin-top:4px; display:flex; align-items:center; gap:8px">-</div>
-            <div class="row" style="margin-top:8px">
-              <div style="max-width:140px">
-                <label>Depth</label>
+            <div class="row" style="margin-top:8px; gap:12px; align-items:flex-end">
+              <div style="min-width:180px">
+                <label>Mode</label>
+                <select id="anMode">
+                  <option value="double">Two-layer (fast + deep)</option>
+                  <option value="single">Single layer</option>
+                </select>
+              </div>
+              <div id="anDepthFastWrap" style="max-width:120px">
+                <label>L1 depth</label>
+                <input id="anDepthFast" type="number" min="6" max="40" value="12" />
+              </div>
+              <div id="anDepthL2Wrap" style="max-width:120px">
+                <label id="anDepthL2Label">L2 depth</label>
                 <input id="anDepth" type="number" min="6" max="40" value="12" />
               </div>
               <div class="stroke" style="flex:1">
@@ -4087,9 +4219,27 @@
       function fillFromPrefs(){
         try{
           const depth = loadDepth();
+          const fast = loadFastDepth();
+          const mode = loadMode();
           const t = loadSev();
           const f = loadFlags();
+          const modeEl=document.getElementById('anMode'); if(modeEl) modeEl.value = mode;
           const dEl=document.getElementById('anDepth'); if(dEl) dEl.value=String(depth);
+          const dfEl=document.getElementById('anDepthFast'); if(dfEl) dfEl.value=String(fast);
+          // Toggle visibility/labels per mode
+          try{
+            const fastWrap=document.getElementById('anDepthFastWrap');
+            const l2Lbl=document.getElementById('anDepthL2Label');
+            if(fastWrap && l2Lbl){
+              if(mode==='single'){
+                fastWrap.style.display='none';
+                l2Lbl.textContent='Depth';
+              }else{
+                fastWrap.style.display='block';
+                l2Lbl.textContent='L2 depth';
+              }
+            }
+          }catch{}
           const si=document.getElementById('sevInacc'); if(si) si.value=String(t.inacc);
           const sm=document.getElementById('sevMistake'); if(sm) sm.value=String(t.mistake);
           const sb=document.getElementById('sevBlunder'); if(sb) sb.value=String(t.blunder);
@@ -4120,14 +4270,20 @@
           setTimeout(()=>{ try{ fillFromPrefs(); updateCloudStatus(); }catch{} }, 800);
         }catch{}
         modal.style.display = 'block';
+        try{ document.getElementById('anMode')?.addEventListener('change', ()=>fillFromPrefs()); }catch{}
       }
       function close(){
         modal.style.display = 'none';
         try{ if(prefsListener){ window.removeEventListener('firebase:prefsUpdated', prefsListener); prefsListener=null; } }catch{}
       }
-      function reset(){ try{ localStorage.removeItem(LS_DEPTH); localStorage.removeItem(LS_FLAGS); localStorage.removeItem(LS_SEV); }catch{} open(); }
+      function reset(){ try{ localStorage.removeItem(LS_DEPTH); localStorage.removeItem(LS_FAST); localStorage.removeItem(LS_MODE); localStorage.removeItem(LS_FLAGS); localStorage.removeItem(LS_SEV); }catch{} open(); }
       function save(){
+        const modeSel = document.getElementById('anMode');
+        const mode = (modeSel && modeSel.value==='single') ? 'single' : 'double';
+        saveMode(mode);
         const depth = parseInt(document.getElementById('anDepth').value,10)||12; saveDepth(depth);
+        const dFastEl = document.getElementById('anDepthFast');
+        const depthFast = dFastEl ? (parseInt(dFastEl.value,10)||12) : 12; saveFastDepth(depthFast);
         const t = { inacc: parseInt(document.getElementById('sevInacc').value,10)||50,
                     mistake: parseInt(document.getElementById('sevMistake').value,10)||150,
                     blunder: parseInt(document.getElementById('sevBlunder').value,10)||300 };
@@ -4138,7 +4294,7 @@
         saveFlags(f);
         // Persist to unified prefs in Firestore as well (only if signed in)
         try{
-          const payload = { analysisDepth: depth, analysisThresholds: t, analysisInclude: f };
+          const payload = { analysisMode: mode, analysisDepth: depth, analysisFastDepth: depthFast, analysisThresholds: t, analysisInclude: f };
           if(window.savePrefsLocal) window.savePrefsLocal(payload);
           if(window.firebaseAPI && window.firebaseAPI.ready && window.firebaseAPI.savePrefs){ window.firebaseAPI.savePrefs(payload).catch(()=>{}); }
         }catch{}
@@ -4152,7 +4308,8 @@
 
       // Expose helpers used below
       window.getAnalysisDepth = loadDepth;
-      window.getFastDepth = function(){ return 12; };
+      window.getFastDepth = loadFastDepth;
+      window.getAnalysisMode = loadMode;
     })();
 
     // PGN Import modal (paste or load .pgn/.txt)

@@ -271,9 +271,14 @@
     .pill{padding:2px 8px;border-radius:999px;font-weight:700;font-size:.75rem}
     .pill.inacc{background:#264f2f;color:#a2f5be;border:1px solid #2f9e44}
     .pill.mist{background:#5b4a27;color:#ffe8a1;border:1px solid #f2c94c}
-    .pill.blun{background:#4f1e24;color:#ffb3bd;border:1px solid #ff6b6b}
-    .stroke{border:1px dashed #2a3142;border-radius:10px;padding:10px}
-  </style>
+     .pill.blun{background:#4f1e24;color:#ffb3bd;border:1px solid #ff6b6b}
+     .stroke{border:1px dashed #2a3142;border-radius:10px;padding:10px}
+     /* Move list styles */
+     #moveList .mv{ cursor:pointer; padding:2px 4px; border-radius:6px; display:inline-block; }
+     #moveList .mv:hover{ background:#121622; }
+     #moveList .mv.active{ background:#1a2233; color:#fff; }
+     #moveList .num{ color:var(--muted); margin-right:2px; }
+   </style>
   <!-- chessboard.js CSS (local) -->
   <link rel="stylesheet" href="/chessboardjs/css/chessboard-1.0.0.min.css" />
   <style>
@@ -643,9 +648,9 @@
               <div id="resizeHandle" class="resize-handle" title="Drag to resize"></div>
             </div>
             <!-- Train viewer controls (navigate game mainline) -->
-            <div id="tvControls" class="tiny" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
+            <div id="tvControls" class="tiny" style="display:grid; grid-template-columns: 1fr auto 1fr; align-items:center; gap:8px">
               <span id="tvStatus" class="mono">-</span>
-              <div style="margin-left:auto; display:flex; gap:6px">
+              <div style="display:flex; gap:6px; justify-content:center">
                 <button id="tvStart" class="ghost" title="Start">«</button>
                 <button id="tvPrev" class="ghost" title="Prev">‹</button>
                 <button id="tvNext" class="ghost" title="Next">›</button>
@@ -700,6 +705,14 @@
                 </div>
               </div>
               <div id="engineLines" class="mono" style="margin-top:6px; white-space:pre-wrap"></div>
+            </div>
+              </div>
+              <div id="movesCol">
+                <div class="stroke tiny" id="moveListPanel" style="height:100%; display:flex; flex-direction:column">
+                  <div><b>Moves</b></div>
+                  <div id="moveList" class="tiny mono" style="margin-top:6px; overflow:auto; flex:1; line-height:1.6"></div>
+                </div>
+              </div>
             </div>
             <div class="row" style="margin-top:10px">
               <button id="btnExitTrain" class="ghost">Exit</button>
@@ -1317,12 +1330,13 @@
     /********************************************************************
      * Train viewer (Train page main board)
      ********************************************************************/
-    const TRAINVIEW = { fens: [], idx: 0, total: 0 };
+    const TRAINVIEW = { fens: [], san: [], idx: 0, total: 0 };
     function tvUpdate(){
       const lbl = document.getElementById('tvStatus'); if(!lbl) return;
       const total = TRAINVIEW.total; const idx = TRAINVIEW.idx;
       lbl.textContent = total ? `Move ${idx}/${total}` : '-';
       try{ setBoardFonts(); }catch{}
+      try{ updateMoveListHighlight(); }catch{}
     }
     function setTrainNavEnabled(on){
       ['tvStart','tvPrev','tvNext','tvEnd'].forEach(id=>{ try{ const b=document.getElementById(id); if(b) b.disabled = !on; }catch{} });
@@ -1333,8 +1347,11 @@
         const cl = ChessLite(); cl.reset();
         const startFen = cl.fen();
         const mixed = cl.loadPGN(m.pgn);
-        const fens = [startFen, ...mixed.filter(x=>x && x.san).map(x=>x.fenAfter)];
+        const movesOnly = mixed.filter(x=>x && x.san);
+        const fens = [startFen, ...movesOnly.map(x=>x.fenAfter)];
+        const sans = movesOnly.map(x=>x.san);
         TRAINVIEW.fens = fens; TRAINVIEW.total = Math.max(0, fens.length-1);
+        TRAINVIEW.san = sans;
         // Find the index of the active mistake position within the mainline
         let idx = fens.findIndex(f=>f===m.fen);
         if(idx < 0){
@@ -1344,8 +1361,45 @@
         }
         TRAINVIEW.idx = Math.max(0, idx>=0 ? idx : 0);
         setTrainNavEnabled(!!fens.length);
+        renderMoveList();
         tvUpdate();
       }catch(e){ try{ console.warn('TRAINVIEW init error', e); }catch{}; TRAINVIEW.fens=[]; TRAINVIEW.idx=0; TRAINVIEW.total=0; setTrainNavEnabled(false); tvUpdate(); }
+    }
+    function renderMoveList(){
+      try{
+        const wrap = document.getElementById('moveList'); if(!wrap) return;
+        const sans = Array.isArray(TRAINVIEW.san) ? TRAINVIEW.san : [];
+        if(!sans.length){ wrap.innerHTML = '<span class="muted">(no moves)</span>'; return; }
+        const parts = [];
+        for(let i=0;i<sans.length;i+=2){
+          const num = Math.floor(i/2)+1;
+          const wIdx = i+1; // fens index after white move
+          const bIdx = (i+1)+1; // fens index after black move
+          const wSan = sans[i]||''; const bSan = sans[i+1]||'';
+          const wCls = (TRAINVIEW.idx===wIdx)?'mv active':'mv';
+          const bCls = (TRAINVIEW.idx===bIdx)?'mv active':'mv';
+          parts.push(`<span class="num">${num}. </span><span class="${wCls}" data-idx="${wIdx}">${wSan}</span> ${bSan?`<span class="${bCls}" data-idx="${bIdx}">${bSan}</span>`:''}`);
+        }
+        wrap.innerHTML = `<div class="moves">${parts.join(' ')}</div>`;
+        // click handlers
+        wrap.querySelectorAll('.mv').forEach(el=>{
+          el.addEventListener('click', () => {
+            const i = parseInt(el.getAttribute('data-idx')||'0',10)||0;
+            if(!TRAINVIEW.fens.length) return;
+            const clamped = Math.max(0, Math.min(i, TRAINVIEW.fens.length-1));
+            TRAINVIEW.idx = clamped;
+            setTimeout(()=>{ drawBoardMain(TRAINVIEW.fens[TRAINVIEW.idx]); tvUpdate(); resetTrainToggles(); }, 0);
+          });
+        });
+      }catch{}
+    }
+    function updateMoveListHighlight(){
+      try{
+        const wrap = document.getElementById('moveList'); if(!wrap) return;
+        wrap.querySelectorAll('.mv.active').forEach(el=>el.classList.remove('active'));
+        const cur = wrap.querySelector(`.mv[data-idx="${TRAINVIEW.idx}"]`);
+        if(cur){ cur.classList.add('active'); try{ if(typeof cur.scrollIntoView==='function'){ cur.scrollIntoView({block:'nearest', inline:'nearest'}); } }catch{} }
+      }catch{}
     }
     function resetTrainToggles(){
       try{ BOARD.arrows.user=null; BOARD.arrows.showBest=false; renderArrows(); }catch{}
@@ -4165,7 +4219,6 @@
               <h2>Analysis Settings</h2>
               <button id="anSettingsClose" class="ghost" title="Close">✕</button>
             </div>
-            <div id="anSettingsCloud" class="tiny muted" style="margin-top:4px; display:flex; align-items:center; gap:8px">-</div>
             <div class="row" style="margin-top:8px; gap:12px; align-items:flex-end">
               <div style="min-width:180px">
                 <label>Mode</label>
@@ -4200,7 +4253,9 @@
                 </div>
               </div>
             </div>
-            <div class="stroke" style="margin-top:10px">
+            <div id="infoMovesWrap" style="display:grid; grid-template-columns: 1fr 220px; gap:10px; align-items:stretch; margin-top:10px">
+              <div id="infoCol">
+                <div class="stroke">
               <div class="small"><b>Include severities</b></div>
               <div class="row" style="margin-top:6px">
                 <label style="display:flex;align-items:center;gap:6px"><input id="incInacc" type="checkbox" checked /> Inaccuracies</label>
@@ -4216,6 +4271,21 @@
         </div>`;
       document.body.appendChild(modal);
 
+      function applyModeVisuals(mode){
+        try{
+          const fastWrap=document.getElementById('anDepthFastWrap');
+          const l2Lbl=document.getElementById('anDepthL2Label');
+          if(fastWrap && l2Lbl){
+            if(mode==='single'){
+              fastWrap.style.display='none';
+              l2Lbl.textContent='Depth';
+            }else{
+              fastWrap.style.display='block';
+              l2Lbl.textContent='L2 depth';
+            }
+          }
+        }catch{}
+      }
       function fillFromPrefs(){
         try{
           const depth = loadDepth();
@@ -4226,20 +4296,8 @@
           const modeEl=document.getElementById('anMode'); if(modeEl) modeEl.value = mode;
           const dEl=document.getElementById('anDepth'); if(dEl) dEl.value=String(depth);
           const dfEl=document.getElementById('anDepthFast'); if(dfEl) dfEl.value=String(fast);
-          // Toggle visibility/labels per mode
-          try{
-            const fastWrap=document.getElementById('anDepthFastWrap');
-            const l2Lbl=document.getElementById('anDepthL2Label');
-            if(fastWrap && l2Lbl){
-              if(mode==='single'){
-                fastWrap.style.display='none';
-                l2Lbl.textContent='Depth';
-              }else{
-                fastWrap.style.display='block';
-                l2Lbl.textContent='L2 depth';
-              }
-            }
-          }catch{}
+          applyModeVisuals(mode);
+          try{ const cloud=document.getElementById('anSettingsCloud'); if(cloud) cloud.style.display='none'; }catch{}
           const si=document.getElementById('sevInacc'); if(si) si.value=String(t.inacc);
           const sm=document.getElementById('sevMistake'); if(sm) sm.value=String(t.mistake);
           const sb=document.getElementById('sevBlunder'); if(sb) sb.value=String(t.blunder);
@@ -4249,28 +4307,16 @@
         }catch{}
       }
       let prefsListener=null;
-      function updateCloudStatus(){
-        try{
-          const el = document.getElementById('anSettingsCloud'); if(!el) return;
-          const u = (window.firebaseUser || null);
-          const signedIn = !!u && !u.isAnonymous;
-          const btn = '<button id="anSettingsSignIn" class="ghost small">' + (signedIn ? 'Switch account' : 'Sign in') + '</button>';
-          el.innerHTML = signedIn ? ('Cloud sync: ' + (u.email||u.displayName||'account') + ' ' + btn) : ('Cloud sync: signed out. ' + btn);
-          const b=document.getElementById('anSettingsSignIn'); if(b){ b.addEventListener('click', ()=>{ try{ document.getElementById('btnAuth')?.click(); }catch{} }); }
-        }catch{}
-      }
+      function updateCloudStatus(){ /* Cloud UI removed */ }
       function open(){
         fillFromPrefs();
-        updateCloudStatus();
-        // Update once remote prefs arrive
-        try{
-          prefsListener = ()=>{ try{ fillFromPrefs(); updateCloudStatus(); }catch{} };
-          window.addEventListener('firebase:prefsUpdated', prefsListener);
-          // Safety: also refresh after a short delay
-          setTimeout(()=>{ try{ fillFromPrefs(); updateCloudStatus(); }catch{} }, 800);
-        }catch{}
+        // No cloud UI in this modal
         modal.style.display = 'block';
-        try{ document.getElementById('anMode')?.addEventListener('change', ()=>fillFromPrefs()); }catch{}
+        try{ document.getElementById('anMode')?.addEventListener('change', ()=>{
+          const sel = document.getElementById('anMode');
+          const val = sel && (sel.value==='single' ? 'single' : 'double');
+          applyModeVisuals(val||'double');
+        }); }catch{}
       }
       function close(){
         modal.style.display = 'none';

@@ -1786,9 +1786,20 @@
           const {r,c}=rcOf(i);
 
           const add=(from,to,promotion)=>{
+            // Determine captured piece (including en passant) on the current board state
+            let captured=null;
+            const targetPiece = board[to];
+            if(targetPiece && pieceColor(targetPiece)===them){
+              captured = targetPiece;
+            } else {
+              // En passant: pawn moves diagonally to empty square equal to ep target
+              if((p==='P'||p==='p') && to===ep && !targetPiece){
+                captured = (us==='w') ? 'p' : 'P';
+              }
+            }
             const prev=clone(); makeMove(from,to,promotion);
             const legal=!inCheck(us); restore(prev);
-            if(legal){ moves.push({from, to, promotion:promotion||null, piece:p, captured:null}); }
+            if(legal){ moves.push({from, to, promotion:promotion||null, piece:p, captured}); }
           };
 
           if(p==='P'||p==='p'){
@@ -1836,7 +1847,7 @@
           from: idxToSq(m.from), to: idxToSq(m.to),
           uci: idxToSq(m.from)+idxToSq(m.to)+(m.promotion?m.promotion:''),
           piece: m.piece, promotion: m.promotion||null,
-          captured: null
+          captured: m.captured
         }));
       }
 

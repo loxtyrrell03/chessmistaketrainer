@@ -277,7 +277,12 @@
      #moveList .mv{ cursor:pointer; padding:2px 4px; border-radius:6px; display:inline-block; }
      #moveList .mv:hover{ background:#121622; }
      #moveList .mv.active{ background:#1a2233; color:#fff; }
-     #moveList .num{ color:var(--muted); margin-right:2px; }
+     #moveList .num{ color:var(--muted); margin-right:2px; min-width:2ch; text-align:right; display:inline-block; }
+     #moveList .ml-table{ width:100%; border-collapse:collapse; }
+     #moveList .ml-table td{ border:1px dashed #2a3142; padding:2px 4px; vertical-align:top; }
+     #moveList .cell{ display:flex; align-items:center; gap:4px; min-width:0; }
+     #movesCol{ width:150px; }
+     #moveListPanel{ max-width:150px; }
    </style>
   <!-- chessboard.js CSS (local) -->
   <link rel="stylesheet" href="/chessboardjs/css/chessboard-1.0.0.min.css" />
@@ -1378,10 +1383,9 @@
           const wSan = sans[i]||''; const bSan = sans[i+1]||'';
           const wCls = (TRAINVIEW.idx===wIdx)?'mv active':'mv';
           const bCls = (TRAINVIEW.idx===bIdx)?'mv active':'mv';
-          parts.push(`<span class="num">${num}. </span><span class="${wCls}" data-idx="${wIdx}">${wSan}</span> ${bSan?`<span class="${bCls}" data-idx="${bIdx}">${bSan}</span>`:''}`);
+          parts.push(`<tr><td><span class="num">${num}.</span> <span class="${wCls}" data-idx="${wIdx}">${wSan}</span></td><td>${bSan?`<span class="${bCls}" data-idx="${bIdx}">${bSan}</span>`:''}</td></tr>`);
         }
-        wrap.innerHTML = `<div class="moves">${parts.join(' ')}</div>`;
-        // click handlers
+        wrap.innerHTML = `<table class="ml-table"><tbody>${parts.join('')}</tbody></table>`;
         wrap.querySelectorAll('.mv').forEach(el=>{
           el.addEventListener('click', () => {
             const i = parseInt(el.getAttribute('data-idx')||'0',10)||0;
@@ -3795,7 +3799,8 @@
     $('#btnFetchChesscom').addEventListener('click', async () => {
       const u=$('#chesscomUser').value.trim(); if(!u) return alert('Enter a Chess.com username');
       try{ const n=parseInt($('#chesscomCount')?.value,10)||5; setStatus(`Fetching Chess.com games (N=${n})â€¦`); await fetchChesscom(u,n); setStatus('Idle'); }catch(e){ setStatus('Error: '+(e?.message||e)); }
-    });
+    });
+
 
     // Unified import controls
     $('#btnImportUnified')?.addEventListener('click', async () => { try{ const fn=(window.importUnified||importUnified); await fn(); }catch(e){ setStatus('Error: '+(e?.message||e)); } });
@@ -4568,6 +4573,7 @@
   </script>
 </body>
 </html>
+
 
 
 

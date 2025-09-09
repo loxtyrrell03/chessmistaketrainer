@@ -278,11 +278,12 @@
      #moveList .mv:hover{ background:#121622; }
      #moveList .mv.active{ background:#1a2233; color:#fff; }
      #moveList .num{ color:var(--muted); margin-right:2px; min-width:2ch; text-align:right; display:inline-block; }
-     #moveList .ml-table{ width:100%; border-collapse:collapse; }
-     #moveList .ml-table td{ border:1px dashed #2a3142; padding:2px 4px; vertical-align:top; }
+     #moveList .ml-table{ width:100%; border-collapse:collapse; table-layout:fixed; }
+     #moveList .ml-table td{ border:1px dashed #2a3142; padding:2px 4px; vertical-align:top; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
      #moveList .cell{ display:flex; align-items:center; gap:4px; min-width:0; }
-     #movesCol{ width:150px; }
-     #moveListPanel{ max-width:150px; }
+     /* Make move list panel wider to fit SAN without truncation */
+     #movesCol{ width:360px; }
+     #moveListPanel{ max-width:360px; }
    </style>
   <!-- chessboard.js CSS (local) -->
   <link rel="stylesheet" href="/chessboardjs/css/chessboard-1.0.0.min.css" />
@@ -4563,6 +4564,39 @@
       renderTrainSelectList();
     });
     document.getElementById('btnGoAnalyze')?.addEventListener('click', ()=> showSection('analyze'));
+
+    // Global keyboard navigation for viewers (left/right arrows)
+    (function(){
+      function clickFirstEnabled(ids){
+        for(const id of ids){
+          try{
+            const btn = document.getElementById(id);
+            if(btn && btn.offsetParent !== null){
+              if(!(btn.hasAttribute && btn.hasAttribute('disabled'))){
+                // click works for buttons and generic elements
+                btn.click();
+                return true;
+              }
+            }
+          }catch{}
+        }
+        return false;
+      }
+      document.addEventListener('keydown', (ev)=>{
+        try{
+          const t = ev.target || null;
+          const tag = (t && t.tagName ? String(t.tagName).toLowerCase() : '');
+          if(tag==='input' || tag==='textarea' || tag==='select' || (t && t.isContentEditable)) return;
+          if(ev.metaKey || ev.ctrlKey || ev.altKey) return;
+          let handled=false;
+          if(ev.key==='ArrowLeft') handled = clickFirstEnabled(['tvPrev','gvPrev']);
+          else if(ev.key==='ArrowRight') handled = clickFirstEnabled(['tvNext','gvNext']);
+          else if(ev.key==='ArrowUp') handled = clickFirstEnabled(['tvStart','gvStart']);
+          else if(ev.key==='ArrowDown') handled = clickFirstEnabled(['tvEnd','gvEnd']);
+          if(handled){ ev.preventDefault(); ev.stopPropagation(); }
+        }catch{}
+      });
+    })();
 
     // Sets page actions (create empty set, de-duped by name+content)
     document.getElementById('btnCreateEmptySet')?.addEventListener('click', ()=>{

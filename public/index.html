@@ -1578,7 +1578,7 @@
     function snapshotMistake(m){
       return {
         id: m.id || uid(),
-        fen: m.fen, side: m.side, played: m.played, best: m.best, deltaCp: m.deltaCp,
+        fen: m.fen, side: m.side, played: m.played, best: m.best, deltaCp: m.deltaCp, deltaWp: (typeof m.deltaWp!== 'undefined' ? m.deltaWp : null), cpBefore: (typeof m.cpBefore!=='undefined'?m.cpBefore:null), cpAfter: (typeof m.cpAfter!=='undefined'?m.cpAfter:null),
         severity: (m && typeof m.severity !== 'undefined' && m.severity !== null) ? m.severity : severityFromDrop(m?.deltaCp||0),
         pgn: m.pgn || null, gameUrl: m.gameUrl || null,
         ef: m.ef ?? 2.5, reps: m.reps ?? 0, interval: m.interval ?? 0,
@@ -1762,6 +1762,7 @@
       const existing = findExistingSetByNameAndKeys(name||'', keys);
       if(existing) return existing; // avoid duplicates
       const items = mistakes.map(snapshotMistake);
+      try{ console.debug('[client] createSetFromMistakes:', { count: items.length, sample: items.slice(0,3) }); }catch{}
       const set = {
         id: uid(),
         name: name || `Set ${new Date().toLocaleString()}`,
@@ -2313,8 +2314,18 @@
     function getClassifier(){ try{ const v=localStorage.getItem('pmtt_classifier'); return (v==='wp')?'wp':'cp'; }catch{ return 'cp'; } }
     function winProbFromCp(cp){ const k=0.00368208; const x=Number(cp)||0; const t=2/(1+Math.exp(-k*x))-1; return 50+50*t; }
     function severityFromScores(cpBefore, cpAfter){ const cls=getClassifier(); if(cls==='wp'){ try{ const pB=winProbFromCp(cpBefore); const pA=winProbFromCp(cpAfter); const drop=Math.max(0,pB-pA); const T=getSevWp(); if(drop>=T.blunder) return 'blunder'; if(drop>=T.mistake) return 'mistake'; if(drop>=T.inacc) return 'inaccuracy'; return null; }catch{} } const dropCp=Math.max(0,(Number(cpBefore)||0)+(Number(cpAfter)||0)); return severityFromDrop(dropCp); }
-    function formatWinProbDrop(v){ const n=Number(v)||0; if(!Number.isFinite(n)||n<=0) return '0%'; return `${Math.round(n)}%`; }
+    function formatWinProbDrop(v){ const n=Number(v)||0; if(!Number.isFinite(n)||n<0) return '-'; return `${Math.round(n)}%`; }
     function formatDeltaForDisplay(m){ const cls=getClassifier(); if(cls==='wp' && m && typeof m.deltaWp!=='undefined' && m.deltaWp!==null) return formatWinProbDrop(m.deltaWp); return formatCentipawnLoss(m?.deltaCp||0); }
+    function formatBothDelta(m){
+      const cp = formatCentipawnLoss(m?.deltaCp||0);
+      let wpTxt = '-';
+      if(typeof m?.deltaWp !== 'undefined' && m.deltaWp !== null){
+        wpTxt = formatWinProbDrop(m.deltaWp);
+      } else if(typeof m?.cpBefore !== 'undefined' && typeof m?.cpAfter !== 'undefined'){
+        try{ const dwp = Math.max(0, winProbFromCp(m.cpBefore) - winProbFromCp(m.cpAfter)); wpTxt = formatWinProbDrop(dwp); }catch{}
+      }
+      return `${cp} | ${wpTxt}`;
+    }
 
     // Format deltaCp (positive drop) as "centipawn loss" (negative value in pawns)
     function formatCentipawnLoss(deltaCp){
@@ -2329,10 +2340,20 @@
       const url=`${window.FN_BASE}/analyzePGNs`;
       const thr=getSev();
       const depth = parseInt(window.getAnalysisDepth?.()||12,10)||12;
-      const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pgns,depth,thresholds:thr})});
+      const cls = getClassifier();
+      const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pgns,depth,thresholds:thr, classifier: cls, wpThresholds:(cls==='wp'? getSevWp(): undefined)})});
       if(!res.ok) throw new Error(`analyzePGNs failed ${res.status}`);
       const json=await res.json();
-      return json.mistakes||[];
+      const arr = json.mistakes||[];
+      try{ console.debug('[client] analyzeOnBackend: got', arr.length, 'mistakes; sample:', arr.slice(0,3)); }catch{}
+      try{
+        arr.forEach(m=>{
+          if((typeof m.deltaWp === 'undefined' || m.deltaWp === null) && typeof m.cpBefore !== 'undefined' && typeof m.cpAfter !== 'undefined'){
+            try{ m.deltaWp = Math.max(0, winProbFromCp(m.cpBefore) - winProbFromCp(m.cpAfter)); }catch{}
+          }
+        });
+      }catch{}
+      return arr;
     }
 
     /********************************************************************
@@ -2690,11 +2711,21 @@
       depth = parseInt(depth||window.getAnalysisDepth?.()||12,10)||12;
       const depthFast = (window.getFastDepth ? window.getFastDepth() : 12);
       const mode = (window.getAnalysisMode ? window.getAnalysisMode() : 'double');
-      const payload = { pgn, depth, thresholds: thr };
+      const cls = getClassifier();
+      const payload = { pgn, depth, thresholds: thr, classifier: cls, wpThresholds: (cls==='wp'? getSevWp(): undefined) };
       if(mode !== 'single'){ payload.depthFast = depthFast; }
       const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       if(!res.ok) throw new Error(`Stockfish backend error ${res.status}`);
       const data=await res.json(); const mistakes=data.mistakes||[];
+      try{ console.debug('[client] analyzeOnServer: got', mistakes.length, 'mistakes; sample:', mistakes.slice(0,3)); }catch{}
+      try{
+        // Backfill deltaWp from cpBefore/cpAfter if not provided
+        mistakes.forEach(m=>{
+          if((typeof m.deltaWp === 'undefined' || m.deltaWp === null) && typeof m.cpBefore !== 'undefined' && typeof m.cpAfter !== 'undefined'){
+            try{ m.deltaWp = Math.max(0, winProbFromCp(m.cpBefore) - winProbFromCp(m.cpAfter)); }catch{}
+          }
+        });
+      }catch{}
       try{
         mistakes.forEach(m=>{ m.pgn=pgn; const h=parsePGNHeaders(pgn); const urlHdr=h.Site||h.Link||''; if(urlHdr && /^https?:\/\//i.test(urlHdr)) m.gameUrl=urlHdr; });
       }catch{}
@@ -2707,7 +2738,8 @@
       const url=`${base}/scan`;
       const thr=getSev();
       const dFast = parseInt(depthFast||window.getFastDepth?.()||12,10)||12;
-      const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pgn,depthFast:dFast,thresholds:thr})});
+      const cls = getClassifier();
+      const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pgn,depthFast:dFast,thresholds:thr, classifier: cls, wpThresholds:(cls==='wp'? getSevWp(): undefined)})});
       if(!res.ok) throw new Error(`Stockfish scan error ${res.status}`);
       const data=await res.json();
       return Array.isArray(data.candidates)?data.candidates:[];
@@ -2719,7 +2751,8 @@
       const url=`${base}/analyzeCandidates`;
       const thr=getSev();
       const d = parseInt(depth||window.getAnalysisDepth?.()||12,10)||12;
-      const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({candidates,depth:d,thresholds:thr})});
+      const cls = getClassifier();
+      const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({candidates,depth:d,thresholds:thr, classifier: cls, wpThresholds:(cls==='wp'? getSevWp(): undefined)})});
       if(!res.ok) throw new Error(`Stockfish analyzeCandidates error ${res.status}`);
       const data=await res.json();
       return Array.isArray(data.mistakes)?data.mistakes:[];
@@ -3045,8 +3078,7 @@
         const sev2 = severityFromScores(cpBefore2, cpAfter2);
         const include = (window.includeSeverity ? window.includeSeverity(sev2) : true);
         if(sev2 && include){
-          const m = { id:uid(), fen:c.fenBefore, side:c.side, played:c.san, best:best2, deltaCp:drop2, severity:sev2, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn };
-          try{ if(getClassifier()==='wp'){ m.deltaWp = Math.max(0, winProbFromCp(cpBefore2) - winProbFromCp(cpAfter2)); } }catch{}
+          const m = { id:uid(), fen:c.fenBefore, side:c.side, played:c.san, best:best2, deltaCp:drop2, deltaWp: Math.max(0, winProbFromCp(cpBefore2) - winProbFromCp(cpAfter2)), cpBefore: cpBefore2, cpAfter: cpAfter2, severity:sev2, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn };
           mistakes.push(m);
           try{ if(typeof onFound==='function') onFound(m); }catch{}
         }
@@ -3130,8 +3162,7 @@
         const sev2 = severityFromScores(cpBefore2, cpAfter2);
         const include = (window.includeSeverity ? window.includeSeverity(sev2) : true);
         if(sev2 && include){
-          const m = { id:uid(), fen:fenBefore, side, played: mv.san, best:best2, deltaCp:drop2, severity:sev2, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn };
-          try{ if(getClassifier()==='wp'){ m.deltaWp = Math.max(0, winProbFromCp(cpBefore2) - winProbFromCp(cpAfter2)); } }catch{}
+          const m = { id:uid(), fen:fenBefore, side, played: mv.san, best:best2, deltaCp:drop2, deltaWp: Math.max(0, winProbFromCp(cpBefore2) - winProbFromCp(cpAfter2)), cpBefore: cpBefore2, cpAfter: cpAfter2, severity:sev2, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn };
           mistakes.push(m);
           try{ if(typeof onFound==='function') onFound(m); }catch{}
         }
@@ -3326,14 +3357,12 @@
       function next(){
       $('#yourMove').textContent='-'; $('#feedback').textContent='-';
       try{
-        const deltaTxt = formatDeltaForDisplay(m);
-        const label = (getClassifier()==='wp'?'win prob drop':'centipawn loss');
-        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · ${label}: ${deltaTxt}`;
+        const both = formatBothDelta(m);
+        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · loss (cp | wp): ${both}`;
       }catch{}
       try{
-        const deltaTxt = formatDeltaForDisplay(m);
-        const label = (getClassifier()==='wp'?'win prob drop':'centipawn loss');
-        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · ${label}: ${deltaTxt}`;
+        const both = formatBothDelta(m);
+        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · loss (cp | wp): ${both}`;
       }catch{}
         // clear arrows
         BOARD.arrows.user = null; BOARD.arrows.best = null; BOARD.arrows.showBest=false; renderArrows();
@@ -3747,6 +3776,7 @@
         const label = (getClassifier()==='wp'?'win prob drop':'centipawn loss');
         $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> · ${label}: ${deltaTxt}`;
       }catch{}
+      try{ const both = formatBothDelta(m); $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> - loss (cp | wp): ${both}`; }catch{}
       // Arrows start clean; will draw on attempt/reveal
       BOARD.arrows.user = null; BOARD.arrows.best = m.best || null; BOARD.arrows.showBest = false; renderArrows();
       try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
@@ -3840,7 +3870,7 @@
 
     function renderStatsMistakeList(){
       const tb=$('#statsMistakeTBody'); if(!tb) return;
-      try{ const thCp=document.querySelector('#statsMistakeTable thead th:nth-child(6)'); if(thCp) thCp.textContent=(getClassifier()==='wp'?'win prob drop':'centipawn loss'); }catch{}
+      try{ const thCp=document.querySelector('#statsMistakeTable thead th:nth-child(6)'); if(thCp) thCp.textContent='loss (cp | wp)'; }catch{}
       tb.innerHTML='';
       const sets = loadSets(); const target = sets.find(s=>s.id===STATS_SELECTED_SET_ID);
       if(!target){ STATS_CURRENT_LIST=[]; $('#statsTotal') && ($('#statsTotal').textContent='0'); $('#statsDue') && ($('#statsDue').textContent='0'); return; }
@@ -3858,6 +3888,7 @@
         try{ ensureMistakesForSet(target, 8000).then(()=>{ try{ renderStatsMistakeList(); renderStatsSummary(); }catch{} }); }catch{}
       }
       STATS_CURRENT_LIST = list;
+      try{ console.debug('[client] stats list sample', (list||[]).slice(0,5).map(m=>({cp:m.deltaCp, wp:m.deltaWp, cpB:m.cpBefore, cpA:m.cpAfter}))); }catch{}
       list.forEach((m,i)=>{
         const bestSan = m.best ? uciToSAN(m.fen, m.best) : '-';
         const tr=document.createElement('tr');
@@ -3867,7 +3898,7 @@
           <td>${m.side==='w'?'White':'Black'}</td>
           <td class="mono tiny">${m.played}</td>
           <td class="mono tiny">${bestSan}</td>
-          <td class="mono tiny">${formatDeltaForDisplay(m)}</td>
+          <td class="mono tiny">${formatBothDelta(m)}</td>
           <td class="tiny">${tsToDate(m.nextReview)}</td>`;
         tr.addEventListener('click', ()=>{ loadMistakeOnStatsBoard(m); });
         tb.appendChild(tr);
@@ -3900,8 +3931,8 @@
       $('#statsSideToMove').textContent = (m.side==='w')?'White':'Black';
       const bestSan = m.best ? uciToSAN(m.fen, m.best) : '-';
       $('#statsBest').textContent = bestSan || m.best || '-';
-      try{ const lbl=$('#statsDelta')?.parentElement?.querySelector('b'); if(lbl) lbl.textContent=(getClassifier()==='wp'?'win prob drop:':'centipawn loss:'); }catch{}
-      $('#statsDelta').textContent = formatDeltaForDisplay(m);
+      try{ const lbl=$('#statsDelta')?.parentElement?.querySelector('b'); if(lbl) lbl.textContent='loss (cp | wp):'; }catch{}
+      $('#statsDelta').textContent = formatBothDelta(m);
       try{
         const sideUser = userSideForPGN(m.pgn||'');
         const whiteBottom = sideUser ? (sideUser==='w') : true;
@@ -4895,7 +4926,7 @@
     }
     document.getElementById('navHome')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('home'); });
     document.getElementById('navAnalyze')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('analyze'); });
-    document.getElementById('navStats')?.addEventListener('click', (e)=>{ e.preventDefault(); renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); showSection('stats'); try{ const lbl=document.querySelector('#statsDelta')?.parentElement?.querySelector('b'); if(lbl) lbl.textContent=(getClassifier()==='wp'?'win prob drop:':'centipawn loss:'); }catch{} });
+    document.getElementById('navStats')?.addEventListener('click', (e)=>{ e.preventDefault(); renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); showSection('stats'); try{ const lbl=document.querySelector('#statsDelta')?.parentElement?.querySelector('b'); if(lbl) lbl.textContent='loss (cp | wp):'; }catch{} });
     // Re-render stats when cloud data arrives
     try{
       window.addEventListener('firebase:mMistakesUpdated', ()=>{ try{ renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); }catch{} });

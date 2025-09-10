@@ -138,6 +138,13 @@ function severityFromDrop(cp: number, thr: Sev): "inaccuracy"|"mistake"|"blunder
   return null;
 }
 
+function winProbFromCp(cp: number): number {
+  const k = 0.00368208;
+  const x = Number(cp) || 0;
+  const t = 2 / (1 + Math.exp(-k * x)) - 1;
+  return 50 + 50 * t;
+}
+
 async function createEngine() {
   // stockfish npm exposes a function returning a worker-like object
   const Stockfish: any = (await import("stockfish.wasm")) as any;
@@ -196,7 +203,7 @@ export const analyzePGNs = onRequest({ timeoutSeconds: 300 }, async (req: Reques
   if (req.method === "OPTIONS") { res.status(204).end(); return; }
   if (req.method !== "POST") { res.status(405).json({ error: "POST required" }); return; }
   try {
-    const body = (req.body || {}) as { pgns?: string[]; depth?: number; thresholds?: Sev; usernames?: string[] };
+    const body = (req.body || {}) as { pgns?: string[]; depth?: number; thresholds?: Sev; usernames?: string[]; classifier?: 'cp'|'wp'; wpThresholds?: { inacc:number; mistake:number; blunder:number } };
     const pgns = Array.isArray(body.pgns) ? body.pgns.filter(s => typeof s === 'string' && s.trim()) : [];
     if (!pgns.length) { res.status(400).json({ error: "Missing pgns[]" }); return; }
     const depth = Math.max(6, Math.min(18, parseInt(String(body.depth||12),10) || 12));
@@ -218,6 +225,9 @@ export const analyzePGNs = onRequest({ timeoutSeconds: 300 }, async (req: Reques
       while((m = re.exec(pgn||''))) h[m[1]] = m[2];
       return h;
     }
+
+    const classifier = (body.classifier === 'wp') ? 'wp' : 'cp';
+    const wpThr = { inacc: Math.max(0, body.wpThresholds?.inacc ?? 10), mistake: Math.max(0, body.wpThresholds?.mistake ?? 20), blunder: Math.max(0, body.wpThresholds?.blunder ?? 30) };
 
     for (const pgn of pgns) {
       const chess = new Chess();
@@ -250,7 +260,8 @@ export const analyzePGNs = onRequest({ timeoutSeconds: 300 }, async (req: Reques
         if (playedUci === best1) { continue; }
         const { cp: cpAfter1 } = await engine.analyze(fenAfter, depthFast);
         const drop1 = Math.max(0, cpBefore1 + cpAfter1);
-        if (severityFromDrop(drop1, thr)) {
+        const sev1ok = (classifier==='wp') ? ( (()=>{ const dwp=Math.max(0, winProbFromCp(cpBefore1)-winProbFromCp(cpAfter1)); return (dwp>=wpThr.inacc); })() ) : (severityFromDrop(drop1, thr) !== null);
+        if (sev1ok) {
           candidates.push({ fenBefore, fenAfter, side, san: mv.san, uci: playedUci });
         }
       }
@@ -261,7 +272,8 @@ export const analyzePGNs = onRequest({ timeoutSeconds: 300 }, async (req: Reques
         if (c.uci === best2) { continue; }
         const { cp: cpAfter2 } = await engine.analyze(c.fenAfter, depth);
         const drop2 = Math.max(0, cpBefore2 + cpAfter2);
-        const sev2 = severityFromDrop(drop2, thr);
+        const dwp = Math.max(0, winProbFromCp(cpBefore2) - winProbFromCp(cpAfter2));
+        const sev2 = (classifier==='wp') ? (dwp>=wpThr.blunder ? 'blunder' : dwp>=wpThr.mistake ? 'mistake' : dwp>=wpThr.inacc ? 'inaccuracy' : null) : severityFromDrop(drop2, thr);
         if (!sev2) continue;
         mistakes.push({
           id: `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}`,
@@ -270,6 +282,9 @@ export const analyzePGNs = onRequest({ timeoutSeconds: 300 }, async (req: Reques
           played: c.san,
           best: best2,
           deltaCp: drop2,
+          deltaWp: Math.max(0, winProbFromCp(cpBefore2) - winProbFromCp(cpAfter2)),
+          cpBefore: cpBefore2,
+          cpAfter: cpAfter2,
           severity: sev2,
           nextReview: Date.now(),
           ef: 2.5, reps: 0, interval: 0,
@@ -278,6 +293,7 @@ export const analyzePGNs = onRequest({ timeoutSeconds: 300 }, async (req: Reques
       }
     }
 
+    try{ logger.info('functions.analyzePGNs result', { classifier, thr, wpThr, count: mistakes.length, sample: mistakes.slice(0,3) }); }catch{}
     res.status(200).json({ mistakes });
     return;
   } catch (err: any) {

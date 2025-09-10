@@ -15,6 +15,14 @@ function severityFromDrop(cp, thr = DEFAULT_THR) {
   return null;
 }
 
+// Lichess-style win probability from cp
+function winProbFromCp(cp) {
+  const k = 0.00368208;
+  const x = Number(cp) || 0;
+  const t = 2 / (1 + Math.exp(-k * x)) - 1;
+  return 50 + 50 * t; // percent 0..100
+}
+
 function findEnginePath() {
   const ordered = [
     process.env.STOCKFISH_PATH,
@@ -128,7 +136,15 @@ function startEngine() {
   return { analyzeFen, newGame, kill: () => { try { eng.kill('SIGTERM'); } catch {} } };
 }
 
-async function analyzePGNWithEngine(pgn, depth = 12, thr = DEFAULT_THR, depthFast = 12) {
+function severityFromWp(drop, thr={inacc:10,mistake:20,blunder:30}){
+  const x = Math.max(0, Number(drop)||0);
+  if (x >= (thr.blunder??30)) return 'blunder';
+  if (x >= (thr.mistake??20)) return 'mistake';
+  if (x >= (thr.inacc??10)) return 'inaccuracy';
+  return null;
+}
+
+async function analyzePGNWithEngine(pgn, depth = 12, thr = DEFAULT_THR, depthFast = 12, classifier='cp', wpThr={inacc:10,mistake:20,blunder:30}) {
   const engine = startEngine();
   try {
     const chess = new Chess();
@@ -149,7 +165,7 @@ async function analyzePGNWithEngine(pgn, depth = 12, thr = DEFAULT_THR, depthFas
       if (playedUci === best1) { continue; } // correct move => not a mistake
       const { cp: cpAfter1 } = await engine.analyzeFen(fenAfter, depthFast);
       const drop1 = Math.max(0, cpBefore1 + cpAfter1);
-      const sev1 = severityFromDrop(drop1, thr);
+      const sev1 = (classifier==='wp') ? severityFromWp(Math.max(0, winProbFromCp(cpBefore1) - winProbFromCp(cpAfter1)), wpThr) : severityFromDrop(drop1, thr);
       if (sev1) {
         candidates.push({ fenBefore, fenAfter, side, san: mv.san, playedUci });
       }
@@ -160,14 +176,17 @@ async function analyzePGNWithEngine(pgn, depth = 12, thr = DEFAULT_THR, depthFas
     for (const c of candidates) {
       const { cp: cpBefore2, bestmove: best2, pv } = await engine.analyzeFen(c.fenBefore, depth);
       let drop2 = 0;
+      let cpAfter2 = cpBefore2;
       if (c.playedUci === best2) {
         // Deep search considers it correct after all; skip
         continue;
       } else {
-        const { cp: cpAfter2 } = await engine.analyzeFen(c.fenAfter, depth);
+        const r2 = await engine.analyzeFen(c.fenAfter, depth);
+        cpAfter2 = r2.cp;
         drop2 = Math.max(0, cpBefore2 + cpAfter2);
+        var deltaWp = Math.max(0, winProbFromCp(cpBefore2) - winProbFromCp(cpAfter2));
       }
-      const sev2 = severityFromDrop(drop2, thr);
+      const sev2 = (classifier==='wp') ? severityFromWp(deltaWp, wpThr) : severityFromDrop(drop2, thr);
       if (!sev2) continue;
       out.push({
         fen: c.fenBefore,
@@ -175,6 +194,9 @@ async function analyzePGNWithEngine(pgn, depth = 12, thr = DEFAULT_THR, depthFas
         played: c.san,
         best: best2,
         deltaCp: drop2,
+        deltaWp: (typeof deltaWp === 'number' ? deltaWp : 0),
+        cpBefore: cpBefore2,
+        cpAfter: cpAfter2,
         severity: sev2,
         pvUci: pv,
       });
@@ -186,7 +208,7 @@ async function analyzePGNWithEngine(pgn, depth = 12, thr = DEFAULT_THR, depthFas
 }
 
 // Pass 1 only — return candidate positions based on fast depth
-async function scanPGNWithEngine(pgn, thr = DEFAULT_THR, depthFast = 12) {
+async function scanPGNWithEngine(pgn, thr = DEFAULT_THR, depthFast = 12, classifier='cp', wpThr={inacc:10,mistake:20,blunder:30}) {
   const engine = startEngine();
   try {
     const chess = new Chess();
@@ -205,7 +227,7 @@ async function scanPGNWithEngine(pgn, thr = DEFAULT_THR, depthFast = 12) {
       if (playedUci === best1) { continue; }
       const { cp: cpAfter1 } = await engine.analyzeFen(fenAfter, depthFast);
       const drop1 = Math.max(0, cpBefore1 + cpAfter1);
-      const sev1 = severityFromDrop(drop1, thr);
+      const sev1 = (classifier==='wp') ? severityFromWp(Math.max(0, winProbFromCp(cpBefore1) - winProbFromCp(cpAfter1)), wpThr) : severityFromDrop(drop1, thr);
       if (sev1) {
         candidates.push({ fenBefore, fenAfter, side, san: mv.san, playedUci });
       }
@@ -217,7 +239,7 @@ async function scanPGNWithEngine(pgn, thr = DEFAULT_THR, depthFast = 12) {
 }
 
 // Pass 2 only — analyze provided candidates at deep depth
-async function analyzeCandidatesWithEngine(candidates, depth = 12, thr = DEFAULT_THR) {
+async function analyzeCandidatesWithEngine(candidates, depth = 12, thr = DEFAULT_THR, classifier='cp', wpThr={inacc:10,mistake:20,blunder:30}) {
   const engine = startEngine();
   try {
     const out = [];
@@ -225,13 +247,16 @@ async function analyzeCandidatesWithEngine(candidates, depth = 12, thr = DEFAULT
     for (const c of (candidates || [])) {
       const { cp: cpBefore2, bestmove: best2, pv } = await engine.analyzeFen(c.fenBefore, depth);
       let drop2 = 0;
+      let cpAfter2 = cpBefore2;
       if (c.playedUci === best2) {
         continue;
       } else {
-        const { cp: cpAfter2 } = await engine.analyzeFen(c.fenAfter, depth);
+        const r2 = await engine.analyzeFen(c.fenAfter, depth);
+        cpAfter2 = r2.cp;
         drop2 = Math.max(0, cpBefore2 + cpAfter2);
+        var deltaWp = Math.max(0, winProbFromCp(cpBefore2) - winProbFromCp(cpAfter2));
       }
-      const sev2 = severityFromDrop(drop2, thr);
+      const sev2 = (classifier==='wp') ? severityFromWp(deltaWp, wpThr) : severityFromDrop(drop2, thr);
       if (!sev2) continue;
       out.push({
         fen: c.fenBefore,
@@ -239,6 +264,9 @@ async function analyzeCandidatesWithEngine(candidates, depth = 12, thr = DEFAULT
         played: c.san,
         best: best2,
         deltaCp: drop2,
+        deltaWp: (typeof deltaWp === 'number' ? deltaWp : 0),
+        cpBefore: cpBefore2,
+        cpAfter: cpAfter2,
         severity: sev2,
         pvUci: pv,
       });
@@ -268,7 +296,7 @@ app.get('/', (req, res) => {
 // Body: { pgn: string, depth?: number, thresholds?: { inacc, mistake, blunder } }
 app.post('/analyze', async (req, res) => {
   try {
-    const { pgn, depth, thresholds, depthFast } = req.body || {};
+    const { pgn, depth, thresholds, depthFast, classifier, wpThresholds } = req.body || {};
     if (!pgn || typeof pgn !== 'string') {
       res.status(400).json({ error: 'Missing pgn' });
       return;
@@ -280,7 +308,10 @@ app.post('/analyze', async (req, res) => {
       mistake: Math.max(0, thresholds?.mistake ?? DEFAULT_THR.mistake),
       blunder: Math.max(0, thresholds?.blunder ?? DEFAULT_THR.blunder),
     };
-    const mistakes = await analyzePGNWithEngine(pgn, d, thr, dFast);
+    const cls = (classifier==='wp') ? 'wp' : 'cp';
+    const twp = { inacc: Math.max(0, wpThresholds?.inacc ?? 10), mistake: Math.max(0, wpThresholds?.mistake ?? 20), blunder: Math.max(0, wpThresholds?.blunder ?? 30) };
+    const mistakes = await analyzePGNWithEngine(pgn, d, thr, dFast, cls, twp);
+    try{ console.log('[SF-backend] /analyze:', { classifier: cls, thr, wpThresholds: twp, count: mistakes.length, sample: mistakes.slice(0,3) }); }catch{}
     res.status(200).json({ mistakes });
   } catch (e) {
     console.error(e);
@@ -291,7 +322,7 @@ app.post('/analyze', async (req, res) => {
 // Fast pass scan endpoint
 app.post('/scan', async (req, res) => {
   try {
-    const { pgn, thresholds, depthFast } = req.body || {};
+    const { pgn, thresholds, depthFast, classifier, wpThresholds } = req.body || {};
     if (!pgn || typeof pgn !== 'string') { res.status(400).json({ error: 'Missing pgn' }); return; }
     const dFast = Math.max(4, Math.min(30, parseInt(depthFast || 12, 10) || 12));
     const thr = {
@@ -299,7 +330,10 @@ app.post('/scan', async (req, res) => {
       mistake: Math.max(0, thresholds?.mistake ?? DEFAULT_THR.mistake),
       blunder: Math.max(0, thresholds?.blunder ?? DEFAULT_THR.blunder),
     };
-    const candidates = await scanPGNWithEngine(pgn, thr, dFast);
+    const cls = (classifier==='wp') ? 'wp' : 'cp';
+    const twp = { inacc: Math.max(0, wpThresholds?.inacc ?? 10), mistake: Math.max(0, wpThresholds?.mistake ?? 20), blunder: Math.max(0, wpThresholds?.blunder ?? 30) };
+    const candidates = await scanPGNWithEngine(pgn, thr, dFast, cls, twp);
+    try{ console.log('[SF-backend] /scan:', { classifier: cls, thr, wpThresholds: twp, count: candidates.length, sample: candidates.slice(0,3) }); }catch{}
     res.status(200).json({ candidates });
   } catch (e) {
     console.error(e);
@@ -310,7 +344,7 @@ app.post('/scan', async (req, res) => {
 // Deep pass endpoint
 app.post('/analyzeCandidates', async (req, res) => {
   try {
-    const { candidates, depth, thresholds } = req.body || {};
+    const { candidates, depth, thresholds, classifier, wpThresholds } = req.body || {};
     if (!Array.isArray(candidates)) { res.status(400).json({ error: 'Missing candidates[]' }); return; }
     const d = Math.max(6, Math.min(30, parseInt(depth || 12, 10) || 12));
     const thr = {
@@ -318,7 +352,10 @@ app.post('/analyzeCandidates', async (req, res) => {
       mistake: Math.max(0, thresholds?.mistake ?? DEFAULT_THR.mistake),
       blunder: Math.max(0, thresholds?.blunder ?? DEFAULT_THR.blunder),
     };
-    const mistakes = await analyzeCandidatesWithEngine(candidates, d, thr);
+    const cls = (classifier==='wp') ? 'wp' : 'cp';
+    const twp = { inacc: Math.max(0, wpThresholds?.inacc ?? 10), mistake: Math.max(0, wpThresholds?.mistake ?? 20), blunder: Math.max(0, wpThresholds?.blunder ?? 30) };
+    const mistakes = await analyzeCandidatesWithEngine(candidates, d, thr, cls, twp);
+    try{ console.log('[SF-backend] /analyzeCandidates:', { classifier: cls, thr, wpThresholds: twp, count: mistakes.length, sample: mistakes.slice(0,3) }); }catch{}
     res.status(200).json({ mistakes });
   } catch (e) {
     console.error(e);

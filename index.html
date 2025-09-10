@@ -115,6 +115,9 @@
     #trainSection.training-mode #trainSelectView{ display:none; }
     .train-center{ display:flex; flex-direction:column; align-items:center; gap:12px }
     .train-block{ width:min(100%, var(--board-size)); margin:0 auto }
+    /* Keep current-mistake action buttons on one row */
+    .mistake-actions{ display:flex; gap:8px; align-items:center; flex-wrap:nowrap; white-space:nowrap; overflow-x:auto }
+    .mistake-actions > button{ flex:0 0 auto }
 
     /* Hide training legend badges */
     #trainSection .legend.tiny{ display:none !important; }
@@ -525,7 +528,7 @@
             <div id="board" class="grid8" aria-label="chessboard"></div>
             <div id="resizeHandle" class="resize-handle" title="Drag to resize"></div>
           </div>
-          <div style="flex:1;min-width:260px">
+          <div id="trainRightCol" style="flex:0 0 360px;width:360px">
             <div class="legend tiny">
               <span>Drag or click to move</span>
               <span>✔️ correct = best move</span>
@@ -538,13 +541,27 @@
               <div class="tiny"><b>Side to move:</b> <span id="sideToMove">—</span></div>
               <div class="tiny"><b>Your attempt:</b> <span id="yourMove">—</span></div>
               <div class="tiny"><b>Feedback:</b> <span id="feedback">—</span></div>
-              <div class="row" style="margin-top:8px; gap:8px">
+              <div class="mistake-actions" style="margin-top:8px">
                 <!-- NEW: Show mistake button (left of Reveal best) -->
                 <button id="btnShowMistake" class="ghost">Show mistake</button>
                 <button id="btnReveal" class="secondary">Reveal best</button>
                 <button id="btnNext" class="ghost">Next</button>
                 <button id="btnFlip" class="ghost">Flip board</button>
               </div>
+            </div>
+            <!-- Moved Engine panel above Game Info -->
+            <div class="stroke tiny" style="margin-top:10px" id="enginePanel">
+              <div class="row" style="align-items:center; justify-content:space-between">
+                <div>
+                  <b>Engine Analysis</b>
+                  <span id="engineStateLive" class="tiny muted" style="margin-left:6px">off</span>
+                </div>
+                <label class="switch" title="Toggle engine analysis">
+                  <input type="checkbox" id="engineToggle">
+                  <span class="slider"></span>
+                </label>
+              </div>
+              <div id="engineLines" class="mono" style="margin-top:6px; white-space:pre-wrap"></div>
             </div>
             <div class="stroke tiny" style="margin-top:10px">
               <div><b>Game Info</b></div>
@@ -558,20 +575,7 @@
 
           </div>
         </div>
-        <!-- Engine Analysis panel under the board area -->
-        <div class="stroke tiny" style="margin-top:10px" id="enginePanel">
-          <div class="row" style="align-items:center; justify-content:space-between">
-            <div>
-              <b>Engine Analysis</b>
-              <span id="engineStateLive" class="tiny muted" style="margin-left:6px">off</span>
-            </div>
-            <label class="switch" title="Toggle engine analysis">
-              <input type="checkbox" id="engineToggle">
-              <span class="slider"></span>
-            </label>
-          </div>
-          <div id="engineLines" class="mono" style="margin-top:6px; white-space:pre-wrap"></div>
-        </div>
+        
       </div>
       <div class="card">
         <h2>Sets</h2>
@@ -719,7 +723,10 @@
       const mCol = collection(db, 'users', user.uid, 'mistakes');
       onSnapshot(mCol, (snap) => {
         const arr=[]; snap.forEach(d=>arr.push(d.data()));
-        try{ localStorage.setItem('pmtt_mistakes', JSON.stringify(arr)); }catch{}
+        try{
+          const withSev = arr.map(m=>{ if(m && (typeof m.severity==='undefined'||m.severity===null)){ try{ m.severity=severityFromDrop(m.deltaCp);}catch{m.severity=null;} } return m; });
+          localStorage.setItem('pmtt_mistakes', JSON.stringify(withSev));
+        }catch{}
         window.dispatchEvent(new CustomEvent('firebase:mMistakesUpdated'));
       });
 
@@ -772,14 +779,18 @@
     const fb = () => (window.firebaseAPI && window.firebaseAPI.ready) ? window.firebaseAPI : null;
 
     function loadMistakes(){ try{ return JSON.parse(localStorage.getItem(LS_MISTAKES)||'[]'); }catch{return [];} }
-    function saveMistakes(arr){ localStorage.setItem(LS_MISTAKES, JSON.stringify(arr)); if(fb()) fb().saveAllMistakes(arr).catch(()=>{}); renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); }
+    function saveMistakes(arr){ try{ arr=(arr||[]).map(m=>{ if(m&&(typeof m.severity==='undefined'||m.severity===null)){ try{ m.severity=severityFromDrop(m.deltaCp);}catch{m.severity=null;} } return m; }); }catch{} localStorage.setItem(LS_MISTAKES, JSON.stringify(arr)); if(fb()) fb().saveAllMistakes(arr).catch(()=>{}); renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); }
     function addMistakes(newOnes){
       const cur = loadMistakes();
       const seen = new Set(cur.map(m => m.fen + '|' + m.played));
       const merged = [...cur];
       const toUpload=[];
       for(const m of newOnes){
-        if(!seen.has(m.fen + '|' + m.played)){ merged.push(m); toUpload.push(m); }
+        const k = m.fen + '|' + m.played;
+        if(!seen.has(k)){
+          const mm = {...m}; if(typeof mm.severity==='undefined'||mm.severity===null){ try{ mm.severity=severityFromDrop(mm.deltaCp);}catch{mm.severity=null;} }
+          merged.push(mm); toUpload.push(mm); seen.add(k);
+        }
       }
       localStorage.setItem(LS_MISTAKES, JSON.stringify(merged));
       if(fb() && toUpload.length) fb().addMistakesRemote(toUpload).catch(()=>{});
@@ -815,8 +826,35 @@
      * Sets (de-duped)
      ********************************************************************/
     const keyOf = (m) => (m.fen + '|' + m.played);
+    function snapshotMistake(m){
+      return {
+        id: m.id || uid(),
+        fen: m.fen, side: m.side, played: m.played, best: m.best, deltaCp: m.deltaCp,
+        severity: (typeof m.severity !== 'undefined' && m.severity !== null) ? m.severity : severityFromDrop(m?.deltaCp||0),
+        pgn: m.pgn || null, gameUrl: m.gameUrl || null,
+        ef: m.ef ?? 2.5, reps: m.reps ?? 0, interval: m.interval ?? 0,
+        nextReview: m.nextReview ?? nowTs()
+      };
+    }
     function loadSets(){ try{ return JSON.parse(localStorage.getItem(LS_SETS)||'[]'); }catch{return [];} }
-    function saveSets(arr){ localStorage.setItem(LS_SETS, JSON.stringify(arr)); renderSets(); }
+    function saveSets(arr){
+      try{
+        const norm = (arr||[]).map(s=>{
+          const out = {...s};
+          if(!Array.isArray(out.items)) out.items = [];
+          for(let i=0;i<out.items.length;i++){
+            const it = out.items[i] || {};
+            if(typeof it.severity === 'undefined' || it.severity === null){
+              try{ it.severity = severityFromDrop(it.deltaCp); }catch{ it.severity = null; }
+            }
+          }
+          out.version = 2;
+          return out;
+        });
+        localStorage.setItem(LS_SETS, JSON.stringify(norm));
+      }catch{ localStorage.setItem(LS_SETS, JSON.stringify(arr||[])); }
+      renderSets();
+    }
 
     function findExistingSetByNameAndKeys(name, keys){
       const sets = loadSets();
@@ -827,7 +865,8 @@
       const keys = Array.from(new Set(mistakes.map(keyOf)));
       const existing = findExistingSetByNameAndKeys(name||'', keys);
       if(existing) return existing; // avoid duplicates
-      const set = { id: uid(), name: name || `Set ${new Date().toLocaleString()}`, keys, created: nowTs() };
+      const items = (mistakes||[]).map(snapshotMistake);
+      const set = { id: uid(), name: name || `Set ${new Date().toLocaleString()}`, keys, items, version: 2, created: nowTs() };
       const sets = loadSets(); sets.unshift(set); saveSets(sets); return set;
     }
 
@@ -2041,14 +2080,13 @@
     }
 
     function renderStatsMistakeList(){
-      inferUsernames();
       const tb=$('#statsMistakeTBody'); if(!tb) return;
       try{ const thCp=document.querySelector('#statsMistakeTable thead th:nth-child(6)'); if(thCp) thCp.textContent='centipawn loss'; }catch{}
       tb.innerHTML='';
       const sets = loadSets(); const target = sets.find(s=>s.id===STATS_SELECTED_SET_ID);
       if(!target){ STATS_CURRENT_LIST=[]; $('#statsTotal') && ($('#statsTotal').textContent='0'); $('#statsDue') && ($('#statsDue').textContent='0'); return; }
       const keySet = new Set(target.keys||[]);
-      const all=filterMistakesToUserOnly(loadMistakes());
+      const all=loadMistakes();
       const list=all.filter(m => keySet.has(keyOf(m)));
       STATS_CURRENT_LIST = list;
       list.forEach((m,i)=>{

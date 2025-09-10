@@ -117,6 +117,9 @@
     #trainSection:not(.training-mode) .train-grid{ display:none; }
     .train-center{ display:flex; flex-direction:column; align-items:center; gap:12px }
     .train-block{ width:min(100%, var(--board-size)); margin:0 auto }
+    /* Keep current-mistake action buttons on one row */
+    .mistake-actions{ display:flex; gap:8px; align-items:center; flex-wrap:nowrap; white-space:nowrap; overflow-x:auto }
+    .mistake-actions > button{ flex:0 0 auto }
 
     /* Hide training legend badges */
     #trainSection .legend.tiny{ display:none !important; }
@@ -664,7 +667,7 @@
               </div>
             </div>
           </div>
-          <div style="flex:1;min-width:260px">
+          <div id="trainRightCol" style="flex:0 0 360px;width:360px">
             <div class="legend tiny">
               <span>Drag to move</span>
               <span>?? correct = best move</span>
@@ -677,7 +680,7 @@
               <div class="tiny"><b>Side to move:</b> <span id="sideToMove">â€”</span></div>
               <div class="tiny"><b>Your attempt:</b> <span id="yourMove">â€”</span></div>
               <div class="tiny"><b>Feedback:</b> <span id="feedback">â€”</span></div>
-              <div class="row" style="margin-top:8px; gap:8px">
+              <div class="mistake-actions" style="margin-top:8px">
                 <!-- NEW: Show mistake button (left of Reveal best) -->
                 <button id="btnShowMistake" class="ghost">Show mistake</button>
                 <button id="btnReveal" class="secondary">Reveal best</button>
@@ -686,13 +689,7 @@
                 <button id="btnFlip" class="ghost">Flip board</button>
               </div>
             </div>
-            <div class="stroke tiny" style="margin-top:10px">
-              <div><b>Game Info</b></div>
-              <div class="tiny mono" id="trainFen">FEN: -</div>
-              <div class="tiny mono" id="trainPgn" style="word-break:break-word">PGN: -</div>
-              <div class="tiny">Link: <a id="trainLink" href="#" target="_blank" rel="noopener">-</a></div>
-            </div>
-            <!-- Engine Analysis panel moved below Game Info -->
+            <!-- Engine Analysis panel moved above Game Info -->
             <div class="stroke tiny" style="margin-top:10px" id="enginePanel">
               <div class="row" style="align-items:center; justify-content:space-between; gap:10px; width:100%">
                 <div style="display:flex; align-items:center; gap:8px; flex:1; flex-wrap:wrap">
@@ -711,6 +708,12 @@
                 </div>
               </div>
               <div id="engineLines" class="mono" style="margin-top:6px; white-space:pre-wrap"></div>
+            </div>
+            <div class="stroke tiny" style="margin-top:10px">
+              <div><b>Game Info</b></div>
+              <div class="tiny mono" id="trainFen">FEN: -</div>
+              <div class="tiny mono" id="trainPgn" style="word-break:break-word">PGN: -</div>
+              <div class="tiny">Link: <a id="trainLink" href="#" target="_blank" rel="noopener">-</a></div>
             </div>
               </div>
               <div id="movesCol">
@@ -972,11 +975,21 @@
         return;
       }
 
-      // live sync mistakes -> local
+      // live sync mistakes -> local (merge to avoid transient drops during slow writes)
       const mCol = collection(db, 'users', user.uid, 'mistakes');
+      const keyOfLocal = (m) => (((m||{}).fen)||'') + '|' + (((m||{}).played)||'');
       api._unsubs.mistakes = onSnapshot(mCol, (snap) => {
-        const arr=[]; snap.forEach(d=>arr.push(d.data()));
-        try{ localStorage.setItem('pmtt_mistakes', JSON.stringify(arr)); }catch{}
+        const remote=[]; snap.forEach(d=>remote.push(ensureSeverity(d.data())));
+        try{
+          const local = JSON.parse(localStorage.getItem('pmtt_mistakes')||'[]');
+          const map = new Map();
+          for(const m of local){ const k = keyOfLocal(m); if(k) map.set(k, ensureSeverity(m)); }
+          for(const m of remote){ const k = keyOfLocal(m); if(k) map.set(k, ensureSeverity(m)); }
+          const merged = Array.from(map.values());
+          localStorage.setItem('pmtt_mistakes', JSON.stringify(merged));
+        }catch{
+          try{ localStorage.setItem('pmtt_mistakes', JSON.stringify(remote)); }catch{}
+        }
         window.dispatchEvent(new CustomEvent('firebase:mMistakesUpdated'));
       });
 
@@ -995,7 +1008,21 @@
       const sCol = collection(db, 'users', user.uid, 'sets');
       api._unsubs.sets = onSnapshot(sCol, (snap) => {
         const arr=[]; snap.forEach(d=>arr.push(d.data()));
-        try{ localStorage.setItem('pmtt_sets', JSON.stringify(arr)); }catch{}
+        try{
+          const norm = arr.map(s=>{
+            const out = {...s};
+            if(!Array.isArray(out.items)) out.items = [];
+            for(let i=0;i<out.items.length;i++){
+              const it = out.items[i] || {};
+              if(typeof it.severity === 'undefined' || it.severity === null){
+                try{ it.severity = severityFromDrop(it.deltaCp); }catch{ it.severity = null; }
+              }
+            }
+            out.version = 2;
+            return out;
+          });
+          localStorage.setItem('pmtt_sets', JSON.stringify(norm));
+        }catch{}
         window.dispatchEvent(new CustomEvent('firebase:setsUpdated'));
       });
 
@@ -1216,7 +1243,18 @@
       }catch{}
       try{ initTrainViewFromMistake(m); }catch{}
     }
-    function setMistakeCounter(n){ try{ const el=document.getElementById('importMistakes'); if(el) el.textContent = `Mistakes: ${n}`; }catch{} }
+    function setMistakeCounter(n){
+      try{
+        const el=document.getElementById('importMistakes');
+        if(!el) return;
+        let u = n;
+        try{
+          const arr = (window.LAST_ANALYZED && Array.isArray(window.LAST_ANALYZED.mistakes)) ? window.LAST_ANALYZED.mistakes : null;
+          if(arr){ u = (new Set(arr.map(keyOf))).size; }
+        }catch{}
+        el.textContent = `Mistakes: ${u}`;
+      }catch{}
+    }
 
     // Disable native HTML5 drag inside chess boards (we use chessboard.js's own drag)
     document.addEventListener('dragstart', function (e) {
@@ -1432,14 +1470,26 @@
     const fb = () => (window.firebaseAPI && window.firebaseAPI.ready) ? window.firebaseAPI : null;
 
     function loadMistakes(){ try{ return JSON.parse(localStorage.getItem(LS_MISTAKES)||'[]'); }catch{return [];} }
-    function saveMistakes(arr){ localStorage.setItem(LS_MISTAKES, JSON.stringify(arr)); if(fb()) fb().saveAllMistakes(arr).catch(()=>{}); renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); }
+    function saveMistakes(arr){
+      try{ arr = (arr||[]).map(ensureSeverity); }catch{}
+      localStorage.setItem(LS_MISTAKES, JSON.stringify(arr));
+      if(fb()) fb().saveAllMistakes(arr).catch(()=>{});
+      renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary();
+    }
     function addMistakes(newOnes){
       const cur = loadMistakes();
       const seen = new Set(cur.map(m => m.fen + '|' + m.played));
       const merged = [...cur];
       const toUpload=[];
       for(const m of newOnes){
-        if(!seen.has(m.fen + '|' + m.played)){ merged.push(m); toUpload.push(m); }
+        const k = m.fen + '|' + m.played;
+        if(!seen.has(k)){
+          const mm = ensureSeverity({...m});
+          merged.push(mm);
+          toUpload.push(mm);
+          // ensure de-dupe within the incoming batch too
+          seen.add(k);
+        }
       }
       localStorage.setItem(LS_MISTAKES, JSON.stringify(merged));
       if(fb() && toUpload.length) fb().addMistakesRemote(toUpload).catch(()=>{});
@@ -1481,11 +1531,21 @@
      ********************************************************************/
     // Key helpers: tolerate historical variations (SAN vs UCI stored in sets/records)
     const UCI_RE = /^[a-h][1-8][a-h][1-8][qrbn]?$/i;
+    function ensureSeverity(m){
+      try{
+        if(m && (typeof m.severity === 'undefined' || m.severity === null)){
+          const s = severityFromDrop(m.deltaCp);
+          if(s) m.severity = s; else m.severity = null;
+        }
+      }catch{}
+      return m;
+    }
     // === NEW: snapshot + hydrate helpers ===
     function snapshotMistake(m){
       return {
         id: m.id || uid(),
         fen: m.fen, side: m.side, played: m.played, best: m.best, deltaCp: m.deltaCp,
+        severity: (m && typeof m.severity !== 'undefined' && m.severity !== null) ? m.severity : severityFromDrop(m?.deltaCp||0),
         pgn: m.pgn || null, gameUrl: m.gameUrl || null,
         ef: m.ef ?? 2.5, reps: m.reps ?? 0, interval: m.interval ?? 0,
         nextReview: m.nextReview ?? nowTs()
@@ -1506,6 +1566,9 @@
         });
         if(!found){
           const snap = {...item};
+          if(typeof snap.severity === 'undefined' || snap.severity === null){
+            try{ snap.severity = severityFromDrop(snap.deltaCp); }catch{ snap.severity = null; }
+          }
           snap.id = snap.id || uid();
           snap.nextReview = nowTs(); // make it available in SRS immediately
           toAdd.push(snap);
@@ -1537,6 +1600,16 @@
       }catch{ return String(s||''); }
     }
     const keyOf = (m) => (m.fen + '|' + m.played);
+
+    // Utility: set the Create Set button label to unique mistake count
+    function updateCreateSetButtonCount(all){
+      try{
+        const btn = document.getElementById('btnCreateSetFromLast');
+        if(!btn) return;
+        const uniq = (new Set((all||[]).map(keyOf))).size;
+        btn.textContent = `Create set (${uniq} mistake${uniq!==1?'s':''})`;
+      }catch{}
+    }
     function keysForMistake(m){
       try{
         const fen = m?.fen || '';
@@ -1623,8 +1696,25 @@
     }
     function loadSets(){ try{ return JSON.parse(localStorage.getItem(LS_SETS)||'[]'); }catch{return [];} }
     function saveSets(arr){
-      localStorage.setItem(LS_SETS, JSON.stringify(arr));
-      try{ if(fb()) fb().saveAllSets(arr).catch(()=>{}); }catch{}
+      try{
+        const norm = (arr||[]).map(s=>{
+          const out = {...s};
+          if(!Array.isArray(out.items)) out.items = [];
+          for(let i=0;i<out.items.length;i++){
+            const it = out.items[i] || {};
+            if(typeof it.severity === 'undefined' || it.severity === null){
+              try{ it.severity = severityFromDrop(it.deltaCp); }catch{ it.severity = null; }
+            }
+          }
+          out.version = 2;
+          return out;
+        });
+        localStorage.setItem(LS_SETS, JSON.stringify(norm));
+        try{ if(fb()) fb().saveAllSets(norm).catch(()=>{}); }catch{}
+      }catch{
+        localStorage.setItem(LS_SETS, JSON.stringify(arr||[]));
+        try{ if(fb()) fb().saveAllSets(arr).catch(()=>{}); }catch{}
+      }
       renderSets();
     }
 
@@ -2753,8 +2843,9 @@
       LAST_ANALYZED = { mistakes: all.slice(), suggestedName: tagName };
       try{
         const btn=$('#btnCreateSetFromLast'); const info=$('#createSetInfo');
-        if(btn){ btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; }
-        if(info) info.textContent = all.length>0 ? `Ready: ${all.length} mistake(s) detected in last analysis.` : '-';
+        const uniq=(new Set(all.map(keyOf))).size;
+        if(btn){ btn.textContent = `Create set (${uniq} mistake${uniq!==1?'s':''})`; }
+        if(info) info.textContent = uniq>0 ? `Ready: ${uniq} unique mistake(s) detected in last analysis.` : '-';
       }catch{}
 
       if(state.stop){
@@ -2807,7 +2898,7 @@
       const tagBase = (srcSet.size===1 ? Array.from(srcSet)[0] : 'Imported');
       const tagName = `${tagBase}${state.stop ? ' (partial)' : ''} ${new Date().toLocaleString()}`;
       LAST_ANALYZED = { mistakes: all.slice(), suggestedName: tagName };
-      try{ const btn=$('#btnCreateSetFromLast'); const info=$('#createSetInfo'); if(btn){ btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; } if(info) info.textContent = all.length>0 ? `Ready: ${all.length} mistake(s) detected in last analysis.` : '-'; }catch{}
+      try{ const btn=$('#btnCreateSetFromLast'); const info=$('#createSetInfo'); const uniq=(new Set(all.map(keyOf))).size; if(btn){ btn.textContent = `Create set (${uniq} mistake${uniq!==1?'s':''})`; } if(info) info.textContent = uniq>0 ? `Ready: ${uniq} unique mistake(s) detected in last analysis.` : '-'; }catch{}
       setStatus(state.stop ? 'Analysis stopped' : 'Analysis finished');
     }
 
@@ -3647,14 +3738,13 @@
     }
 
     function renderStatsMistakeList(){
-      inferUsernames();
       const tb=$('#statsMistakeTBody'); if(!tb) return;
       try{ const thCp=document.querySelector('#statsMistakeTable thead th:nth-child(6)'); if(thCp) thCp.textContent='centipawn loss'; }catch{}
       tb.innerHTML='';
       const sets = loadSets(); const target = sets.find(s=>s.id===STATS_SELECTED_SET_ID);
       if(!target){ STATS_CURRENT_LIST=[]; $('#statsTotal') && ($('#statsTotal').textContent='0'); $('#statsDue') && ($('#statsDue').textContent='0'); return; }
       const keySet = expandKeys(target.keys||[]);
-      const all=filterMistakesToUserOnly(loadMistakes());
+      const all=loadMistakes();
       const list=all.filter(m => {
         const ks = keysForMistake(m);
         for(const k of ks){ if(keySet.has(k)) return true; }
@@ -3941,7 +4031,9 @@
 
       rebuildImportedTable();
       renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); renderSets(); renderSetsForTrain(); renderActiveSetInfo();
-      // One-time backfill: add snapshot items to old sets that have none
+      // One-time backfill:
+      // 1) Add snapshot items to old sets that have none
+      // 2) Ensure all snapshot items carry severity (compute from deltaCp when missing)
       try{
         const sets = loadSets();
         let changed = false;
@@ -3957,6 +4049,16 @@
             s.items = items;
             s.version = 2;
             changed = true;
+          } else {
+            // Backfill severity for existing items
+            let touched = false;
+            for(let i=0;i<s.items.length;i++){
+              const it = s.items[i] || {};
+              if(typeof it.severity === 'undefined' || it.severity === null){
+                try{ it.severity = severityFromDrop(it.deltaCp); touched = true; }catch{ it.severity = null; }
+              }
+            }
+            if(touched){ changed = true; }
           }
         }
         if(changed) saveSets(sets);
@@ -4473,7 +4575,27 @@
     (function(){
       const LS_SETS = 'pmtt_sets';
       const loadSetsLocal = () => { try{ return JSON.parse(localStorage.getItem(LS_SETS)||'[]'); }catch{return [];} };
-      const saveSetsLocal = (arr) => { try{ localStorage.setItem(LS_SETS, JSON.stringify(arr)); }catch{} try{ window.firebaseAPI && window.firebaseAPI.saveAllSets && window.firebaseAPI.saveAllSets(arr).catch(()=>{}); }catch{} try{ renderSets && renderSets(); renderSetsForTrain && renderSetsForTrain(); renderTrainSelectList && renderTrainSelectList(); }catch{} };
+      const saveSetsLocal = (arr) => {
+        try{
+          // Normalize: ensure snapshot items exist and have severity
+          const norm = (arr||[]).map(s=>{
+            const out = {...s};
+            if(!Array.isArray(out.items)) out.items = [];
+            // Backfill severity on items
+            for(let i=0;i<out.items.length;i++){
+              const it = out.items[i] || {};
+              if(typeof it.severity === 'undefined' || it.severity === null){
+                try{ it.severity = severityFromDrop(it.deltaCp); }catch{ it.severity = null; }
+              }
+            }
+            out.version = 2;
+            return out;
+          });
+          localStorage.setItem(LS_SETS, JSON.stringify(norm));
+          try{ window.firebaseAPI && window.firebaseAPI.saveAllSets && window.firebaseAPI.saveAllSets(norm).catch(()=>{}); }catch{}
+        }catch{}
+        try{ renderSets && renderSets(); renderSetsForTrain && renderSetsForTrain(); renderTrainSelectList && renderTrainSelectList(); }catch{}
+      };
       const keyOf = (m) => ((m&&m.fen)||'' ) + '|' + ((m&&m.played)||'');
 
       // Modal DOM
@@ -4543,9 +4665,29 @@
               const sets2 = loadSetsLocal();
               const idx = sets2.findIndex(x=>x.id===s.id);
               if(idx<0) return;
-              const ex = new Set((sets2[idx].keys||[]));
+              const setObj = sets2[idx] || {};
+              const ex = new Set((setObj.keys||[]));
               let added=0; for(const k of newKeys){ if(!ex.has(k)){ ex.add(k); added++; } }
-              sets2[idx].keys = Array.from(ex);
+              setObj.keys = Array.from(ex);
+              // Ensure snapshot items include new keys with severity
+              if(!Array.isArray(setObj.items)) setObj.items = [];
+              const itemKeys = new Set(setObj.items.map(keyOf));
+              const finalKeys = new Set(setObj.keys||[]);
+              // Prefer current candidates, fallback to all mistakes
+              const pool = Array.isArray(cand) && cand.length ? cand : (typeof loadMistakes==='function' ? loadMistakes() : []);
+              const byKey = new Map();
+              try{ for(const m of pool){ byKey.set(keyOf(m), m); } }catch{}
+              for(const k of finalKeys){
+                if(!itemKeys.has(k)){
+                  let m = byKey.get(k);
+                  if(!m && typeof loadMistakes==='function'){
+                    try{ m = loadMistakes().find(x=>keyOf(x)===k); }catch{}
+                  }
+                  if(m){ setObj.items.push(snapshotMistake(m)); itemKeys.add(k); }
+                }
+              }
+              setObj.version = 2;
+              sets2[idx] = setObj;
               saveSetsLocal(sets2);
               setStatus(`Added ${added} item(s) to set "${sets2[idx].name}".`);
               try{ const el=document.getElementById('createSetInfo'); if(el) el.textContent = `Added ${added} item(s) to "${sets2[idx].name}"`; }catch{}

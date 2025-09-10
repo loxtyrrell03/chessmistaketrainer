@@ -117,6 +117,19 @@
     #trainSection:not(.training-mode) .train-grid{ display:none; }
     .train-center{ display:flex; flex-direction:column; align-items:center; gap:12px }
     .train-block{ width:min(100%, var(--board-size)); margin:0 auto }
+    /* Expandable 1-line fields (FEN/PGN) */
+    .exp-field{ position:relative }
+    .exp-field .exp-label{ display:block; font-weight:600; margin-bottom:4px }
+    .exp-field .exp-collapsed{ cursor:pointer; user-select:text; width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:6px 8px; border:1px dashed #2a3142; border-radius:8px; background:#0f1320; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; color:#cbd5e1 }
+    .exp-field .exp-panel{ display:none; position:absolute; inset:auto 0 0 0; transform:translateY(4px); z-index:6; background:#0f1320; border:1px solid #2a3142; border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,.35); padding:8px }
+    .exp-field.open .exp-panel{ display:block }
+    .exp-field .exp-text{ width:100%; min-height:140px; resize:vertical; background:#0b0e16; color:#e6edf3; border:1px solid #2a3142; border-radius:8px; padding:8px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace }
+    .exp-field .copy-btn{ position:absolute; right:12px; bottom:12px }
+    /* Keep current-mistake action buttons on one row; reveal on full row below */
+    .mistake-actions{ display:flex; gap:8px; align-items:center; flex-wrap:nowrap; white-space:nowrap; overflow-x:auto }
+    .mistake-actions > button{ flex:0 0 auto }
+    .mistake-reveal-row{ display:block }
+    .mistake-reveal-row > #btnReveal.wide{ display:block; width:100% }
     /* Keep current-mistake action buttons on one row */
     .mistake-actions{ display:flex; gap:8px; align-items:center; flex-wrap:nowrap; white-space:nowrap; overflow-x:auto }
     .mistake-actions > button{ flex:0 0 auto }
@@ -681,12 +694,14 @@
               <div class="tiny"><b>Your attempt:</b> <span id="yourMove">â€”</span></div>
               <div class="tiny"><b>Feedback:</b> <span id="feedback">â€”</span></div>
               <div class="mistake-actions" style="margin-top:8px">
-                <!-- NEW: Show mistake button (left of Reveal best) -->
+                <!-- Top row actions (Reveal moved to its own row) -->
                 <button id="btnShowMistake" class="ghost">Show mistake</button>
-                <button id="btnReveal" class="secondary">Reveal best</button>
                 <button id="btnBack" class="ghost" disabled>Back</button>
                 <button id="btnNext" class="ghost">Next</button>
                 <button id="btnFlip" class="ghost">Flip board</button>
+              </div>
+              <div class="mistake-reveal-row" style="margin-top:8px">
+                <button id="btnReveal" class="secondary wide">Reveal best</button>
               </div>
             </div>
             <!-- Engine Analysis panel moved above Game Info -->
@@ -711,9 +726,23 @@
             </div>
             <div class="stroke tiny" style="margin-top:10px">
               <div><b>Game Info</b></div>
-              <div class="tiny mono" id="trainFen">FEN: -</div>
-              <div class="tiny mono" id="trainPgn" style="word-break:break-word">PGN: -</div>
-              <div class="tiny">Link: <a id="trainLink" href="#" target="_blank" rel="noopener">-</a></div>
+              <div class="exp-field" id="fenField" style="margin-top:6px">
+                <span class="exp-label tiny">FEN</span>
+                <div id="trainFenCollapsed" class="exp-collapsed" title="Click to expand">-</div>
+                <div class="exp-panel">
+                  <textarea id="trainFenFull" class="exp-text" readonly></textarea>
+                  <button id="copyFen" class="ghost copy-btn" title="Copy FEN">Copy</button>
+                </div>
+              </div>
+              <div class="exp-field" id="pgnField" style="margin-top:10px">
+                <span class="exp-label tiny">PGN</span>
+                <div id="trainPgnCollapsed" class="exp-collapsed" title="Click to expand">-</div>
+                <div class="exp-panel">
+                  <textarea id="trainPgnFull" class="exp-text" readonly></textarea>
+                  <button id="copyPgn" class="ghost copy-btn" title="Copy PGN">Copy</button>
+                </div>
+              </div>
+              <div class="tiny" style="margin-top:10px">Link: <a id="trainLink" href="#" target="_blank" rel="noopener">-</a></div>
             </div>
               </div>
               <div id="movesCol">
@@ -3010,6 +3039,40 @@
       return mistakes;
     }
 
+    function setTrainFen(fen){
+      try{
+        const col=document.getElementById('trainFenCollapsed'); if(col) col.textContent = fen||'-';
+        const full=document.getElementById('trainFenFull'); if(full) full.value = fen||'';
+      }catch{}
+    }
+    function setTrainPgn(pgn){
+      try{
+        const col=document.getElementById('trainPgnCollapsed'); if(col) col.textContent = (pgn? (pgn.split('\n')[0]||'') : '-');
+        const full=document.getElementById('trainPgnFull'); if(full) full.value = pgn||'';
+      }catch{}
+    }
+    function inferGameUrlFromPGN(pgn){
+      try{
+        const h = parsePGNHeaders(pgn||'');
+        const link = h.Link || '';
+        const site = h.Site || '';
+        if(/^https?:\/\//i.test(link)) return link;
+        if(/^https?:\/\//i.test(site)) return site;
+      }catch{}
+      return '';
+    }
+    function updateTrainLink(m){
+      try{
+        const linkEl=document.getElementById('trainLink'); if(!linkEl) return;
+        let url = m && m.gameUrl || '';
+        if((!url || !/^https?:\/\//i.test(url)) && m && m.pgn){ url = inferGameUrlFromPGN(m.pgn); }
+        if(url && /^https?:\/\//i.test(url)){
+          linkEl.textContent='Open game'; linkEl.href=url;
+        } else {
+          linkEl.textContent='-'; linkEl.href='#';
+        }
+      }catch{}
+    }
     // Local fallback single-layer (deep on every move)
     async function analyzeManualLocalSingle(pgn, onFound){
       const clRead = ChessLite();
@@ -3509,7 +3572,7 @@
             BOARD.lastFromTo = { from: source, to: target };
             try{ if($('#engineToggle')?.checked){ console.log('[EngineLive]', new Date().toISOString(), 'schedule analyzeDebounced after onDrop'); EngineLive.analyzeDebounced(nextFen); } }catch{}
             try{ $('#sideToMove').textContent = BOARD.chess.turn()==='w'?'White':'Black'; }catch{}
-            try{ const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent = `FEN: ${nextFen}`; }catch{}
+            try{ setTrainFen && setTrainFen(nextFen); }catch{}
             BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
             try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
             try{ Session.answer(uci); }catch{}
@@ -3526,7 +3589,7 @@
       try{ console.log('[Train]', new Date().toISOString(), 'drawBoardMain()', { fen, engineToggle: !!document.getElementById('engineToggle')?.checked }); }catch{}
       const board = ensureMainBoard(); if(!board) return;
       if(!fen){
-        try{ const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent='FEN: -'; }catch{}
+        try{ setTrainFen && setTrainFen(''); }catch{}
         BOARD.current=null;
         BOARD.arrows.engine=null; try{ const el=$('#engineLines'); if(el) el.textContent=''; }catch{}
         board.clear(true);
@@ -3534,7 +3597,7 @@
         setBoardFonts(); renderArrows(); return;
       }
       BOARD.chess.loadFEN(fen); BOARD.current=fen; $('#sideToMove').textContent = BOARD.chess.turn()==='w'?'White':'Black';
-      try{ const fenEl = $('#trainFen'); if(fenEl) fenEl.textContent = `FEN: ${fen}`; }catch{}
+      try{ setTrainFen && setTrainFen(fen); }catch{}
       board.orientation(ORIENT_WHITE_BOTTOM ? 'white' : 'black');
       board.position(fen, false);
       clearLastMoveHighlights('#board');
@@ -3653,9 +3716,9 @@
 
       // Update info
       try{
-        const fenEl=$('#trainFen'); if(fenEl) fenEl.textContent=`FEN: ${m.fen}`;
-        const pgnEl=$('#trainPgn'); if(pgnEl) pgnEl.textContent=`PGN: ${m.pgn ? m.pgn.split('\n')[0] : 'â€”'}`;
-        const linkEl=$('#trainLink'); if(linkEl){ if(m.gameUrl){ linkEl.textContent='Open game'; linkEl.href=m.gameUrl; } else { linkEl.textContent='â€”'; linkEl.href='#'; } }
+        setTrainFen(m.fen||'');
+        setTrainPgn(m.pgn||'');
+        updateTrainLink(m);
       }catch{}
     }
 
@@ -4066,6 +4129,26 @@
       drawBoardMain(null);
       try{ setTrainNavEnabled(false); tvUpdate(); }catch{}
       setStatus('Loading engineâ€¦'); await Engine.ensure(); setStatus('Idle');
+      // Setup Game Info expanders (FEN/PGN)
+      try{
+        function setupExpander(rootId, textId, copyBtnId){
+          const root=document.getElementById(rootId); if(!root) return;
+          const collapsed = root.querySelector('.exp-collapsed');
+          const ta = document.getElementById(textId);
+          const btn = document.getElementById(copyBtnId);
+          const open = ()=>{ root.classList.add('open'); try{ ta && ta.focus(); }catch{} };
+          const close = ()=>{ root.classList.remove('open'); };
+          collapsed && collapsed.addEventListener('click', open);
+          collapsed && collapsed.setAttribute('tabindex','0');
+          collapsed && collapsed.addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); open(); }});
+          document.addEventListener('click', (e)=>{ if(!root.contains(e.target)) close(); });
+          ta && ta.addEventListener('keydown', (e)=>{ if(e.key==='Escape') close(); });
+          btn && btn.addEventListener('click', ()=>{ try{ navigator.clipboard.writeText(ta?.value||''); setStatus('Copied'); }catch{} });
+        }
+        setupExpander('fenField','trainFenFull','copyFen');
+        setupExpander('pgnField','trainPgnFull','copyPgn');
+      }catch{}
+
       // keep boards/arrows sized when window resizes
       window.addEventListener('resize', ()=>{
         try{ CB.main && CB.main.resize(); }catch{}

@@ -131,6 +131,8 @@
     .mistake-reveal-row{ display:block }
     .mistake-reveal-row > #btnReveal{ display:block; width:100% }
     .mistake-actions-wrap{ display:inline-grid; grid-template-columns: max-content }
+    /* Size right panel to content width (actions) */
+    #trainRightCol{ width: max-content }
     /* Keep current-mistake action buttons on one row */
     .mistake-actions{ display:flex; gap:8px; align-items:center; flex-wrap:nowrap; white-space:nowrap }
     .mistake-actions > button{ flex:0 0 auto }
@@ -681,7 +683,7 @@
               </div>
             </div>
           </div>
-          <div id="trainRightCol" style="flex:0 0 480px;width:480px">
+          <div id="trainRightCol" style="flex:0 0 auto">
             <div class="legend tiny">
               <span>Drag to move</span>
               <span>?? correct = best move</span>
@@ -3042,6 +3044,23 @@
       return mistakes;
     }
 
+    function adjustRightColWidth(){
+      try{
+        const rc = document.getElementById('trainRightCol'); if(!rc) return;
+        const wrap = rc.querySelector('.mistake-actions-wrap') || rc.querySelector('.mistake-actions') || rc;
+        const w = Math.ceil(wrap.getBoundingClientRect().width);
+        // Include padding + borders of containing panel (.stroke)
+        const box = wrap.closest('.stroke') || rc;
+        let extra = 0;
+        try{
+          const cs = window.getComputedStyle(box);
+          extra = (parseFloat(cs.paddingLeft)||0) + (parseFloat(cs.paddingRight)||0) + (parseFloat(cs.borderLeftWidth)||0) + (parseFloat(cs.borderRightWidth)||0);
+        }catch{}
+        // Small buffer to avoid fractional rounding clipping
+        const target = w + Math.ceil(extra) + 8;
+        rc.style.width = target + 'px';
+      }catch{}
+    }
     function setTrainFen(fen){
       try{
         const col=document.getElementById('trainFenCollapsed'); if(col) col.textContent = fen||'-';
@@ -3723,6 +3742,7 @@
         setTrainPgn(m.pgn||'');
         updateTrainLink(m);
       }catch{}
+      try{ adjustRightColWidth && adjustRightColWidth(); }catch{}
     }
 
     // Reveal, Show mistake & Next buttons
@@ -3811,11 +3831,17 @@
       if(!target){ STATS_CURRENT_LIST=[]; $('#statsTotal') && ($('#statsTotal').textContent='0'); $('#statsDue') && ($('#statsDue').textContent='0'); return; }
       const keySet = expandKeys(target.keys||[]);
       const all=loadMistakes();
-      const list=all.filter(m => {
+      let list=all.filter(m => {
         const ks = keysForMistake(m);
         for(const k of ks){ if(keySet.has(k)) return true; }
         return false;
       });
+      // Fallback to set snapshot items if mistakes not yet synced
+      if((!list || list.length===0) && Array.isArray(target.items) && target.items.length){
+        list = target.items.slice();
+        // Opportunistically wait for remote mistakes then re-render
+        try{ ensureMistakesForSet(target, 8000).then(()=>{ try{ renderStatsMistakeList(); renderStatsSummary(); }catch{} }); }catch{}
+      }
       STATS_CURRENT_LIST = list;
       list.forEach((m,i)=>{
         const bestSan = m.best ? uciToSAN(m.fen, m.best) : '-';
@@ -4157,6 +4183,7 @@
         try{ CB.main && CB.main.resize(); }catch{}
         try{ Object.values(CB.extras||{}).forEach(b=>{ try{ b && b.resize && b.resize(); }catch{} }); }catch{}
         setBoardFonts();
+        try{ adjustRightColWidth && adjustRightColWidth(); }catch{}
       });
 
       // Enable board drag-resize via the corner handle
@@ -4812,6 +4839,11 @@
     document.getElementById('navHome')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('home'); });
     document.getElementById('navAnalyze')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('analyze'); });
     document.getElementById('navStats')?.addEventListener('click', (e)=>{ e.preventDefault(); renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); showSection('stats'); try{ const lbl=document.querySelector('#statsDelta')?.parentElement?.querySelector('b'); if(lbl) lbl.textContent='centipawn loss:'; }catch{} });
+    // Re-render stats when cloud data arrives
+    try{
+      window.addEventListener('firebase:mMistakesUpdated', ()=>{ try{ renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); }catch{} });
+      window.addEventListener('firebase:setsUpdated', ()=>{ try{ renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); }catch{} });
+    }catch{}
     document.getElementById('navSets')?.addEventListener('click', (e)=>{ e.preventDefault(); renderSets(); showSection('sets'); });
     document.getElementById('navTrain')?.addEventListener('click', (e)=>{
       e.preventDefault();
@@ -4895,3 +4927,5 @@
 
 
 
+      // Initial width sync for right column
+      try{ adjustRightColWidth && adjustRightColWidth(); }catch{}

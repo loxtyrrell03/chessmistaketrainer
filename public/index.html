@@ -2292,6 +2292,7 @@
      * PGN helpers & analysis (user-only)
      ********************************************************************/
     const DEFAULT_SEV={ inacc:50, mistake:150, blunder:300 };
+    const DEFAULT_SEV_WP={ inacc:10, mistake:20, blunder:30 }; // percent
     function getSev(){
       try{
         const fromLs = JSON.parse(localStorage.getItem('pmtt_sev')||'{}');
@@ -2306,6 +2307,14 @@
       }catch{ return DEFAULT_SEV; }
     }
     function severityFromDrop(cp){ const T=getSev(); const x=Math.abs(Math.round(cp)); if(x>=T.blunder) return 'blunder'; if(x>=T.mistake) return 'mistake'; if(x>=T.inacc) return 'inaccuracy'; return null; }
+    function getSevWp(){
+      try{ const d=JSON.parse(localStorage.getItem('pmtt_sev_wp')||'{}'); return { inacc: Number.isFinite(d.inacc)?d.inacc:10, mistake: Number.isFinite(d.mistake)?d.mistake:20, blunder: Number.isFinite(d.blunder)?d.blunder:30 }; }catch{ return DEFAULT_SEV_WP; }
+    }
+    function getClassifier(){ try{ const v=localStorage.getItem('pmtt_classifier'); return (v==='wp')?'wp':'cp'; }catch{ return 'cp'; } }
+    function winProbFromCp(cp){ const k=0.00368208; const x=Number(cp)||0; const t=2/(1+Math.exp(-k*x))-1; return 50+50*t; }
+    function severityFromScores(cpBefore, cpAfter){ const cls=getClassifier(); if(cls==='wp'){ try{ const pB=winProbFromCp(cpBefore); const pA=winProbFromCp(cpAfter); const drop=Math.max(0,pB-pA); const T=getSevWp(); if(drop>=T.blunder) return 'blunder'; if(drop>=T.mistake) return 'mistake'; if(drop>=T.inacc) return 'inaccuracy'; return null; }catch{} } const dropCp=Math.max(0,(Number(cpBefore)||0)+(Number(cpAfter)||0)); return severityFromDrop(dropCp); }
+    function formatWinProbDrop(v){ const n=Number(v)||0; if(!Number.isFinite(n)||n<=0) return '0%'; return `${Math.round(n)}%`; }
+    function formatDeltaForDisplay(m){ const cls=getClassifier(); if(cls==='wp' && m && typeof m.deltaWp!=='undefined' && m.deltaWp!==null) return formatWinProbDrop(m.deltaWp); return formatCentipawnLoss(m?.deltaCp||0); }
 
     // Format deltaCp (positive drop) as "centipawn loss" (negative value in pawns)
     function formatCentipawnLoss(deltaCp){
@@ -3020,8 +3029,8 @@
         const fenAfter = game.fen();
         if(playedUci === best1) { continue; }
         const { cp: cpAfter1 } = await Engine.analyze(fenAfter, depthFast);
-        const drop1 = Math.max(0, cpBefore1 + cpAfter1);
-        if(severityFromDrop(drop1)){
+        const sev1 = severityFromScores(cpBefore1, cpAfter1);
+        if(sev1){
           candidates.push({ fenBefore, fenAfter, side, san: mv.san, uci: playedUci });
         }
       }
@@ -3033,10 +3042,11 @@
         if(c.uci === best2) { continue; }
         const { cp: cpAfter2 } = await Engine.analyze(c.fenAfter, depth);
         const drop2 = Math.max(0, cpBefore2 + cpAfter2);
-        const sev2 = severityFromDrop(drop2);
+        const sev2 = severityFromScores(cpBefore2, cpAfter2);
         const include = (window.includeSeverity ? window.includeSeverity(sev2) : true);
         if(sev2 && include){
           const m = { id:uid(), fen:c.fenBefore, side:c.side, played:c.san, best:best2, deltaCp:drop2, severity:sev2, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn };
+          try{ if(getClassifier()==='wp'){ m.deltaWp = Math.max(0, winProbFromCp(cpBefore2) - winProbFromCp(cpAfter2)); } }catch{}
           mistakes.push(m);
           try{ if(typeof onFound==='function') onFound(m); }catch{}
         }
@@ -3117,10 +3127,11 @@
         const fenAfter = game.fen();
         const { cp: cpAfter2 } = await Engine.analyze(fenAfter, depth);
         const drop2 = Math.max(0, cpBefore2 + cpAfter2);
-        const sev2 = severityFromDrop(drop2);
+        const sev2 = severityFromScores(cpBefore2, cpAfter2);
         const include = (window.includeSeverity ? window.includeSeverity(sev2) : true);
         if(sev2 && include){
           const m = { id:uid(), fen:fenBefore, side, played: mv.san, best:best2, deltaCp:drop2, severity:sev2, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn };
+          try{ if(getClassifier()==='wp'){ m.deltaWp = Math.max(0, winProbFromCp(cpBefore2) - winProbFromCp(cpAfter2)); } }catch{}
           mistakes.push(m);
           try{ if(typeof onFound==='function') onFound(m); }catch{}
         }
@@ -3315,12 +3326,14 @@
       function next(){
       $('#yourMove').textContent='-'; $('#feedback').textContent='-';
       try{
-        const cpl = formatCentipawnLoss(m.deltaCp);
-        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> Â· centipawn loss: ${cpl}`;
+        const deltaTxt = formatDeltaForDisplay(m);
+        const label = (getClassifier()==='wp'?'win prob drop':'centipawn loss');
+        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · ${label}: ${deltaTxt}`;
       }catch{}
       try{
-        const cpl = formatCentipawnLoss(m.deltaCp);
-        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> Â· centipawn loss: ${cpl}`;
+        const deltaTxt = formatDeltaForDisplay(m);
+        const label = (getClassifier()==='wp'?'win prob drop':'centipawn loss');
+        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · ${label}: ${deltaTxt}`;
       }catch{}
         // clear arrows
         BOARD.arrows.user = null; BOARD.arrows.best = null; BOARD.arrows.showBest=false; renderArrows();
@@ -3720,8 +3733,9 @@
       if(!m){ drawBoardMain(null); return; }
       gvHide();
       try{
-        const cpl = formatCentipawnLoss(m.deltaCp);
-        $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> Â· centipawn loss: ${cpl}`;
+        const deltaTxt = formatDeltaForDisplay(m);
+        const label = (getClassifier()==='wp'?'win prob drop':'centipawn loss');
+        $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> · ${label}: ${deltaTxt}`;
       }catch{}
       $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> Â· <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> Â· ?cp ${Math.round(m.deltaCp)}`;
       $('#yourMove').textContent='â€”'; $('#feedback').textContent='â€”';
@@ -3729,8 +3743,9 @@
       try{ initTrainViewFromMistake(m); }catch{}
       drawBoardMain(m.fen);
       try{
-        const cpl = formatCentipawnLoss(m.deltaCp);
-        $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> Â· centipawn loss: ${cpl}`;
+        const deltaTxt = formatDeltaForDisplay(m);
+        const label = (getClassifier()==='wp'?'win prob drop':'centipawn loss');
+        $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> · ${label}: ${deltaTxt}`;
       }catch{}
       // Arrows start clean; will draw on attempt/reveal
       BOARD.arrows.user = null; BOARD.arrows.best = m.best || null; BOARD.arrows.showBest = false; renderArrows();
@@ -3825,7 +3840,7 @@
 
     function renderStatsMistakeList(){
       const tb=$('#statsMistakeTBody'); if(!tb) return;
-      try{ const thCp=document.querySelector('#statsMistakeTable thead th:nth-child(6)'); if(thCp) thCp.textContent='centipawn loss'; }catch{}
+      try{ const thCp=document.querySelector('#statsMistakeTable thead th:nth-child(6)'); if(thCp) thCp.textContent=(getClassifier()==='wp'?'win prob drop':'centipawn loss'); }catch{}
       tb.innerHTML='';
       const sets = loadSets(); const target = sets.find(s=>s.id===STATS_SELECTED_SET_ID);
       if(!target){ STATS_CURRENT_LIST=[]; $('#statsTotal') && ($('#statsTotal').textContent='0'); $('#statsDue') && ($('#statsDue').textContent='0'); return; }
@@ -3852,7 +3867,7 @@
           <td>${m.side==='w'?'White':'Black'}</td>
           <td class="mono tiny">${m.played}</td>
           <td class="mono tiny">${bestSan}</td>
-          <td class="mono tiny">${formatCentipawnLoss(m.deltaCp)}</td>
+          <td class="mono tiny">${formatDeltaForDisplay(m)}</td>
           <td class="tiny">${tsToDate(m.nextReview)}</td>`;
         tr.addEventListener('click', ()=>{ loadMistakeOnStatsBoard(m); });
         tb.appendChild(tr);
@@ -3885,8 +3900,8 @@
       $('#statsSideToMove').textContent = (m.side==='w')?'White':'Black';
       const bestSan = m.best ? uciToSAN(m.fen, m.best) : '-';
       $('#statsBest').textContent = bestSan || m.best || '-';
-      try{ const lbl=$('#statsDelta')?.parentElement?.querySelector('b'); if(lbl) lbl.textContent='centipawn loss:'; }catch{}
-      $('#statsDelta').textContent = formatCentipawnLoss(m.deltaCp);
+      try{ const lbl=$('#statsDelta')?.parentElement?.querySelector('b'); if(lbl) lbl.textContent=(getClassifier()==='wp'?'win prob drop:':'centipawn loss:'); }catch{}
+      $('#statsDelta').textContent = formatDeltaForDisplay(m);
       try{
         const sideUser = userSideForPGN(m.pgn||'');
         const whiteBottom = sideUser ? (sideUser==='w') : true;
@@ -4377,6 +4392,8 @@
       const LS_MODE = 'pmtt_an_mode';
       const LS_FLAGS = 'pmtt_sev_flags'; // {inacc:boolean, mistake:boolean, blunder:boolean}
       const LS_SEV = 'pmtt_sev'; // thresholds object {inacc, mistake, blunder}
+      const LS_SEV_WP = 'pmtt_sev_wp'; // thresholds for win probability drop (percent)
+      const LS_CLASS = 'pmtt_classifier'; // 'cp' | 'wp'
 
       function loadDepth(){
         try{
@@ -4417,6 +4434,8 @@
         return 'double';
       }
       function saveMode(m){ try{ localStorage.setItem(LS_MODE, (m==='single'?'single':'double')); }catch{} }
+      function loadClassifier(){ try{ const v=localStorage.getItem(LS_CLASS); return (v==='wp')?'wp':'cp'; }catch{ return 'cp'; } }
+      function saveClassifier(v){ try{ localStorage.setItem(LS_CLASS, (v==='wp')?'wp':'cp'); }catch{} }
       function loadFlags(){
         try{
           const o=JSON.parse(localStorage.getItem(LS_FLAGS)||'{}');
@@ -4444,6 +4463,15 @@
         return {inacc:50, mistake:150, blunder:300};
       }
       function saveSev(t){ try{ localStorage.setItem(LS_SEV, JSON.stringify({ inacc:Math.max(0,parseInt(t.inacc,10)||50), mistake:Math.max(0,parseInt(t.mistake,10)||150), blunder:Math.max(0,parseInt(t.blunder,10)||300) })); }catch{} }
+      function loadSevWp(){
+        try{
+          const d=JSON.parse(localStorage.getItem(LS_SEV_WP)||'{}');
+          const base = { inacc: Number.isFinite(d.inacc)?d.inacc:10, mistake: Number.isFinite(d.mistake)?d.mistake:20, blunder: Number.isFinite(d.blunder)?d.blunder:30 };
+          return base;
+        }catch{}
+        return { inacc:10, mistake:20, blunder:30 };
+      }
+      function saveSevWp(t){ try{ localStorage.setItem(LS_SEV_WP, JSON.stringify({ inacc:Math.max(0,parseInt(t.inacc,10)||10), mistake:Math.max(0,parseInt(t.mistake,10)||20), blunder:Math.max(0,parseInt(t.blunder,10)||30) })); }catch{} }
 
       function includeSeverity(sev){
         try{
@@ -4476,6 +4504,13 @@
                   <option value="single">Single layer</option>
                 </select>
               </div>
+              <div style="min-width:200px">
+                <label>Classifier</label>
+                <select id="anClassifier">
+                  <option value="cp">Centipawn loss</option>
+                  <option value="wp">Win probability drop</option>
+                </select>
+              </div>
               <div id="anDepthFastWrap" style="max-width:120px">
                 <label>L1 depth</label>
                 <input id="anDepthFast" type="number" min="6" max="40" value="12" />
@@ -4485,7 +4520,7 @@
                 <input id="anDepth" type="number" min="6" max="40" value="12" />
               </div>
               <div class="stroke" style="flex:1">
-                <div class="small"><b>Classify by centipawn loss</b></div>
+                <div class="small"><b id="sevPanelTitle">Classify by centipawn loss</b></div>
                 <div class="grid-2" style="margin-top:6px; gap:10px">
                   <div>
                     <label>Inaccuracy ≥</label>
@@ -4540,9 +4575,11 @@
           const depth = loadDepth();
           const fast = loadFastDepth();
           const mode = loadMode();
-          const t = loadSev();
+          const cls = loadClassifier();
+          const t = cls==='wp' ? loadSevWp() : loadSev();
           const f = loadFlags();
           const modeEl=document.getElementById('anMode'); if(modeEl) modeEl.value = mode;
+          const clsEl=document.getElementById('anClassifier'); if(clsEl) clsEl.value = cls;
           const dEl=document.getElementById('anDepth'); if(dEl) dEl.value=String(depth);
           const dfEl=document.getElementById('anDepthFast'); if(dfEl) dfEl.value=String(fast);
           applyModeVisuals(mode);
@@ -4550,6 +4587,12 @@
           const si=document.getElementById('sevInacc'); if(si) si.value=String(t.inacc);
           const sm=document.getElementById('sevMistake'); if(sm) sm.value=String(t.mistake);
           const sb=document.getElementById('sevBlunder'); if(sb) sb.value=String(t.blunder);
+          try{
+            const lbl=document.getElementById('sevPanelTitle');
+            if(lbl) lbl.textContent = (cls==='wp' ? 'Classify by win probability drop' : 'Classify by centipawn loss');
+            const all=[si,sm,sb].filter(Boolean);
+            all.forEach(inp=>{ if(cls==='wp'){ inp.min='0'; inp.max='100'; inp.step='1'; } else { inp.min='0'; inp.removeAttribute('max'); inp.step='1'; } });
+          }catch{}
           const ci=document.getElementById('incInacc'); if(ci) ci.checked=!!f.inacc;
           const cm=document.getElementById('incMistake'); if(cm) cm.checked=!!f.mistake;
           const cb=document.getElementById('incBlunder'); if(cb) cb.checked=!!f.blunder;
@@ -4566,12 +4609,23 @@
           const val = sel && (sel.value==='single' ? 'single' : 'double');
           applyModeVisuals(val||'double');
         }); }catch{}
+        try{ document.getElementById('anClassifier')?.addEventListener('change', ()=>{
+          const sel = document.getElementById('anClassifier');
+          const val = (sel && sel.value==='wp') ? 'wp' : 'cp';
+          const t = (val==='wp') ? loadSevWp() : loadSev();
+          const si=document.getElementById('sevInacc'); const sm=document.getElementById('sevMistake'); const sb=document.getElementById('sevBlunder');
+          if(si) si.value=String(t.inacc);
+          if(sm) sm.value=String(t.mistake);
+          if(sb) sb.value=String(t.blunder);
+          const lbl=document.getElementById('sevPanelTitle'); if(lbl) lbl.textContent = (val==='wp') ? 'Classify by win probability drop' : 'Classify by centipawn loss';
+          [si,sm,sb].forEach(inp=>{ if(!inp) return; if(val==='wp'){ inp.min='0'; inp.max='100'; inp.step='1'; } else { inp.min='0'; inp.removeAttribute('max'); inp.step='1'; } });
+        }); }catch{}
       }
       function close(){
         modal.style.display = 'none';
         try{ if(prefsListener){ window.removeEventListener('firebase:prefsUpdated', prefsListener); prefsListener=null; } }catch{}
       }
-      function reset(){ try{ localStorage.removeItem(LS_DEPTH); localStorage.removeItem(LS_FAST); localStorage.removeItem(LS_MODE); localStorage.removeItem(LS_FLAGS); localStorage.removeItem(LS_SEV); }catch{} open(); }
+      function reset(){ try{ localStorage.removeItem(LS_DEPTH); localStorage.removeItem(LS_FAST); localStorage.removeItem(LS_MODE); localStorage.removeItem(LS_FLAGS); localStorage.removeItem(LS_SEV); localStorage.removeItem(LS_SEV_WP); localStorage.removeItem(LS_CLASS); }catch{} open(); }
       function save(){
         const modeSel = document.getElementById('anMode');
         const mode = (modeSel && modeSel.value==='single') ? 'single' : 'double';
@@ -4579,17 +4633,20 @@
         const depth = parseInt(document.getElementById('anDepth').value,10)||12; saveDepth(depth);
         const dFastEl = document.getElementById('anDepthFast');
         const depthFast = dFastEl ? (parseInt(dFastEl.value,10)||12) : 12; saveFastDepth(depthFast);
-        const t = { inacc: parseInt(document.getElementById('sevInacc').value,10)||50,
-                    mistake: parseInt(document.getElementById('sevMistake').value,10)||150,
-                    blunder: parseInt(document.getElementById('sevBlunder').value,10)||300 };
-        saveSev(t);
+        const clsSel = document.getElementById('anClassifier');
+        const cls = (clsSel && clsSel.value==='wp') ? 'wp' : 'cp';
+        saveClassifier(cls);
+        const t = { inacc: parseInt(document.getElementById('sevInacc').value,10)|| (cls==='wp'?10:50),
+                    mistake: parseInt(document.getElementById('sevMistake').value,10)|| (cls==='wp'?20:150),
+                    blunder: parseInt(document.getElementById('sevBlunder').value,10)|| (cls==='wp'?30:300) };
+        if(cls==='wp') saveSevWp(t); else saveSev(t);
         const f = { inacc: !!document.getElementById('incInacc').checked,
                     mistake: !!document.getElementById('incMistake').checked,
                     blunder: !!document.getElementById('incBlunder').checked };
         saveFlags(f);
         // Persist to unified prefs in Firestore as well (only if signed in)
         try{
-          const payload = { analysisMode: mode, analysisDepth: depth, analysisFastDepth: depthFast, analysisThresholds: t, analysisInclude: f };
+          const payload = { analysisMode: mode, analysisDepth: depth, analysisFastDepth: depthFast, analysisThresholds: (cls==='wp'? undefined : t), analysisInclude: f };
           if(window.savePrefsLocal) window.savePrefsLocal(payload);
           if(window.firebaseAPI && window.firebaseAPI.ready && window.firebaseAPI.savePrefs){ window.firebaseAPI.savePrefs(payload).catch(()=>{}); }
         }catch{}
@@ -4838,7 +4895,7 @@
     }
     document.getElementById('navHome')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('home'); });
     document.getElementById('navAnalyze')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('analyze'); });
-    document.getElementById('navStats')?.addEventListener('click', (e)=>{ e.preventDefault(); renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); showSection('stats'); try{ const lbl=document.querySelector('#statsDelta')?.parentElement?.querySelector('b'); if(lbl) lbl.textContent='centipawn loss:'; }catch{} });
+    document.getElementById('navStats')?.addEventListener('click', (e)=>{ e.preventDefault(); renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); showSection('stats'); try{ const lbl=document.querySelector('#statsDelta')?.parentElement?.querySelector('b'); if(lbl) lbl.textContent=(getClassifier()==='wp'?'win prob drop:':'centipawn loss:'); }catch{} });
     // Re-render stats when cloud data arrives
     try{
       window.addEventListener('firebase:mMistakesUpdated', ()=>{ try{ renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); }catch{} });

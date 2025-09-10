@@ -1,0 +1,8 @@
+﻿function severityFromDrop(cp: number, thr: Sev): "inaccuracy"|"mistake"|"blunder"|null {
+  const x = Math.abs(Math.round(cp));
+  if (x >= thr.blunder) return "blunder";
+  if (x >= thr.mistake) return "mistake";
+  if (x >= thr.inacc) return "inaccuracy";
+  return null;
+}
+

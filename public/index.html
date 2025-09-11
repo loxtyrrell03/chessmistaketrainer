@@ -1301,7 +1301,7 @@
       }
     }, true);
 
-    // Engine Settings modal (PV, Depth, Arrows)
+    // Engine Settings modal (PV, Depth, Arrows, Threads, Hash)
     (function(){
       function buildModal(){
         const modal = document.createElement('div');
@@ -1310,7 +1310,7 @@
         modal.innerHTML = `
           <div id="engSetBackdrop" style="position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(2px);z-index:70"></div>
           <div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:71">
-            <div class="card" style="width:min(480px, 95vw); max-height:90vh; overflow:auto">
+            <div class="card" style="width:min(520px, 95vw); max-height:90vh; overflow:auto">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
                 <h2>Engine Settings</h2>
                 <button id="engSetClose" class="ghost" title="Close">×</button>
@@ -1329,6 +1329,18 @@
                   <input id="engDepthInput" type="range" min="1" max="100" value="16" style="width:100%; margin-top:8px" />
                 </div>
               </div>
+              <div class="row" style="margin-top:10px">
+                <div style="max-width:140px">
+                  <label>Threads</label>
+                  <input id="engThreadsInput" type="number" min="1" max="32" value="1" />
+                  <div class="tiny muted" id="engThreadsHint"></div>
+                </div>
+                <div style="max-width:180px">
+                  <label>Hash (MB)</label>
+                  <input id="engHashInput" type="number" min="16" max="2048" step="16" value="128" />
+                  <div class="tiny muted">TT size; larger uses more RAM</div>
+                </div>
+              </div>
               <div class="row" style="margin-top:12px; justify-content:flex-end">
                 <button id="engSetCancel" class="ghost">Cancel</button>
                 <button id="engSetSave" class="secondary">Save</button>
@@ -1344,19 +1356,28 @@
         const m = ensureModal();
         // preload values from EngineLive
         try{
-          const LS_PV='pmtt_eng_pv', LS_DEPTH='pmtt_eng_depth', LS_ARROWS='pmtt_eng_arrows';
+          const LS_PV='pmtt_eng_pv', LS_DEPTH='pmtt_eng_depth', LS_ARROWS='pmtt_eng_arrows', LS_THREADS='pmtt_eng_threads', LS_HASH='pmtt_eng_hash';
           let pv = (window.EngineLive && window.EngineLive.getMultiPV) ? window.EngineLive.getMultiPV() : null;
           let d  = (window.EngineLive && window.EngineLive.getDepth) ? window.EngineLive.getDepth() : null;
           let arrows = (window.EngineLive && window.EngineLive.getArrowCount) ? window.EngineLive.getArrowCount() : null;
+          let thr = (window.EngineLive && window.EngineLive.getThreads) ? window.EngineLive.getThreads() : null;
+          let hm  = (window.EngineLive && window.EngineLive.getHashMB) ? window.EngineLive.getHashMB() : null;
           if(pv==null){ try{ pv = Math.max(1, Math.min(10, parseInt(localStorage.getItem(LS_PV)||'',10)||3)); }catch{ pv=3; } }
           if(d==null){ try{ d  = Math.max(1, Math.min(100, parseInt(localStorage.getItem(LS_DEPTH)||'',10)||16)); }catch{ d=16; } }
           if(arrows==null){ try{ arrows = Math.max(0, Math.min(10, parseInt(localStorage.getItem(LS_ARROWS)||'',10)||1)); }catch{ arrows=1; } }
+          if(thr==null){ try{ thr = Math.max(1, Math.min(32, parseInt(localStorage.getItem(LS_THREADS)||'',10)||1)); }catch{ thr=1; } }
+          if(hm==null){ try{ hm  = Math.max(16, Math.min(2048, parseInt(localStorage.getItem(LS_HASH)||'',10)||128)); }catch{ hm=128; } }
           // cap arrows by pv
           arrows = Math.max(0, Math.min(pv, arrows));
           const pvEl = document.getElementById('engPvInput'); if(pvEl) pvEl.value = String(pv);
           const dEl = document.getElementById('engDepthInput'); if(dEl) dEl.value = String(d);
           const dvEl= document.getElementById('engDepthVal'); if(dvEl) dvEl.textContent = String(d);
           const aEl = document.getElementById('engArrowInput'); if(aEl){ aEl.max=String(pv); aEl.value = String(arrows); }
+          const tEl = document.getElementById('engThreadsInput'); if(tEl){
+            try{ const hc = (navigator.hardwareConcurrency||0)|0; if(hc>0){ tEl.max = String(Math.min(32,hc)); const hint=document.getElementById('engThreadsHint'); if(hint) hint.textContent = `CPU cores: ${hc}`; } }catch{}
+            tEl.value = String(thr);
+          }
+          const hEl = document.getElementById('engHashInput'); if(hEl) hEl.value = String(hm);
         }catch{}
         m.style.display = 'block';
       }
@@ -1376,15 +1397,25 @@
         if(pvEl && aEl){ pvEl.addEventListener('input', ()=>{ try{ const pv=Math.max(1, Math.min(10, parseInt(pvEl.value,10)||1)); aEl.max=String(pv); if(parseInt(aEl.value,10)>pv) aEl.value=String(pv); }catch{} }); }
         document.getElementById('engSetSave')?.addEventListener('click', ()=>{
           try{
-            const LS_PV='pmtt_eng_pv', LS_DEPTH='pmtt_eng_depth', LS_ARROWS='pmtt_eng_arrows';
+            const LS_PV='pmtt_eng_pv', LS_DEPTH='pmtt_eng_depth', LS_ARROWS='pmtt_eng_arrows', LS_THREADS='pmtt_eng_threads', LS_HASH='pmtt_eng_hash';
             const pv = Math.max(1, Math.min(10, parseInt(document.getElementById('engPvInput')?.value,10)||3));
             const d  = Math.max(1, Math.min(100, parseInt(document.getElementById('engDepthInput')?.value,10)||16));
             const arrows = Math.max(0, Math.min(pv, parseInt(document.getElementById('engArrowInput')?.value,10)||1));
-            try{ localStorage.setItem(LS_PV, String(pv)); localStorage.setItem(LS_DEPTH, String(d)); localStorage.setItem(LS_ARROWS, String(arrows)); }catch{}
+            const thr = Math.max(1, Math.min(parseInt(document.getElementById('engThreadsInput')?.value,10)||1, parseInt(document.getElementById('engThreadsInput')?.max||'32',10)||32));
+            const hm  = Math.max(16, Math.min(2048, parseInt(document.getElementById('engHashInput')?.value,10)||128));
+            try{
+              localStorage.setItem(LS_PV, String(pv));
+              localStorage.setItem(LS_DEPTH, String(d));
+              localStorage.setItem(LS_ARROWS, String(arrows));
+              localStorage.setItem(LS_THREADS, String(thr));
+              localStorage.setItem(LS_HASH, String(hm));
+            }catch{}
             if(window.EngineLive){
               if(window.EngineLive.setMultiPV) window.EngineLive.setMultiPV(pv);
               if(window.EngineLive.setDepth) window.EngineLive.setDepth(d);
               if(window.EngineLive.setArrowCount) window.EngineLive.setArrowCount(arrows);
+              if(window.EngineLive.setThreads) window.EngineLive.setThreads(thr);
+              if(window.EngineLive.setHashMB) window.EngineLive.setHashMB(hm);
             }
           }catch{}
           close();
@@ -2392,12 +2423,18 @@
       const LS_ENG_PV = 'pmtt_eng_pv';
       const LS_ENG_DEPTH = 'pmtt_eng_depth';
       const LS_ENG_ARROWS = 'pmtt_eng_arrows';
+      const LS_ENG_THREADS = 'pmtt_eng_threads';
+      const LS_ENG_HASH = 'pmtt_eng_hash';
       function loadPv(){ try{ return Math.max(1, Math.min(10, parseInt(localStorage.getItem(LS_ENG_PV)||'',10)||3)); }catch{ return 3; } }
       function loadDepth(){ try{ return Math.max(1, Math.min(100, parseInt(localStorage.getItem(LS_ENG_DEPTH)||'',10)||16)); }catch{ return 16; } }
       function loadArrows(){ try{ return Math.max(0, Math.min(10, parseInt(localStorage.getItem(LS_ENG_ARROWS)||'',10)||1)); }catch{ return 1; } }
+      function loadThreads(){ try{ const hc=(navigator.hardwareConcurrency||0)|0; const maxThr=hc>0?Math.min(32,hc):32; const v=parseInt(localStorage.getItem(LS_ENG_THREADS)||'',10)||1; return Math.max(1, Math.min(maxThr, v)); }catch{ return 1; } }
+      function loadHash(){ try{ return Math.max(16, Math.min(2048, parseInt(localStorage.getItem(LS_ENG_HASH)||'',10)||128)); }catch{ return 128; } }
       let multiPV = loadPv();
       let depth = loadDepth();
       let arrowCount = Math.min(loadArrows(), multiPV);
+      let threads = loadThreads();
+      let hashMB = loadHash();
 
       function setState(txt){
         dlog('setState', 'state ->', txt, '| flags:', {ready, active, pending, gotUci});
@@ -2619,7 +2656,8 @@
         dlog('goNow begin', { fen, multiPV, depth, ready, active });
         try{ postSF('ucinewgame'); }catch{}
         try{ postSF('position fen '+fen); }catch{}
-        try{ postSF('setoption name Threads value 1'); }catch{}
+        try{ postSF('setoption name Threads value '+threads); }catch{}
+        try{ postSF('setoption name Hash value '+hashMB); }catch{}
         try{ postSF('setoption name MultiPV value '+multiPV); }catch{}
         try{ postSF('go depth '+depth); }catch{}
         dlog('goNow end');
@@ -2709,10 +2747,36 @@
         try{ localStorage.setItem(LS_ENG_ARROWS, String(arrowCount)); }catch{}
         recalcEngineArrowsFromLines();
       }
+      function setThreads(n){
+        try{
+          const hc=(navigator.hardwareConcurrency||0)|0; const maxThr=hc>0?Math.min(32,hc):32;
+          threads = Math.max(1, Math.min(parseInt(n,10)||1, maxThr));
+          localStorage.setItem(LS_ENG_THREADS, String(threads));
+          ensure();
+          if(ready){ try{ postSF('stop'); }catch{}
+            try{ postSF('setoption name Threads value '+threads); }catch{}
+            if(active && curFen) analyzeDebounced(curFen);
+          }
+        }catch{}
+      }
+      function setHashMB(n){
+        try{
+          hashMB = Math.max(16, Math.min(parseInt(n,10)||128, 2048));
+          localStorage.setItem(LS_ENG_HASH, String(hashMB));
+          ensure();
+          if(ready){ try{ postSF('stop'); }catch{}
+            try{ postSF('setoption name Hash value '+hashMB); }catch{}
+            try{ postSF('ucinewgame'); }catch{}
+            if(active && curFen) analyzeDebounced(curFen);
+          }
+        }catch{}
+      }
+      function getThreads(){ return threads; }
+      function getHashMB(){ return hashMB; }
       function getArrowCount(){ return arrowCount; }
       function getMultiPV(){ return multiPV; }
       function getDepth(){ return depth; }
-      return { enable, disable, analyzeDebounced, setMultiPV, setDepth, setArrowCount, getArrowCount, getMultiPV, getDepth };
+      return { enable, disable, analyzeDebounced, setMultiPV, setDepth, setArrowCount, setThreads, setHashMB, getArrowCount, getMultiPV, getDepth, getThreads, getHashMB };
     })();
     try{ window.EngineLive = EngineLive; }catch{}
     async function analyzeOnServer(pgn, depth){

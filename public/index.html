@@ -2243,7 +2243,12 @@
           }catch{}
           try{
             if(typeof Stockfish==='function'){
-              try{ Stockfish.locateFile = (path, prefix)=> 'engine/' + path; }catch{}
+              try{
+                // Ensure engine assets resolve from /engine/
+                Stockfish.locateFile = (path, prefix)=> '/engine/' + String(path).split('/').pop();
+                // Help Emscripten resolve pthread helper relative to this script
+                Stockfish.mainScriptUrlOrBlob = '/engine/stockfish.js';
+              }catch{}
               sf = Stockfish();
             } else {
               sf = null;
@@ -2481,7 +2486,10 @@
           // Use our bridge worker so stdout/stderr are forwarded to main thread
           // and engine assets resolve relative to /engine/
           const __wv = (function(){ try{ if(DEBUG){ window.ENGINE_WV = window.ENGINE_WV || Date.now(); return '?v='+window.ENGINE_WV; } }catch{} return ''; })();
-          const workerUrl = '/engine/stockfish-worker.js' + __wv;
+          // Use the engine script itself as the worker. Pass wasm path via location.hash.
+          // This matches Stockfish.js 17.x boot logic in worker context.
+          const wasmPath = '/engine/stockfish.wasm';
+          const workerUrl = '/engine/stockfish.js' + __wv + '#' + encodeURIComponent(wasmPath);
           sf = new Worker(workerUrl);
           try{ dlog('worker url', workerUrl); }catch{}
           // Expose for DevTools validation

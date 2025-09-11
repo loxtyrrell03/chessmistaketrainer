@@ -23,13 +23,41 @@ try {
 } catch {
   self.Module.mainScriptUrlOrBlob = '/engine/stockfish.js' + __ver;
 }
+try {
+  // Hint the exact wasm path; Emscripten will respect this when resolving the core module
+  self.Module.wasmBinaryFile = '/engine/stockfish.wasm' + __ver;
+} catch {}
+
+// Provide abort hook for clearer diagnostics
+try {
+  self.Module.onAbort = function(reason){
+    try { wlog('onAbort', String(reason)); } catch {}
+    try { self.postMessage('stockfish worker abort: ' + String(reason)); } catch {}
+  };
+} catch {}
 
 // Ensure both the wasm and the pthread helper resolve in this folder.
 // Return absolute URLs so fetch/Worker/importScripts don't depend on base.
+function __normalizeEngineAssetName(base){
+  try{
+    let name = String(base||'');
+    name = name.split('?')[0].split('#')[0];
+    name = name.split('/').pop();
+    // Map hashed SF 17.x names to our shipped filenames
+    // e.g. stockfish-17.1-XXXX-part-3.wasm -> stockfish-part-3.wasm
+    //      stockfish-17.1-XXXX.wasm        -> stockfish.wasm
+    //      stockfish-17.1-XXXX.worker.js   -> stockfish.worker.js
+    const mPart = /^stockfish(?:-[^-]+)*-part-(\d+)\.wasm$/i.exec(name);
+    if (mPart) return `stockfish-part-${mPart[1]}.wasm`;
+    if (/^stockfish(?:-[^.]+)*\.wasm$/i.test(name)) return 'stockfish.wasm';
+    if (/^stockfish(?:-[^.]+)*\.worker\.js$/i.test(name)) return 'stockfish.worker.js';
+    return name;
+  }catch{ return base; }
+}
 self.Module.locateFile = function(requestedPath /*, prefix */) {
   try {
-    const name = String(requestedPath).split('?')[0].split('/').pop();
-    // Always serve engine assets from /engine/
+    const raw = String(requestedPath);
+    const name = __normalizeEngineAssetName(raw);
     const r = '/engine/' + name + __ver;
     wlog('locateFile', requestedPath, '->', r);
     return r;
@@ -39,6 +67,47 @@ self.Module.locateFile = function(requestedPath /*, prefix */) {
     return r;
   }
 };
+
+// Intercept fetch and XHR to normalize any engine asset lookups that bypass locateFile
+try {
+  const __origFetch = self.fetch ? self.fetch.bind(self) : null;
+  if (__origFetch) {
+    self.fetch = function(input, init){
+      try{
+        const url = (typeof input === 'string') ? input : (input && input.url) ? input.url : String(input);
+        const name = __normalizeEngineAssetName(url);
+        if (/^stockfish/i.test(name)){
+          const newUrl = '/engine/' + name + __ver;
+          wlog('fetch', url, '->', newUrl);
+          return __origFetch(newUrl, init);
+        }
+        return __origFetch(input, init);
+      }catch(e){ return __origFetch(input, init); }
+    }
+  }
+}catch{}
+
+try {
+  const OldXHR = self.XMLHttpRequest;
+  if (OldXHR) {
+    self.XMLHttpRequest = function(){
+      const xhr = new OldXHR();
+      const oldOpen = xhr.open;
+      xhr.open = function(method, url){
+        try{
+          const name = __normalizeEngineAssetName(url);
+          if (/^stockfish/i.test(name)){
+            const newUrl = '/engine/' + name + __ver;
+            wlog('xhr.open', url, '->', newUrl);
+            return oldOpen.apply(xhr, [method, newUrl].concat([].slice.call(arguments, 2)));
+          }
+        }catch{}
+        return oldOpen.apply(xhr, arguments);
+      };
+      return xhr;
+    };
+  }
+}catch{}
 
 // Forward engine stdout/stderr to the main thread (used for UCI lines)
 self.Module.print = function(text) { try { self.postMessage(String(text)); } catch {} };

@@ -825,7 +825,10 @@
     window.FN_BASE = `https://${REGION}-${PROJECT_ID}.cloudfunctions.net`;
     window.FN_LICHESS_URL = window.FN_LICHESS_URL || `${window.FN_BASE}/fetchLichess`;
     window.FN_CHESSCOM_URL = window.FN_CHESSCOM_URL || `${window.FN_BASE}/fetchChessCom`;
+    // Allow overriding SF backend URL via localStorage for easy re-pointing
+    try{ const __ov = localStorage.getItem('pmtt_sf_backend_url'); if(__ov) window.SF_BACKEND_URL = __ov; }catch{}
     window.SF_BACKEND_URL = window.SF_BACKEND_URL || 'https://sf-backend-283045516917.europe-west2.run.app';
+    try{ console.debug('[config] Using SF_BACKEND_URL =', window.SF_BACKEND_URL); }catch{}
 
     // Analytics disabled to avoid env errors unless explicitly enabled
     const ENABLE_ANALYTICS = false;

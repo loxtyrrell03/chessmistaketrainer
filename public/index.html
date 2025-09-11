@@ -1,11 +1,11 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>Personal Chess Mistake Trainer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script>
-    // Replace mojibake em/en dash sequences that can appear as "—" / "–"
+    // Replace mojibake em/en dash sequences that can appear as "â€”" / "â€“"
     (function(){
       function sanitizeNodeText(root){
         try{
@@ -14,7 +14,7 @@
           while((node = walker.nextNode())){
             var t = node.nodeValue;
             if(!t) continue;
-            var nt = t.replace(/—/g, '-').replace(/–/g, '-');
+            var nt = t.replace(/â€”/g, '-').replace(/â€“/g, '-');
             if(nt !== t) node.nodeValue = nt;
           }
         }catch{}
@@ -49,12 +49,12 @@
     ? No frameworks used.
 
     This build addresses your latest requests:
-      • Board-size slider works even in fullscreen (width uses min(100%, var(--board-size))).
-      • Black pieces are truly black; forced non-emoji (solid) glyphs.
-      • Added "Show mistake" button; shows red arrow for the played mistake; clears on Reveal Best or on move.
-      • Dragging shows legal-move dots; removed dotted/focus square when dragging/lifting.
-      • Imports stack across sources (Lichess + Chess.com + Manual) and analyse runs over the full stack.
-      • Stop analysis immediately resets the button; partial results still saved and a set is created if >0 mistakes.
+      â€¢ Board-size slider works even in fullscreen (width uses min(100%, var(--board-size))).
+      â€¢ Black pieces are truly black; forced non-emoji (solid) glyphs.
+      â€¢ Added "Show mistake" button; shows red arrow for the played mistake; clears on Reveal Best or on move.
+      â€¢ Dragging shows legal-move dots; removed dotted/focus square when dragging/lifting.
+      â€¢ Imports stack across sources (Lichess + Chess.com + Manual) and analyse runs over the full stack.
+      â€¢ Stop analysis immediately resets the button; partial results still saved and a set is created if >0 mistakes.
 
     MIT-style: extend/adapt freely.
   -->
@@ -247,7 +247,7 @@
     .sq.sel{outline:3px solid var(--sq-sel);z-index:2}
     .sq.hl{outline:3px solid var(--sq-hl)}
 
-    /* Crisp readable pieces — force monochrome (non-emoji) solid glyphs */
+    /* Crisp readable pieces â€” force monochrome (non-emoji) solid glyphs */
     .piece{
       filter:drop-shadow(0 2px 2px rgba(0,0,0,.25));
       opacity:1 !important; font-weight:900; letter-spacing:0;
@@ -490,7 +490,7 @@
             <span style="margin-left:auto"></span>
             <button id="btnClearImports" class="ghost" title="Clear imported games & their mistakes">Clear imports</button>
             <button id="btnAnalyzeImported" class="btn-green" title="Analyse mistakes (server)">Analyse mistakes</button>
-            <button id="btnAnalyzeSettings" class="ghost" title="Analysis settings" style="padding:4px 8px">?</button>
+            <button id="btnAnalyzeSettings" class="ghost" title="Analysis settings" style="padding:4px 8px">⚙</button>
           </div>
           <div style="max-height:220px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:6px">
             <table id="importTable" style="width:100%">
@@ -521,10 +521,10 @@
               <b>Game Viewer</b>
               <span id="gvStatus" class="mono">-</span>
               <div style="margin-left:auto;display:flex;gap:6px">
-                <button id="gvStart" class="ghost" title="Start">�</button>
-                <button id="gvPrev" class="ghost" title="Prev">�</button>
-                <button id="gvNext" class="ghost" title="Next">�</button>
-                <button id="gvEnd" class="ghost" title="End">�</button>
+                <button id="gvStart" class="ghost" title="Start">«</button>
+                <button id="gvPrev" class="ghost" title="Prev">‹</button>
+                <button id="gvNext" class="ghost" title="Next">›</button>
+                <button id="gvEnd" class="ghost" title="End">»</button>
               </div>
             </div>
             <div class="board-mini" style="margin-top:8px">
@@ -668,10 +668,10 @@
             <div id="tvControls" class="tiny" style="display:grid; grid-template-columns: 1fr auto 1fr; align-items:center; gap:8px">
               <span id="tvStatus" class="mono">-</span>
               <div style="display:flex; gap:6px; justify-content:center">
-                <button id="tvStart" class="ghost" title="Start">�</button>
-                <button id="tvPrev" class="ghost" title="Prev">�</button>
-                <button id="tvNext" class="ghost" title="Next">�</button>
-                <button id="tvEnd" class="ghost" title="End">�</button>
+                <button id="tvStart" class="ghost" title="Start">«</button>
+                <button id="tvPrev" class="ghost" title="Prev">‹</button>
+                <button id="tvNext" class="ghost" title="Next">›</button>
+                <button id="tvEnd" class="ghost" title="End">»</button>
               </div>
             </div>
           </div>
@@ -683,11 +683,11 @@
             </div>
             <div class="stroke" style="margin-top:10px">
               <div class="small"><b>Current Mistake</b></div>
-              <div class="tiny muted" id="mInfo">—</div>
+              <div class="tiny muted" id="mInfo">â€”</div>
               <div class="tiny" style="margin-top:6px"><b>Goal:</b> find the best move from this position.</div>
-              <div class="tiny"><b>Side to move:</b> <span id="sideToMove">—</span></div>
-              <div class="tiny"><b>Your attempt:</b> <span id="yourMove">—</span></div>
-              <div class="tiny"><b>Feedback:</b> <span id="feedback">—</span></div>
+              <div class="tiny"><b>Side to move:</b> <span id="sideToMove">â€”</span></div>
+              <div class="tiny"><b>Your attempt:</b> <span id="yourMove">â€”</span></div>
+              <div class="tiny"><b>Feedback:</b> <span id="feedback">â€”</span></div>
               <div class="mistake-actions-wrap" style="margin-top:8px">
                 <div class="mistake-actions">
                   <!-- Top row actions (Reveal moved to its own row) -->
@@ -712,7 +712,7 @@
                   <span id="engineDepth" class="tiny mono muted" title="depth">depth: -/-</span>
                 </div>
                 <div style="display:flex; align-items:center; gap:10px">
-                  <button id="engineSettingsBtn" class="ghost" title="Engine settings" style="padding:2px 8px">?</button>
+                  <button id="engineSettingsBtn" class="ghost" title="Engine settings" style="padding:2px 8px">⚙</button>
                   <label class="switch" title="Toggle engine analysis">
                     <input type="checkbox" id="engineToggle">
                     <span class="slider"></span>
@@ -786,7 +786,7 @@
             <button id="btnStart">Start session</button>
           </div>
         </div>
-        <div class="tiny muted" id="activeSetInfo" style="margin-top:6px">Active set: —</div>
+        <div class="tiny muted" id="activeSetInfo" style="margin-top:6px">Active set: â€”</div>
       </div>
     </div>
   </div>
@@ -1026,19 +1026,7 @@
           const local = JSON.parse(localStorage.getItem('pmtt_mistakes')||'[]');
           const map = new Map();
           for(const m of local){ const k = keyOfLocal(m); if(k) map.set(k, ensureSeverity(m)); }
-          for(const m of remote){
-            const k = keyOfLocal(m); if(!k) continue;
-            const rm = ensureSeverity(m);
-            const prev = map.get(k);
-            if(prev){
-              // Prefer defined fields from remote; keep richer local fields when remote lacks them
-              const merged = { ...prev, ...rm };
-              ['cpBefore','cpAfter','deltaWp'].forEach(f=>{ if(typeof rm[f]==='undefined' || rm[f]===null) merged[f] = prev[f]; });
-              map.set(k, merged);
-            } else {
-              map.set(k, rm);
-            }
-          }
+          for(const m of remote){ const k = keyOfLocal(m); if(k) map.set(k, ensureSeverity(m)); }
           const merged = Array.from(map.values());
           localStorage.setItem('pmtt_mistakes', JSON.stringify(merged));
         }catch{
@@ -1328,7 +1316,7 @@
             <div class="card" style="width:min(520px, 95vw); max-height:90vh; overflow:auto">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
                 <h2>Engine Settings</h2>
-                <button id="engSetClose" class="ghost" title="Close">�</button>
+                <button id="engSetClose" class="ghost" title="Close">×</button>
               </div>
               <div class="row" style="margin-top:10px">
                 <div style="max-width:140px">
@@ -1574,34 +1562,9 @@
           seen.add(k);
         }
       }
-      try{
-        const dbg = toUpload.slice(0,5).map(m=>({cp:m.deltaCp, wp:m.deltaWp, cpB:m.cpBefore, cpA:m.cpAfter}));
-        console.debug('[client] addMistakes: toUpload sample fields:', dbg);
-      }catch{}
       localStorage.setItem(LS_MISTAKES, JSON.stringify(merged));
       if(fb() && toUpload.length) fb().addMistakesRemote(toUpload).catch(()=>{});
       renderMistakeList(); renderStats();
-
-      // Background hydration: ensure every new mistake has cpBefore/cpAfter and deltaWp
-      try{
-        (async ()=>{
-          const need = toUpload.filter(x => (typeof x.deltaWp==='undefined'||x.deltaWp===null) || (typeof x.cpBefore==='undefined' || typeof x.cpAfter==='undefined'));
-          if(!need.length) return;
-          console.debug('[client] hydrate: starting for', need.length, 'mistake(s)');
-          const updated = [];
-          for(const m of need){
-            try{
-              const up = await hydrateOneMistakeWp(m);
-              if(up){ updated.push(up); }
-            }catch(e){ console.warn('[client] hydrate: failed for', m?.id||m?.played, e); }
-          }
-          if(updated.length){
-            try{ mergeMistakeUpdates(updated); }catch{}
-            try{ if(fb()) fb().saveAllMistakes(loadMistakes()).catch(()=>{}); }catch{}
-            console.debug('[client] hydrate: completed. updated', updated.length);
-          }
-        })();
-      }catch{}
     }
     function clearAllLocal(){
       localStorage.removeItem(LS_MISTAKES);
@@ -1646,34 +1609,13 @@
           if(s) m.severity = s; else m.severity = null;
         }
       }catch{}
-      try{
-        if(m && (typeof m.deltaWp === 'undefined' || m.deltaWp === null) && typeof m.cpBefore !== 'undefined' && typeof m.cpAfter !== 'undefined'){
-          const dwp = Math.max(0, winProbFromCp(m.cpBefore) - winProbFromCp(m.cpAfter));
-          if(Number.isFinite(dwp)) m.deltaWp = dwp;
-        }
-      }catch{}
-      // Ensure scheduling fields exist for stats/SRS
-      try{ if(typeof m.ef==='undefined' || m.ef===null) m.ef = 2.5; }catch{}
-      try{ if(typeof m.reps==='undefined' || m.reps===null) m.reps = 0; }catch{}
-      try{ if(typeof m.interval==='undefined' || m.interval===null) m.interval = 0; }catch{}
-      try{ if(typeof m.nextReview==='undefined' || m.nextReview===null) m.nextReview = nowTs(); }catch{}
       return m;
     }
     // === NEW: snapshot + hydrate helpers ===
     function snapshotMistake(m){
-      // Compute deltaWp if missing but cpBefore/cpAfter available
-      let deltaWp = (typeof m.deltaWp !== 'undefined' && m.deltaWp !== null) ? m.deltaWp : null;
-      try{
-        if(deltaWp === null && typeof m.cpBefore !== 'undefined' && typeof m.cpAfter !== 'undefined'){
-          const dwp = Math.max(0, winProbFromCp(m.cpBefore) - winProbFromCp(m.cpAfter));
-          if(Number.isFinite(dwp)) deltaWp = dwp;
-        }
-      }catch{}
       return {
         id: m.id || uid(),
-        fen: m.fen, side: m.side, played: m.played, best: m.best, deltaCp: m.deltaCp,
-        deltaWp: deltaWp,
-        cpBefore: (typeof m.cpBefore!=='undefined'?m.cpBefore:null), cpAfter: (typeof m.cpAfter!=='undefined'?m.cpAfter:null),
+        fen: m.fen, side: m.side, played: m.played, best: m.best, deltaCp: m.deltaCp, deltaWp: (typeof m.deltaWp!== 'undefined' ? m.deltaWp : null), cpBefore: (typeof m.cpBefore!=='undefined'?m.cpBefore:null), cpAfter: (typeof m.cpAfter!=='undefined'?m.cpAfter:null),
         severity: (m && typeof m.severity !== 'undefined' && m.severity !== null) ? m.severity : severityFromDrop(m?.deltaCp||0),
         pgn: m.pgn || null, gameUrl: m.gameUrl || null,
         ef: m.ef ?? 2.5, reps: m.reps ?? 0, interval: m.interval ?? 0,
@@ -1717,7 +1659,7 @@
     function sanitizeSANKey(s){
       try{
         let out = String(s||'').trim();
-        out = out.replace(/[\u00D7�]/g,'x');       // unicode times -> x
+        out = out.replace(/[\u00D7×]/g,'x');       // unicode times -> x
         out = out.replace(/[+#]/g,'');              // drop check/mate marks
         out = out.replace(/!!|\?\?|!\?|\?!/g,'');// drop NAG-like
         out = out.replace(/e\.p\./gi,'');         // drop en passant marker
@@ -1834,10 +1776,6 @@
             if(typeof it.severity === 'undefined' || it.severity === null){
               try{ it.severity = severityFromDrop(it.deltaCp); }catch{ it.severity = null; }
             }
-            // Backfill deltaWp when cpBefore/cpAfter exist
-            if((typeof it.deltaWp==='undefined' || it.deltaWp===null) && typeof it.cpBefore!=='undefined' && typeof it.cpAfter!=='undefined'){
-              try{ const dwp = Math.max(0, winProbFromCp(it.cpBefore) - winProbFromCp(it.cpAfter)); if(Number.isFinite(dwp)) it.deltaWp = dwp; }catch{}
-            }
           }
           out.version = 2;
           return out;
@@ -1861,11 +1799,7 @@
       const existing = findExistingSetByNameAndKeys(name||'', keys);
       if(existing) return existing; // avoid duplicates
       const items = mistakes.map(snapshotMistake);
-      try{
-        console.debug('[client] createSetFromMistakes:', { count: items.length, sample: items.slice(0,3) });
-        const dbg = items.slice(0,5).map(m=>({cp:m.deltaCp, wp:m.deltaWp, cpB:m.cpBefore, cpA:m.cpAfter}));
-        console.debug('[client] createSetFromMistakes fields:', dbg);
-      }catch{}
+      try{ console.debug('[client] createSetFromMistakes:', { count: items.length, sample: items.slice(0,3) }); }catch{}
       const set = {
         id: uid(),
         name: name || `Set ${new Date().toLocaleString()}`,
@@ -1874,66 +1808,7 @@
         version: 2,     // marker for future migrations
         created: nowTs()
       };
-      const sets = loadSets(); sets.unshift(set); saveSets(sets);
-      // Background: hydrate any missing wp/cp on set items and persist
-      try{
-        (async()=>{
-          const need = (set.items||[]).filter(x => (typeof x.deltaWp==='undefined'||x.deltaWp===null) || (typeof x.cpBefore==='undefined' || typeof x.cpAfter==='undefined'));
-          if(!need.length) return;
-          const updated=[];
-          for(const it of need){ try{ const up = await hydrateOneMistakeWp(it); if(up) updated.push(up); }catch{} }
-          if(updated.length){
-            // Update set items by key
-            const byKey=new Map(); for(const u of updated){ byKey.set((u.fen||'')+'|'+(u.played||''), u); }
-            for(let i=0;i<set.items.length;i++){
-              const it=set.items[i]; const k=(it.fen||'')+'|'+(it.played||''); const u=byKey.get(k); if(u) set.items[i] = { ...it, ...u };
-            }
-            // Save sets + mirror into mistakes store as well
-            saveSets(loadSets());
-            try{ mergeMistakeUpdates(updated); }catch{}
-          }
-        })();
-      }catch{}
-      return set;
-    }
-
-    // Merge updated mistake records into local storage by key (fen|played)
-    function mergeMistakeUpdates(updates){
-      try{
-        const byKey = new Map();
-        for(const u of (updates||[])) byKey.set(((u||{}).fen||'')+'|'+(((u||{}).played)||''), u);
-        const cur = loadMistakes();
-        let changed=false;
-        for(let i=0;i<cur.length;i++){
-          const m = cur[i]||{}; const k=((m.fen||''))+'|'+((m.played||''));
-          const u = byKey.get(k);
-          if(!u) continue;
-          const next = { ...m, ...u };
-          cur[i] = next; changed=true;
-        }
-        if(changed){ saveMistakes(cur); }
-      }catch(e){ console.warn('[client] mergeMistakeUpdates failed', e); }
-    }
-
-    // Hydrate a single mistake with cpBefore/cpAfter/deltaWp using local engine if missing
-    async function hydrateOneMistakeWp(m){
-      try{
-        const needsCp = (typeof m.cpBefore==='undefined' || typeof m.cpAfter==='undefined');
-        const needsWp = (typeof m.deltaWp==='undefined' || m.deltaWp===null);
-        if(!needsCp && !needsWp) return null;
-        const cl = ChessLite(); cl.loadFEN(m.fen);
-        const uci = cl.parseSANtoMove(m.played||'');
-        if(!uci) return null;
-        const fenBefore = m.fen;
-        const depth = parseInt(window.getAnalysisDepth?.()||12,10)||12;
-        const r1 = await Engine.analyze(fenBefore, depth);
-        cl.moveUci(uci);
-        const fenAfter = cl.fen();
-        const r2 = await Engine.analyze(fenAfter, depth);
-        const cpBefore = r1.cp; const cpAfter = r2.cp;
-        const dwp = Math.max(0, winProbFromCp(cpBefore) - winProbFromCp(cpAfter));
-        return { ...m, cpBefore, cpAfter, deltaWp: dwp };
-      }catch(e){ console.warn('[client] hydrateOneMistakeWp error', e); return null; }
+      const sets = loadSets(); sets.unshift(set); saveSets(sets); return set;
     }
 
     function renderSets(){
@@ -1981,7 +1856,7 @@
         showSection('train');
         enterTrainingMode();
         renderActiveSetInfo();
-        try{ const info=document.getElementById('mInfo'); if(info) info.textContent='Loading set�'; }catch{}
+        try{ const info=document.getElementById('mInfo'); if(info) info.textContent='Loading set…'; }catch{}
         await hydrateMistakesFromSet(s);
         await ensureMistakesForSet(s, 10000);
         const due = pickDueSRS();
@@ -2002,7 +1877,7 @@
       ACTIVE_SET = s;
       ACTIVE_SET_KEYS = expandKeys((s&&s.keys)||[]);
     }
-    function renderActiveSetInfo(){ const el = $('#activeSetInfo'); if(el) el.textContent = `Active set: ${ACTIVE_SET?ACTIVE_SET.name:'—'}`; }
+    function renderActiveSetInfo(){ const el = $('#activeSetInfo'); if(el) el.textContent = `Active set: ${ACTIVE_SET?ACTIVE_SET.name:'â€”'}`; }
 
     function renderSetsForTrain(){
       const tb = $('#trainSetsTBody'); if(!tb) return;
@@ -2355,7 +2230,7 @@
      * SAN helper (UCI -> SAN)
      ********************************************************************/
     function uciToSAN(fen, uci){
-      if(!fen || !uci) return uci || '—';
+      if(!fen || !uci) return uci || 'â€”';
       const cl = ChessLite(); cl.loadFEN(fen);
       const legal = cl.moves();
       const mv = legal.find(m => m.uci === uci);
@@ -2429,7 +2304,7 @@
             };
             sf.postMessage('uci');
             const t0=Date.now(); while(!ready && (Date.now()-t0)<4000){ await sleep(20); }
-            $('#engineStateServer').textContent = ready ? 'ready' : 'loading…';
+            $('#engineStateServer').textContent = ready ? 'ready' : 'loadingâ€¦';
             resolve(true);
           }catch(err){ /* suppress Engine:error in UI */ resolve(false); }
         });
@@ -2512,11 +2387,7 @@
       if(!res.ok) throw new Error(`analyzePGNs failed ${res.status}`);
       const json=await res.json();
       const arr = json.mistakes||[];
-      try{
-        console.debug('[client] analyzeOnBackend: got', arr.length, 'mistakes; sample:', arr.slice(0,3));
-        const dbg = arr.slice(0,5).map(m=>({cp:m.deltaCp, wp:m.deltaWp, cpB:m.cpBefore, cpA:m.cpAfter}));
-        console.debug('[client] analyzeOnBackend fields:', dbg);
-      }catch{}
+      try{ console.debug('[client] analyzeOnBackend: got', arr.length, 'mistakes; sample:', arr.slice(0,3)); }catch{}
       try{
         arr.forEach(m=>{
           if((typeof m.deltaWp === 'undefined' || m.deltaWp === null) && typeof m.cpBefore !== 'undefined' && typeof m.cpAfter !== 'undefined'){
@@ -2924,11 +2795,7 @@
       const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       if(!res.ok) throw new Error(`Stockfish backend error ${res.status}`);
       const data=await res.json(); const mistakes=data.mistakes||[];
-      try{
-        console.debug('[client] analyzeOnServer: got', mistakes.length, 'mistakes; sample:', mistakes.slice(0,3));
-        const dbg = mistakes.slice(0,5).map(m=>({cp:m.deltaCp, wp:m.deltaWp, cpB:m.cpBefore, cpA:m.cpAfter}));
-        console.debug('[client] analyzeOnServer fields:', dbg);
-      }catch{}
+      try{ console.debug('[client] analyzeOnServer: got', mistakes.length, 'mistakes; sample:', mistakes.slice(0,3)); }catch{}
       try{
         // Backfill deltaWp from cpBefore/cpAfter if not provided
         mistakes.forEach(m=>{
@@ -3034,7 +2901,7 @@
         try{
           const total = window.importedGames.length;
           const chosen = (window.importedGames||[]).filter(r=>r && r.sel!==false).length;
-          help.textContent = `${total} game(s) listed � ${chosen} selected. Click a row to preview.`;
+          help.textContent = `${total} game(s) listed · ${chosen} selected. Click a row to preview.`;
         }catch{ help.textContent = `${window.importedGames.length} game(s) listed. Click a row to preview.`; }
       }
     }
@@ -3061,7 +2928,7 @@
         if(state.stop) break;
         try{
           const fastDepth = (window.getFastDepth ? window.getFastDepth() : 12);
-          setStatus(`Fast pass at depth: ${fastDepth} � Game ${i+1}/${list.length}`);
+          setStatus(`Fast pass at depth: ${fastDepth} — Game ${i+1}/${list.length}`);
           setMistakeCounter(all.length);
           try{
             const deep = parseInt(window.getAnalysisDepth?.()||12,10)||12;
@@ -3069,7 +2936,7 @@
             phaseTimer = setTimeout(()=>{ try{ setStatus(`Deep analysis at depth: ${deep} - Game ${i+1}/${list.length}`); }catch{} }, 1500);
           }catch{}
         }catch{}
-        setStatus(`Analyzing ${++i}/${list.length} — mistakes found: ${all.length}`);
+        setStatus(`Analyzing ${++i}/${list.length} â€” mistakes found: ${all.length}`);
         try{
           let ms=[];
           if(window.SF_BACKEND_URL){
@@ -3078,14 +2945,14 @@
               console.warn('Analyze via SF backend failed, falling back', err);
               if(window.FN_BASE){
                 try{ ms=await analyzeOnBackend([pgn]); }
-                catch(err2){ console.warn('Analyze via Functions failed, falling back to local', err2); ms=await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} — mistakes found: ${all.length}`); }catch{} }); }
+                catch(err2){ console.warn('Analyze via Functions failed, falling back to local', err2); ms=await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} â€” mistakes found: ${all.length}`); }catch{} }); }
               } else {
-                ms=await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} — mistakes found: ${all.length}`); }catch{} });
+                ms=await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} â€” mistakes found: ${all.length}`); }catch{} });
               }
             }
           }
           else if(window.FN_BASE){ ms=await analyzeOnBackend([pgn]); }
-          else { ms = await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} — mistakes found: ${all.length}`); }catch{} }); }
+          else { ms = await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} â€” mistakes found: ${all.length}`); }catch{} }); }
 
           // Ensure PGN and game URL are attached regardless of backend
           try{
@@ -3106,13 +2973,7 @@
           }catch{}
 
           // Apply user and severity filters
-          try{
-            console.debug('[client] pre-filter sample (server/local) fields:', (ms||[]).slice(0,5).map(m=>({cp:m.deltaCp, wp:m.deltaWp, cpB:m.cpBefore, cpA:m.cpAfter})));
-          }catch{}
           ms = filterMistakesToUserOnly(ms).filter(m => (window.includeSeverity ? window.includeSeverity(m.severity) : true));
-          try{
-            console.debug('[client] post-filter sample fields:', (ms||[]).slice(0,5).map(m=>({cp:m.deltaCp, wp:m.deltaWp, cpB:m.cpBefore, cpA:m.cpAfter})));
-          }catch{}
           if(ms.length){
             for(const m of ms){
               all.push(m);
@@ -3120,13 +2981,13 @@
               try{ setMistakeCounter(all.length); }catch{}
               try{
                 const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`;
-                setStatus(`Analyzing ${i}/${list.length} — mistakes found: ${all.length}`);
+                setStatus(`Analyzing ${i}/${list.length} â€” mistakes found: ${all.length}`);
               }catch{}
             }
           }
         }catch(e){ console.warn('Analyze failed:', e); }
       }
-      try\\{\\ if\\(all\\.length\\)\\{\\ setStatus\\('Finalizing\\ metrics\\ for\\ analyzed\\ mistakes�'\\);\\ await\\ ensureMetricsForList\\(all\\);\\ }\\ }catch\\{};\\ if\\(all\\.length\\)\\ addMistakes\\(all\\);
+      if(all.length) addMistakes(all);
 
       const srcSet = new Set(imported.map(x => x.source || 'Imported'));
       const tagBase = (srcSet.size===1 ? Array.from(srcSet)[0] : 'Imported');
@@ -3142,7 +3003,7 @@
       }catch{}
 
       if(state.stop){
-        setStatus(`Analysis stopped — mistakes found: ${all.length}`);
+        setStatus(`Analysis stopped â€” mistakes found: ${all.length}`);
       }else{
         setStatus(`Done. Added ${all.length} user-mistake(s).`);
       }
@@ -3182,16 +3043,14 @@
             ms = await analyzeManualLocalSingle(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ setMistakeCounter(all.length); }catch{} });
           }
         }catch(e){ console.warn('Analyze failed:', e); }
-          // Attach PGN and URL
-          try{
-            const hdr = parsePGNHeaders(pgn);
-            const urlHdr = hdr.Site || hdr.Link || '';
-            (ms||[]).forEach(m => { if(!m.pgn) m.pgn = pgn; if(!m.gameUrl && urlHdr && /^https?:\/\//i.test(urlHdr)) m.gameUrl = urlHdr; });
-          }catch{}
+        // Attach PGN and URL
+        try{
+          const hdr = parsePGNHeaders(pgn);
+          const urlHdr = hdr.Site || hdr.Link || '';
+          (ms||[]).forEach(m => { if(!m.pgn) m.pgn = pgn; if(!m.gameUrl && urlHdr && /^https?:\/\//i.test(urlHdr)) m.gameUrl = urlHdr; });
+        }catch{}
         // Filter and accumulate
-        try{ console.debug('[client] single-flow pre-filter sample:', (ms||[]).slice(0,5).map(m=>({cp:m.deltaCp, wp:m.deltaWp, cpB:m.cpBefore, cpA:m.cpAfter}))); }catch{}
         ms = filterMistakesToUserOnly(ms).filter(m => (window.includeSeverity ? window.includeSeverity(m.severity) : true));
-        try{ console.debug('[client] single-flow post-filter sample:', (ms||[]).slice(0,5).map(m=>({cp:m.deltaCp, wp:m.deltaWp, cpB:m.cpBefore, cpA:m.cpAfter}))); }catch{}
         for(const m of (ms||[])){
           all.push(m); LAST_ANALYZED.mistakes = all.slice();
           try{ setMistakeCounter(all.length); }catch{}
@@ -3199,7 +3058,7 @@
         }
         i++;
       }
-      try\\{\\ if\\(all\\.length\\)\\{\\ setStatus\\('Finalizing\\ metrics\\ for\\ analyzed\\ mistakes�'\\);\\ await\\ ensureMetricsForList\\(all\\);\\ }\\ }catch\\{};\\ if\\(all\\.length\\)\\ addMistakes\\(all\\);
+      if(all.length) addMistakes(all);
       const srcSet = new Set(imported.map(x => x.source || 'Imported'));
       const tagBase = (srcSet.size===1 ? Array.from(srcSet)[0] : 'Imported');
       const tagName = `${tagBase}${state.stop ? ' (partial)' : ''} ${new Date().toLocaleString()}`;
@@ -3248,9 +3107,7 @@
         }catch{}
 
         // Filter and accumulate
-        try{ console.debug('[client] two-step pre-filter sample:', (ms||[]).slice(0,5).map(m=>({cp:m.deltaCp, wp:m.deltaWp, cpB:m.cpBefore, cpA:m.cpAfter}))); }catch{}
         ms = filterMistakesToUserOnly(ms).filter(m => (window.includeSeverity ? window.includeSeverity(m.severity) : true));
-        try{ console.debug('[client] two-step post-filter sample:', (ms||[]).slice(0,5).map(m=>({cp:m.deltaCp, wp:m.deltaWp, cpB:m.cpBefore, cpA:m.cpAfter}))); }catch{}
         for(const m of (ms||[])){
           all.push(m); LAST_ANALYZED.mistakes = all.slice();
           try{ setMistakeCounter(all.length); }catch{}
@@ -3258,7 +3115,7 @@
         }
         i++;
       }
-      try\\{\\ if\\(all\\.length\\)\\{\\ setStatus\\('Finalizing\\ metrics\\ for\\ analyzed\\ mistakes�'\\);\\ await\\ ensureMetricsForList\\(all\\);\\ }\\ }catch\\{};\\ if\\(all\\.length\\)\\ addMistakes\\(all\\);
+      if(all.length) addMistakes(all);
 
       const srcSet = new Set(imported.map(x => x.source || 'Imported'));
       const tagBase = (srcSet.size===1 ? Array.from(srcSet)[0] : 'Imported');
@@ -3590,18 +3447,18 @@
       $('#yourMove').textContent='-'; $('#feedback').textContent='-';
       try{
         const both = formatBothDelta(m);
-        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> � loss (cp | wp): ${both}`;
+        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · loss (cp | wp): ${both}`;
       }catch{}
       try{
         const both = formatBothDelta(m);
-        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> � loss (cp | wp): ${both}`;
+        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · loss (cp | wp): ${both}`;
       }catch{}
         // clear arrows
         BOARD.arrows.user = null; BOARD.arrows.best = null; BOARD.arrows.showBest=false; renderArrows();
         try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
         if(queue.length===0){
-          if(mode==='srs'){ queue = pickDueSRS(); if(queue.length===0){ $('#mInfo').textContent='No SRS items due now. ??'; active=null; drawBoardMain(null); return; } }
-          else { $('#mInfo').textContent='Woodpecker set complete. ??'; active=null; drawBoardMain(null); return; }
+          if(mode==='srs'){ queue = pickDueSRS(); if(queue.length===0){ $('#mInfo').textContent='No SRS items due now. 🙂'; active=null; drawBoardMain(null); return; } }
+          else { $('#mInfo').textContent='Woodpecker set complete. 🎉'; active=null; drawBoardMain(null); return; }
         }
         if(active){ history.push({ item: active, pending: pendingFirstTry }); }
         active = queue.shift(); pendingFirstTry=true; loadMistakeOnBoard(active); updateNavButtons();
@@ -3610,7 +3467,7 @@
         if(!active) return;
         const correct = (moveUci === (active.best||''));
         const yourSan = uciToSAN(active.fen, moveUci);
-        $('#yourMove').textContent = yourSan || moveUci || '—';
+        $('#yourMove').textContent = yourSan || moveUci || 'â€”';
 
         // Do not auto-draw last-move arrow; keep arrows clear
         BOARD.arrows.user = null; BOARD.arrows.showBest=false; renderArrows();
@@ -3990,28 +3847,23 @@
     }
 
     function loadMistakeOnBoard(m){
-      try{
-        console.log('[Train]', new Date().toISOString(), 'loadMistakeOnBoard()', {
-          fen: m && m.fen, id: m && m.id, side: m && m.side,
-          delta: { cp: m && m.deltaCp, wp: m && m.deltaWp, cpB: m && m.cpBefore, cpA: m && m.cpAfter }
-        });
-      }catch{}
+      try{ console.log('[Train]', new Date().toISOString(), 'loadMistakeOnBoard()', { fen: m && m.fen, id: m && m.id, side: m && m.side }); }catch{}
       if(!m){ drawBoardMain(null); return; }
       gvHide();
       try{
         const deltaTxt = formatDeltaForDisplay(m);
         const label = (getClassifier()==='wp'?'win prob drop':'centipawn loss');
-        $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> � ${label}: ${deltaTxt}`;
+        $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> · ${label}: ${deltaTxt}`;
       }catch{}
-      $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> · <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · ?cp ${Math.round(m.deltaCp)}`;
-      $('#yourMove').textContent='—'; $('#feedback').textContent='—';
+      $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> Â· <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> Â· ?cp ${Math.round(m.deltaCp)}`;
+      $('#yourMove').textContent='â€”'; $('#feedback').textContent='â€”';
       ORIENT_WHITE_BOTTOM = (m.side==='w');
       try{ initTrainViewFromMistake(m); }catch{}
       drawBoardMain(m.fen);
       try{
         const deltaTxt = formatDeltaForDisplay(m);
         const label = (getClassifier()==='wp'?'win prob drop':'centipawn loss');
-        $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> � ${label}: ${deltaTxt}`;
+        $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> · ${label}: ${deltaTxt}`;
       }catch{}
       try{ const both = formatBothDelta(m); $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> - loss (cp | wp): ${both}`; }catch{}
       // Arrows start clean; will draw on attempt/reveal
@@ -4097,7 +3949,7 @@
       const sel = $('#statsSetSelect'); if(!sel) return;
       const sets = loadSets();
       sel.innerHTML = '';
-      const opt0 = document.createElement('option'); opt0.value=''; opt0.textContent='Select a set…'; sel.appendChild(opt0);
+      const opt0 = document.createElement('option'); opt0.value=''; opt0.textContent='Select a setâ€¦'; sel.appendChild(opt0);
       for(const s of sets){ const o=document.createElement('option'); o.value=s.id; o.textContent=`${s.name} (${s.keys.length})`; sel.appendChild(o);
       }
       if(STATS_SELECTED_SET_ID){ sel.value = STATS_SELECTED_SET_ID; }
@@ -4270,12 +4122,12 @@
 
     $('#btnFetchLichess').addEventListener('click', async () => {
       const u=$('#lichessUser').value.trim(); if(!u) return alert('Enter a Lichess username');
-      try{ const n=parseInt($('#lichessCount')?.value,10)||5; setStatus(`Fetching Lichess games (N=${n})…`); await fetchLichess(u,n); setStatus('Idle'); }catch(e){ setStatus('Error: '+(e?.message||e)); }
+      try{ const n=parseInt($('#lichessCount')?.value,10)||5; setStatus(`Fetching Lichess games (N=${n})â€¦`); await fetchLichess(u,n); setStatus('Idle'); }catch(e){ setStatus('Error: '+(e?.message||e)); }
     });
 
     $('#btnFetchChesscom').addEventListener('click', async () => {
       const u=$('#chesscomUser').value.trim(); if(!u) return alert('Enter a Chess.com username');
-      try{ const n=parseInt($('#chesscomCount')?.value,10)||5; setStatus(`Fetching Chess.com games (N=${n})…`); await fetchChesscom(u,n); setStatus('Idle'); }catch(e){ setStatus('Error: '+(e?.message||e)); }
+      try{ const n=parseInt($('#chesscomCount')?.value,10)||5; setStatus(`Fetching Chess.com games (N=${n})â€¦`); await fetchChesscom(u,n); setStatus('Idle'); }catch(e){ setStatus('Error: '+(e?.message||e)); }
     });
 
 
@@ -4440,7 +4292,7 @@
       }catch{}
       drawBoardMain(null);
       try{ setTrainNavEnabled(false); tvUpdate(); }catch{}
-      setStatus('Loading engine…'); await Engine.ensure(); setStatus('Idle');
+      setStatus('Loading engineâ€¦'); await Engine.ensure(); setStatus('Idle');
       // Setup Game Info expanders (FEN/PGN)
       try{
         function setupExpander(rootId, textId, copyBtnId){
@@ -4762,7 +4614,7 @@
           <div class="card" style="width:min(560px, 95vw); max-height:90vh; overflow:auto">
             <div style="display:flex;align-items:center;gap:10px;justify-content:space-between">
               <h2>Analysis Settings</h2>
-              <button id="anSettingsClose" class="ghost" title="Close">?</button>
+              <button id="anSettingsClose" class="ghost" title="Close">✕</button>
             </div>
             <div class="row" style="margin-top:8px; gap:12px; align-items:flex-end">
               <div style="min-width:180px">
@@ -4791,15 +4643,15 @@
                 <div class="small"><b id="sevPanelTitle">Classify by centipawn loss</b></div>
                 <div class="grid-2" style="margin-top:6px; gap:10px">
                   <div>
-                    <label>Inaccuracy =</label>
+                    <label>Inaccuracy ≥</label>
                     <input id="sevInacc" type="number" min="0" step="1" value="50" />
                   </div>
                   <div>
-                    <label>Mistake =</label>
+                    <label>Mistake ≥</label>
                     <input id="sevMistake" type="number" min="0" step="1" value="150" />
                   </div>
                   <div>
-                    <label>Blunder =</label>
+                    <label>Blunder ≥</label>
                     <input id="sevBlunder" type="number" min="0" step="1" value="300" />
                   </div>
                 </div>
@@ -4944,15 +4796,15 @@
             <div class="card" style="width:min(720px,95vw); max-height:90vh; overflow:auto">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
                 <h2>Import PGN</h2>
-                <button id="pgnClose" class="ghost" title="Close">�</button>
+                <button id="pgnClose" class="ghost" title="Close">×</button>
               </div>
               <div class="tiny muted" style="margin:6px 0 10px 0">Paste one or more complete PGN games below, or load a .pgn file. Multiple games supported.</div>
               <textarea id="pgnText" rows="14" style="width:100%; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace"></textarea>
               <input type="file" id="pgnFile" accept=".pgn,.PGN,.txt" multiple style="display:none" />
               <div class="row" style="margin-top:10px; justify-content:space-between; align-items:center">
-                <div class="tiny muted">Tip: Each game should include header tags like [Event "�"].</div>
+                <div class="tiny muted">Tip: Each game should include header tags like [Event "…"].</div>
                 <div>
-                  <button id="pgnLoadBtn" class="ghost" style="margin-right:8px">Load file�</button>
+                  <button id="pgnLoadBtn" class="ghost" style="margin-right:8px">Load file…</button>
                   <button id="pgnCancel" class="ghost">Cancel</button>
                   <button id="pgnImport" class="secondary">Import</button>
                 </div>
@@ -5046,7 +4898,7 @@
           <div class="card" style="width:min(620px,95vw); max-height:90vh; overflow:auto">
             <div style="display:flex;align-items:center;gap:10px;justify-content:space-between">
               <h2>Add to existing set</h2>
-              <button id="atsClose" class="ghost" title="Close">?</button>
+              <button id="atsClose" class="ghost" title="Close">✕</button>
             </div>
             <div id="atsInfo" class="tiny muted" style="margin-top:6px">-</div>
             <div style="max-height:50vh;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:8px">
@@ -5254,5 +5106,3 @@
 
       // Initial width sync for right column
       try{ adjustRightColWidth && adjustRightColWidth(); }catch{}
-
-

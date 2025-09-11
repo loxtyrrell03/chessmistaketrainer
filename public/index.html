@@ -818,7 +818,20 @@
     window.FN_LICHESS_URL = window.FN_LICHESS_URL || `${window.FN_BASE}/fetchLichess`;
     window.FN_CHESSCOM_URL = window.FN_CHESSCOM_URL || `${window.FN_BASE}/fetchChessCom`;
     // Allow overriding SF backend URL via localStorage for easy re-pointing
-    try{ const __ov = localStorage.getItem('pmtt_sf_backend_url'); if(__ov) window.SF_BACKEND_URL = __ov; }catch{}
+    try{
+      let __ov = localStorage.getItem('pmtt_sf_backend_url');
+      const isValid = (v) => {
+        try{
+          if(!v) return false;
+          if(/[<>]/.test(v)) return false; // common placeholder markers
+          if(/your-new-service/i.test(v)) return false; // ignore placeholder value
+          const u = new URL(v);
+          return /^https?:$/.test(u.protocol);
+        }catch{ return false }
+      };
+      if(__ov && isValid(__ov)) window.SF_BACKEND_URL = __ov;
+      else if(__ov) { console.warn('[config] Ignoring invalid pmtt_sf_backend_url override:', __ov); }
+    }catch{}
     window.SF_BACKEND_URL = window.SF_BACKEND_URL || 'https://sf-backend-283045516917.europe-west2.run.app';
     try{ console.debug('[config] Using SF_BACKEND_URL =', window.SF_BACKEND_URL); }catch{}
 
@@ -1260,17 +1273,15 @@
     function setStatus(msg){
       try{
         if(typeof msg === 'string'){
-          // Suppress legacy per-mistake messages; also update counter if present
+          // Update mistake counter if present in status but keep showing progress text
           if(/mistakes found:\s*(\d+)/i.test(msg)){
             try{ const m = msg.match(/mistakes found:\s*(\d+)/i); if(m) setMistakeCounter(parseInt(m[1],10)||0); }catch{}
-            return;
           }
-          if(/^Analyzing\s+\d+\/\d+/.test(msg)) return;
+          // Normalize end-of-run message
           if(/^Done\. Added\s+/i.test(msg)) msg = 'Analysis finished';
         }
         const h=document.getElementById('importHelp'); if(h) h.textContent=msg;
       }catch{}
-      try{ initTrainViewFromMistake(m); }catch{}
     }
     function setMistakeCounter(n){
       try{
@@ -3014,9 +3025,20 @@
         let ms=[];
         try{
           if(window.SF_BACKEND_URL){
-            ms = await analyzeOnServer(pgn, deep);
+            try{
+              ms = await analyzeOnServer(pgn, deep);
+            }catch(err){
+              console.warn('Analyze via SF backend failed, falling back', err);
+              if(window.FN_BASE){
+                try{ ms = await analyzeOnBackend([pgn]); }
+                catch(err2){ console.warn('Analyze via Functions failed, falling back to local', err2); ms = await analyzeManualLocalSingle(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ setMistakeCounter(all.length); }catch{} }); }
+              } else {
+                ms = await analyzeManualLocalSingle(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ setMistakeCounter(all.length); }catch{} });
+              }
+            }
           } else if(window.FN_BASE){
-            ms = await analyzeOnBackend([pgn]);
+            try{ ms = await analyzeOnBackend([pgn]); }
+            catch(err2){ console.warn('Analyze via Functions failed, falling back to local', err2); ms = await analyzeManualLocalSingle(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ setMistakeCounter(all.length); }catch{} }); }
           } else {
             ms = await analyzeManualLocalSingle(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ setMistakeCounter(all.length); }catch{} });
           }

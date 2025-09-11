@@ -206,7 +206,7 @@
       /* board width controlled via --board-size; stays square */
       width: min(100%, var(--board-size));
       aspect-ratio:1 / 1; /* always square */
-      background:transparent;border-radius:12px;overflow:hidden;border:1px solid #c7cdd8;position:relative
+      background:transparent; border-radius:0; overflow:hidden; border:0; position:relative
     }
     /* Evaluation bar (left of main board) */
     .eval-bar{ width:14px; border-radius:10px; overflow:hidden; border:1px solid #2a3142; background:#0a0a0a; flex:0 0 14px; display:none; position:relative }
@@ -663,7 +663,7 @@
     </div>
 
     <div class="train-grid" style="margin-top:12px">
-      <div class="card">
+      <div>
         <h2>Board</h2>
         <div class="board-wrap" style="margin-top:10px">
           <div id="evalBar" class="eval-bar" aria-hidden="true"><div class="eval-fill"></div><div class="tick"></div></div>

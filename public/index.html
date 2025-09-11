@@ -216,16 +216,8 @@
     .board.resize-corner-hover{ cursor:nwse-resize; }
     /* Drag handle for resizing the main board */
     .resize-handle{
-      position:absolute; right:8px; bottom:8px;
-      width:18px; height:18px; border-radius:4px;
-      background:
-        linear-gradient(135deg, rgba(255,255,255,.9) 2px, transparent 2px) no-repeat,
-        linear-gradient(135deg, rgba(255,255,255,.6) 2px, transparent 2px) no-repeat,
-        linear-gradient(135deg, rgba(255,255,255,.35) 2px, transparent 2px) no-repeat;
-      background-size: 100% 100%, 12px 12px, 8px 8px;
-      background-position: right bottom, right 2px bottom 2px, right 6px bottom 6px;
-      border:1px solid #2a3142; cursor: nwse-resize; z-index:6; opacity:.9;
-      box-shadow:0 2px 8px rgba(0,0,0,.25);
+      /* Hidden visual handle; resize still works via corner hover/drag */
+      display:none !important;
     }
     /* Game Viewer mini board: fills available width responsively (no cramping) */
     .board-mini{

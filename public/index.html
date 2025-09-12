@@ -557,6 +557,15 @@
           <button id="btnCreateEmptySet" class="ghost">Create empty set</button>
         </div>
       </div>
+      <div class="row" style="align-items:flex-end; justify-content:flex-end; margin-top:8px">
+        <div style="max-width:260px">
+          <label>Sort sets</label>
+          <select id="setsSortSelect">
+            <option value="date_desc">Created: Newest first</option>
+            <option value="date_asc">Created: Oldest first</option>
+          </select>
+        </div>
+      </div>
       <div style="margin-top:10px;max-height:360px;overflow:auto;border:1px dashed #2a3142;border-radius:10px">
         <table style="width:100%">
           <thead>
@@ -1538,6 +1547,7 @@
     const LS_MISTAKES = 'pmtt_mistakes';
     const LS_ATTEMPTS = 'pmtt_attempts';
     const LS_SETS = 'pmtt_sets';
+    const LS_SETS_SORT = 'pmtt_sets_sort'; // 'date_desc' | 'date_asc'
     const fb = () => (window.firebaseAPI && window.firebaseAPI.ready) ? window.firebaseAPI : null;
 
     function loadMistakes(){ try{ return JSON.parse(localStorage.getItem(LS_MISTAKES)||'[]'); }catch{return [];} }
@@ -1589,7 +1599,54 @@
       }catch{return []}
     }
 
-    window.addEventListener('firebase:mMistakesUpdated', ()=>{ try{renderStatsSetOptions();renderStatsMistakeList();renderStatsSummary();}catch{} });
+    // --- Backfill WP fields for legacy mistakes (runs in small batches) ---
+    async function backfillWinProbForLegacyMistakes(maxToFix = 20, depth = 8){
+      try{
+        const list = loadMistakes();
+        const toFix = [];
+        for(const m of list){
+          const needs = (typeof m.deltaWp !== 'number') || (typeof m.cpBefore === 'undefined') || (typeof m.cpAfter === 'undefined');
+          if(needs) toFix.push(m);
+          if(toFix.length >= maxToFix) break;
+        }
+        if(!toFix.length) return;
+
+        for(const m of toFix){
+          try{
+            const cl = ChessLite(); cl.loadFEN(m.fen);
+            let uci = null;
+            if(m.played){
+              const isUci = /^[a-h][1-8][a-h][1-8][qrbn]?$/i.test(m.played||'');
+              uci = isUci ? m.played : cl.parseSANtoMove(m.played);
+            }
+            if(!uci) continue;
+            const tmp = ChessLite(); tmp.loadFEN(m.fen);
+            const mv = tmp.moveUci(uci);
+            if(!mv || mv.ok===false) continue;
+            const fenAfter = tmp.fen();
+
+            const { cp: cpB } = await Engine.analyze(m.fen, depth);
+            const { cp: cpOpp } = await Engine.analyze(fenAfter, depth);
+            m.cpBefore = cpB;
+            m.cpAfter = cpOpp;
+            m.deltaWp = Math.max(0, winProbFromCp(cpB) - winProbFromCp(-cpOpp));
+            if(getClassifier()==='wp'){
+              m.severity = severityFromScores(cpB, cpOpp);
+            }
+          }catch{}
+        }
+        saveMistakes(list);
+      }catch{}
+    }
+
+    window.addEventListener('firebase:mMistakesUpdated', ()=>{
+      try{
+        renderStatsSetOptions();
+        renderStatsMistakeList();
+        renderStatsSummary();
+        backfillWinProbForLegacyMistakes(20, 8);
+      }catch{}
+    });
     window.addEventListener('firebase:attemptsUpdated', ()=>{ try{renderStats();}catch{} });
     window.addEventListener('firebase:setsUpdated', ()=>{
       try{ ACTIVE_SET = null; ACTIVE_SET_KEYS = new Set(); }catch{}
@@ -1789,6 +1846,31 @@
       renderSets();
     }
 
+    function getSetSortOrder(){
+      try{ return localStorage.getItem(LS_SETS_SORT) || 'date_desc'; }catch{ return 'date_desc'; }
+    }
+    function sortSetsByCreated(list){
+      const order = getSetSortOrder();
+      const arr = (list||[]).slice();
+      arr.sort((a,b)=>{
+        const ac = (a && typeof a.created==='number') ? a.created : 0;
+        const bc = (b && typeof b.created==='number') ? b.created : 0;
+        return order==='date_asc' ? (ac - bc) : (bc - ac);
+      });
+      return arr;
+    }
+    function initSetsSortUI(){
+      const sel = document.getElementById('setsSortSelect');
+      if(!sel) return;
+      try{ sel.value = getSetSortOrder(); }catch{}
+      sel.addEventListener('change', ()=>{
+        try{ localStorage.setItem(LS_SETS_SORT, sel.value); }catch{}
+        try{ renderSets(); }catch{}
+        try{ renderSetsForTrain(); }catch{}
+        try{ renderStatsSetOptions(); }catch{}
+      });
+    }
+
     function findExistingSetByNameAndKeys(name, keys){
       const sets = loadSets();
       const keySet = new Set(keys);
@@ -1813,15 +1895,16 @@
 
     function renderSets(){
       const tb = $('#setsTBody'); if(!tb) return;
-      const sets = loadSets(); tb.innerHTML = '';
+      const sets = sortSetsByCreated(loadSets()); tb.innerHTML = '';
       let i=0; for(const s of sets){
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td>${++i}</td>
-          <td><input data-setid="${s.id}" class="setNameInput" style="width:100%" value="${s.name}"></td>
+          <td><span class="setName" data-setid="${s.id}">${s.name}</span></td>
           <td>${s.keys.length}</td>
           <td class="tiny">${tsToDate(s.created)}</td>
           <td>
+            <button class="ghost" data-act="rename" data-id="${s.id}">Rename</button>
             <button class="ghost" data-act="train" data-id="${s.id}">Train</button>
             <button class="ghost" data-act="delete" data-id="${s.id}">Delete</button>
           </td>`;
@@ -1831,6 +1914,20 @@
         const id = btn.getAttribute('data-id');
         const sets = loadSets().filter(x => x.id!==id); saveSets(sets);
         try{ if(fb()) fb().deleteSetRemote(id).catch(()=>{}); }catch{}
+      }));
+      tb.querySelectorAll('button[data-act="rename"]').forEach(btn => btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-id');
+        const sets = loadSets();
+        const k = sets.findIndex(x => x.id===id);
+        if(k>=0){
+          const current = sets[k].name || '';
+          let nn = window.prompt('Rename set', current);
+          if(typeof nn === 'string'){ nn = nn.trim(); }
+          if(nn && nn.length && nn !== current){
+            sets[k].name = nn; saveSets(sets);
+            try{ if(fb()) fb().updateSetName(id, nn).catch(()=>{}); }catch{}
+          }
+        }
       }));
       async function ensureMistakesForSetLegacy(targetSet, timeoutMs){
         function hasSome(){
@@ -1867,10 +1964,6 @@
           Session.startSRS();
         }
       }));
-      tb.querySelectorAll('input.setNameInput').forEach(inp => inp.addEventListener('change', () => {
-        const id = inp.getAttribute('data-setid'); const sets = loadSets();
-        const k = sets.findIndex(x => x.id===id); if(k>=0){ sets[k].name = inp.value.trim()||sets[k].name; saveSets(sets); }
-      }));
     }
     let ACTIVE_SET = null; let ACTIVE_SET_KEYS = new Set();
     function setActiveSet(s){
@@ -1882,7 +1975,7 @@
     function renderSetsForTrain(){
       const tb = $('#trainSetsTBody'); if(!tb) return;
       tb.innerHTML = '';
-      const sets = loadSets();
+      const sets = sortSetsByCreated(loadSets());
       let i=0; for(const s of sets){
         const tr = document.createElement('tr');
         tr.style.cursor = 'pointer';
@@ -2353,18 +2446,53 @@
     function getSevWp(){
       try{ const d=JSON.parse(localStorage.getItem('pmtt_sev_wp')||'{}'); return { inacc: Number.isFinite(d.inacc)?d.inacc:10, mistake: Number.isFinite(d.mistake)?d.mistake:20, blunder: Number.isFinite(d.blunder)?d.blunder:30 }; }catch{ return DEFAULT_SEV_WP; }
     }
-    function getClassifier(){ try{ const v=localStorage.getItem('pmtt_classifier'); return (v==='wp')?'wp':'cp'; }catch{ return 'cp'; } }
+    function getClassifier(){
+      try{
+        const v = localStorage.getItem('pmtt_classifier');
+        if(v === 'cp' || v === 'wp') return v;
+        return 'wp';
+      }catch{ return 'wp'; }
+    }
     function winProbFromCp(cp){ const k=0.00368208; const x=Number(cp)||0; const t=2/(1+Math.exp(-k*x))-1; return 50+50*t; }
-    function severityFromScores(cpBefore, cpAfter){ const cls=getClassifier(); if(cls==='wp'){ try{ const pB=winProbFromCp(cpBefore); const pA=winProbFromCp(cpAfter); const drop=Math.max(0,pB-pA); const T=getSevWp(); if(drop>=T.blunder) return 'blunder'; if(drop>=T.mistake) return 'mistake'; if(drop>=T.inacc) return 'inaccuracy'; return null; }catch{} } const dropCp=Math.max(0,(Number(cpBefore)||0)+(Number(cpAfter)||0)); return severityFromDrop(dropCp); }
+    function severityFromScores(cpBefore, cpAfter){
+      const cls = getClassifier();
+      if(cls==='wp'){
+        try{
+          const pB = winProbFromCp(Number(cpBefore)||0);
+          const pA = winProbFromCp(-(Number(cpAfter)||0));
+          const drop = Math.max(0, pB - pA);
+          const T = getSevWp();
+          if(drop >= T.blunder) return 'blunder';
+          if(drop >= T.mistake) return 'mistake';
+          if(drop >= T.inacc)   return 'inaccuracy';
+          return null;
+        }catch{}
+      }
+      const dropCp = Math.max(0, (Number(cpBefore)||0) + (Number(cpAfter)||0));
+      return severityFromDrop(dropCp);
+    }
     function formatWinProbDrop(v){ const n=Number(v)||0; if(!Number.isFinite(n)||n<0) return '-'; return `${Math.round(n)}%`; }
-    function formatDeltaForDisplay(m){ const cls=getClassifier(); if(cls==='wp' && m && typeof m.deltaWp!=='undefined' && m.deltaWp!==null) return formatWinProbDrop(m.deltaWp); return formatCentipawnLoss(m?.deltaCp||0); }
+    function formatDeltaForDisplay(m){
+      const cls=getClassifier();
+      if(cls==='wp'){
+        if(m && typeof m.deltaWp==='number') return formatWinProbDrop(m.deltaWp);
+        if(m && typeof m.cpBefore!=='undefined' && typeof m.cpAfter!=='undefined'){
+          try{
+            const dwp = Math.max(0, winProbFromCp(Number(m.cpBefore)||0) - winProbFromCp(-(Number(m.cpAfter)||0)));
+            return formatWinProbDrop(dwp);
+          }catch{}
+        }
+        return '-';
+      }
+      return formatCentipawnLoss(m?.deltaCp||0);
+    }
     function formatBothDelta(m){
       const cp = formatCentipawnLoss(m?.deltaCp||0);
       let wpTxt = '-';
       if(typeof m?.deltaWp !== 'undefined' && m.deltaWp !== null){
         wpTxt = formatWinProbDrop(m.deltaWp);
       } else if(typeof m?.cpBefore !== 'undefined' && typeof m?.cpAfter !== 'undefined'){
-        try{ const dwp = Math.max(0, winProbFromCp(m.cpBefore) - winProbFromCp(m.cpAfter)); wpTxt = formatWinProbDrop(dwp); }catch{}
+        try{ const dwp = Math.max(0, winProbFromCp(Number(m.cpBefore)||0) - winProbFromCp(-(Number(m.cpAfter)||0))); wpTxt = formatWinProbDrop(dwp); }catch{}
       }
       return `${cp} | ${wpTxt}`;
     }
@@ -2391,7 +2519,7 @@
       try{
         arr.forEach(m=>{
           if((typeof m.deltaWp === 'undefined' || m.deltaWp === null) && typeof m.cpBefore !== 'undefined' && typeof m.cpAfter !== 'undefined'){
-            try{ m.deltaWp = Math.max(0, winProbFromCp(m.cpBefore) - winProbFromCp(m.cpAfter)); }catch{}
+            try{ m.deltaWp = Math.max(0, winProbFromCp(Number(m.cpBefore)||0) - winProbFromCp(-(Number(m.cpAfter)||0))); }catch{}
           }
         });
       }catch{}
@@ -2800,7 +2928,7 @@
         // Backfill deltaWp from cpBefore/cpAfter if not provided
         mistakes.forEach(m=>{
           if((typeof m.deltaWp === 'undefined' || m.deltaWp === null) && typeof m.cpBefore !== 'undefined' && typeof m.cpAfter !== 'undefined'){
-            try{ m.deltaWp = Math.max(0, winProbFromCp(m.cpBefore) - winProbFromCp(m.cpAfter)); }catch{}
+            try{ m.deltaWp = Math.max(0, winProbFromCp(Number(m.cpBefore)||0) - winProbFromCp(-(Number(m.cpAfter)||0))); }catch{}
           }
         });
       }catch{}
@@ -3167,7 +3295,7 @@
         const sev2 = severityFromScores(cpBefore2, cpAfter2);
         const include = (window.includeSeverity ? window.includeSeverity(sev2) : true);
         if(sev2 && include){
-          const m = { id:uid(), fen:c.fenBefore, side:c.side, played:c.san, best:best2, deltaCp:drop2, deltaWp: Math.max(0, winProbFromCp(cpBefore2) - winProbFromCp(cpAfter2)), cpBefore: cpBefore2, cpAfter: cpAfter2, severity:sev2, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn };
+          const m = { id:uid(), fen:c.fenBefore, side:c.side, played:c.san, best:best2, deltaCp:drop2, deltaWp: Math.max(0, winProbFromCp(cpBefore2) - winProbFromCp(-cpAfter2)), cpBefore: cpBefore2, cpAfter: cpAfter2, severity:sev2, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn };
           mistakes.push(m);
           try{ if(typeof onFound==='function') onFound(m); }catch{}
         }
@@ -3251,7 +3379,7 @@
         const sev2 = severityFromScores(cpBefore2, cpAfter2);
         const include = (window.includeSeverity ? window.includeSeverity(sev2) : true);
         if(sev2 && include){
-          const m = { id:uid(), fen:fenBefore, side, played: mv.san, best:best2, deltaCp:drop2, deltaWp: Math.max(0, winProbFromCp(cpBefore2) - winProbFromCp(cpAfter2)), cpBefore: cpBefore2, cpAfter: cpAfter2, severity:sev2, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn };
+          const m = { id:uid(), fen:fenBefore, side, played: mv.san, best:best2, deltaCp:drop2, deltaWp: Math.max(0, winProbFromCp(cpBefore2) - winProbFromCp(-cpAfter2)), cpBefore: cpBefore2, cpAfter: cpAfter2, severity:sev2, nextReview:nowTs(), ef:2.5, reps:0, interval:0, pgn };
           mistakes.push(m);
           try{ if(typeof onFound==='function') onFound(m); }catch{}
         }
@@ -3947,7 +4075,7 @@
     let STATS_CURRENT_LIST = [];
     function renderStatsSetOptions(){
       const sel = $('#statsSetSelect'); if(!sel) return;
-      const sets = loadSets();
+      const sets = sortSetsByCreated(loadSets());
       sel.innerHTML = '';
       const opt0 = document.createElement('option'); opt0.value=''; opt0.textContent='Select a setâ€¦'; sel.appendChild(opt0);
       for(const s of sets){ const o=document.createElement('option'); o.value=s.id; o.textContent=`${s.name} (${s.keys.length})`; sel.appendChild(o);
@@ -4370,7 +4498,7 @@
     function renderTrainSelectList(){
       const tb = $('#trainSelectTBody'); if(!tb) return;
       tb.innerHTML='';
-      const sets = loadSets(); let i=0;
+      const sets = sortSetsByCreated(loadSets()); let i=0;
       for(const s of sets){
         const tr = document.createElement('tr');
         tr.style.cursor='pointer';
@@ -5018,7 +5146,7 @@
     document.getElementById('navStats')?.addEventListener('click', (e)=>{ e.preventDefault(); renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); showSection('stats'); try{ const lbl=document.querySelector('#statsDelta')?.parentElement?.querySelector('b'); if(lbl) lbl.textContent='loss (cp | wp):'; }catch{} });
     // Re-render stats when cloud data arrives
     try{
-      window.addEventListener('firebase:mMistakesUpdated', ()=>{ try{ renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); }catch{} });
+      window.addEventListener('firebase:mMistakesUpdated', ()=>{ try{ renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); backfillWinProbForLegacyMistakes(20, 8); }catch{} });
       window.addEventListener('firebase:setsUpdated', ()=>{ try{ renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); }catch{} });
     }catch{}
     document.getElementById('navSets')?.addEventListener('click', (e)=>{ e.preventDefault(); renderSets(); showSection('sets'); });
@@ -5072,6 +5200,10 @@
       const name=(el && el.value ? el.value.trim() : '') || `Set ${new Date().toLocaleString()}`;
       createSetFromMistakes([], name); renderSets();
     });
+    // Initialize sort UI for sets list
+    try{ initSetsSortUI(); }catch{}
+    // Kick off a small backfill batch so WP shows for legacy data
+    try{ backfillWinProbForLegacyMistakes(20, 8); }catch{}
   </script>
 </body>
 </html>

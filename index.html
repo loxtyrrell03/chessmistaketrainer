@@ -1375,7 +1375,7 @@
      * Live Engine (WASM) analysis for Train board (Worker-based)
      ********************************************************************/
     const EngineLive = (() => {
-      let sf = null, ready = false, active = false, pending = false;
+      let sf = null, ready = false, active = false, pending = false, restarting = false;
       let curFen = null, analyzeTimer = null;
       const lines = new Map(); // multipv -> {scoreStr, pvUci:[], pvSan:[]}
 
@@ -1418,7 +1418,8 @@
 
         // Create dedicated worker that loads stockfish.js and resolves wasm locally
         try{
-          sf = new Worker('engine/stockfish-worker.js');
+          // Add a cache-busting query so COEP/COOP immutable assets are refreshed after updates
+          sf = new Worker('engine/stockfish-worker.js?v=20250912');
         }catch(err){
           setState('worker error');
           try{
@@ -1429,7 +1430,33 @@
         }
 
         sf.onmessage = (e) => {
-          const line = (''+(e.data||e)).trim();
+          // Support both string and object messages from the bridge
+          if (e && e.data && typeof e.data === 'object' && e.data.type === 'bridgeCrash') {
+            // Older path: not used currently, but keep for compatibility
+            restarting = true; setState('restarting');
+            try{ sf.terminate(); }catch{}
+            sf = null; ready=false;
+            setTimeout(()=>{ restarting=false; ensure(); if(active && curFen) analyzeDebounced(curFen); }, 50);
+            return;
+          }
+          const raw = (e && e.data != null ? e.data : e);
+          const line = (''+raw).trim();
+
+          if(line === '__bridge_oob__'){
+            restarting = true; setState('restarting');
+            try{ sf.terminate(); }catch{}
+            sf = null; ready=false;
+            setTimeout(()=>{ restarting=false; ensure(); if(active && curFen) analyzeDebounced(curFen); }, 50);
+            return;
+          }
+
+          if(line === '__bridge_abort__' || /^stockfish worker abort:/i.test(line)){
+            restarting = true; setState('restarting');
+            try{ sf.terminate(); }catch{}
+            sf = null; ready=false;
+            setTimeout(()=>{ restarting=false; ensure(); if(active && curFen) analyzeDebounced(curFen); }, 80);
+            return;
+          }
 
           if(line === 'uciok'){ sf.postMessage('isready'); return; }
           if(line === 'readyok'){ ready=true; setState('ready'); return; }
@@ -1472,11 +1499,17 @@
         };
 
         sf.onerror = (ev) => {
+          const msg = '' + (ev && ev.message ? ev.message : (ev && ev.filename ? ev.filename : 'unknown'));
+          if(/out of bounds/i.test(msg) || /RuntimeError/i.test(msg)){
+            // Auto-restart on WASM OOB
+            restarting = true; setState('restarting');
+            try{ sf.terminate(); }catch{}
+            sf = null; ready=false;
+            setTimeout(()=>{ restarting=false; ensure(); if(active && curFen) analyzeDebounced(curFen); }, 50);
+            return;
+          }
           setState('error');
-          try{
-            const el=$('#engineLines');
-            if(el) el.textContent = 'Stockfish worker error: ' + (ev && ev.message ? ev.message : (ev && ev.filename ? ev.filename : 'unknown'));
-          }catch{}
+          try{ const el=$('#engineLines'); if(el) el.textContent = 'Stockfish worker error: ' + msg; }catch{}
         };
 
         sf.postMessage('uci');
@@ -1485,21 +1518,31 @@
       }
 
       function go(fen){
-        if(!active) return;
+        if(!active || restarting) return;
         if(!ensure()) return;
         curFen=fen; lines.clear(); clearUI();
         BOARD.arrows.engine=null; renderArrows();
         pending=true;
         try{ sf.postMessage('stop'); }catch{}
-        sf.postMessage('ucinewgame');
-        sf.postMessage('position fen '+fen);
-        sf.postMessage('setoption name Threads value 1');
-        sf.postMessage('setoption name MultiPV value 3');
-        sf.postMessage('go depth 16');
+        if(!ready){
+          try{ sf.postMessage('isready'); }catch{}
+          // wait for readyok then re-invoke go
+          setTimeout(()=>{ if(active && !restarting) go(fen); }, 60);
+          return;
+        }
+        // Give the engine a brief moment to settle after stop to avoid rare WASM races
+        setTimeout(()=>{
+          if(!sf) return;
+          sf.postMessage('ucinewgame');
+          sf.postMessage('position fen '+fen);
+          sf.postMessage('setoption name Threads value 1');
+          sf.postMessage('setoption name MultiPV value 3');
+          sf.postMessage('go depth 16');
+        }, 10);
       }
 
       function analyzeDebounced(fen){
-        if(!active) return;
+        if(!active || restarting) return;
         curFen=fen;
         clearTimeout(analyzeTimer);
         analyzeTimer=setTimeout(()=>go(fen), 200);

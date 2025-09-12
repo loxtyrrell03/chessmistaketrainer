@@ -39,7 +39,7 @@
         }catch{}
       });
     })();
-    try{ window.EngineLive = EngineLive; }catch{}
+  try{ window.EngineLive = EngineLive; }catch{}
   </script>
   <!--
     Personal Chess Mistake Trainer (single-file app)
@@ -2674,8 +2674,13 @@
         }
 
         sf.onmessage = (e) => {
-          const line = (''+(e.data||e)).trim();
+          const raw = (e && e.data != null ? e.data : e);
+          const line = (''+raw).trim();
           if(DEBUG && line) dlog('onmessage', 'worker ->', line.slice(0,500));
+          if(line === '__bridge_oob__' || line === '__bridge_abort__' || /^stockfish worker abort:/i.test(line)){
+            restartWorker('bridge-signal:'+line);
+            return;
+          }
 
           if(line === 'uciok'){ gotUci=true; try{ sf.postMessage('isready'); }catch{} return; }
           if(line === 'readyok'){
@@ -2758,15 +2763,20 @@
           setState('messageerror');
           derr('worker messageerror', e);
           try{ const el=$('#engineLines'); if(el) el.textContent = 'Stockfish worker messageerror.'; }catch{}
+          try{ restartWorker('onmessageerror'); }catch{}
         };
 
         sf.onerror = (ev) => {
+          const msg = '' + (ev && (ev.message || ev.reason) ? (ev.message || ev.reason) : (ev && ev.filename ? ev.filename : 'unknown'));
           setState('error');
-          derr('worker error', ev);
+          derr('worker error', msg, ev);
           try{
             const el=$('#engineLines');
-            if(el) el.textContent = 'Stockfish worker error: ' + (ev && ev.message ? ev.message : (ev && ev.filename ? ev.filename : 'unknown'));
+            if(el) el.textContent = 'Stockfish worker error: ' + msg;
           }catch{}
+          if(/out of bounds|RuntimeError|Aborted|unwind/i.test(msg)){
+            try{ restartWorker('onerror:'+msg); }catch{}
+          }
         };
 
         try{ postSF('uci'); }catch(e){ derr('post uci failed', e);}        
@@ -2848,6 +2858,8 @@
         BOARD.arrows.engine=null; renderArrows();
         try{ evalBarVisible(false); }catch{}
         try{ curDepth=0; updateMeta(); }catch{}
+        try{ if(sf && sf.terminate){ sf.terminate(); } }catch{}
+        sf = null; ready = false; gotUci = false; queuedFen = null; pending = false;
       }
 
       // Small debug surface for manual testing from DevTools
@@ -2907,8 +2919,9 @@
       function getArrowCount(){ return arrowCount; }
       function getMultiPV(){ return multiPV; }
       function getDepth(){ return depth; }
-      return { enable, disable, analyzeDebounced, setMultiPV, setDepth, setArrowCount, setThreads, setHashMB, getArrowCount, getMultiPV, getDepth, getThreads, getHashMB };
-    })();
+      function restart(){ restartWorker('manual'); }
+      return { enable, disable, restart, analyzeDebounced, setMultiPV, setDepth, setArrowCount, setThreads, setHashMB, getArrowCount, getMultiPV, getDepth, getThreads, getHashMB };
+      })();
     try{ window.EngineLive = EngineLive; }catch{}
     async function analyzeOnServer(pgn, depth){
       const base=(window.SF_BACKEND_URL||'').replace(/\/$/,''); if(!base) throw new Error('SF_BACKEND_URL not set');
@@ -4459,6 +4472,8 @@
           if(tog.checked){ EngineLive.enable(); if(BOARD.current) EngineLive.analyzeDebounced(BOARD.current); }
           else { EngineLive.disable(); }
         });
+        const btnRestart=$('#btnRestartEngine');
+        btnRestart && btnRestart.addEventListener('click', ()=>{ try{ console.log('[EngineLive]', new Date().toISOString(), 'manual restart'); }catch{}; try{ EngineLive.restart && EngineLive.restart(); }catch{} });
         // MultiPV stepper
 // Removed inline Lines +/- controls; configure via Engine settings modal
       }catch{}

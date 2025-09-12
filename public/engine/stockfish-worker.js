@@ -13,6 +13,58 @@ var Module = self.Module;
 // Minimal diagnostics to confirm bridge is running
 try { wlog('boot'); } catch {}
 
+// Crash hardening: catch runtime errors like WASM OOB and signal main to respawn
+try {
+  self.addEventListener('error', function(ev){
+    try {
+      const msg = String((ev && ev.message) || ev || '');
+      wlog('worker error', msg);
+      if (/out of bounds/i.test(msg) || /RuntimeError/i.test(msg)) {
+        try { self.postMessage('__bridge_oob__'); } catch {}
+        try { ev.preventDefault && ev.preventDefault(); } catch {}
+        try { setTimeout(function(){ try{ self.close(); }catch{} }, 0); } catch {}
+      }
+    } catch {}
+  });
+  self.addEventListener('unhandledrejection', function(ev){
+    try {
+      const msg = String((ev && ev.reason && (ev.reason.message || ev.reason)) || '');
+      wlog('unhandledrejection', msg);
+      if (/out of bounds/i.test(msg) || /RuntimeError/i.test(msg)) {
+        try { self.postMessage('__bridge_oob__'); } catch {}
+        try { ev.preventDefault && ev.preventDefault(); } catch {}
+        try { setTimeout(function(){ try{ self.close(); }catch{} }, 0); } catch {}
+      }
+    } catch {}
+  });
+} catch {}
+
+// Crash hardening: catch runtime errors like WASM OOB and signal main to respawn
+try {
+  self.addEventListener('error', function(ev){
+    try {
+      const msg = String((ev && ev.message) || ev || '');
+      wlog('worker error', msg);
+      if (/out of bounds/i.test(msg) || /RuntimeError/i.test(msg)) {
+        try { self.postMessage('__bridge_oob__'); } catch {}
+        try { ev.preventDefault && ev.preventDefault(); } catch {}
+        try { setTimeout(function(){ try{ self.close(); }catch{} }, 0); } catch {}
+      }
+    } catch {}
+  });
+  self.addEventListener('unhandledrejection', function(ev){
+    try {
+      const msg = String((ev && ev.reason && (ev.reason.message || ev.reason)) || '');
+      wlog('unhandledrejection', msg);
+      if (/out of bounds/i.test(msg) || /RuntimeError/i.test(msg)) {
+        try { self.postMessage('__bridge_oob__'); } catch {}
+        try { ev.preventDefault && ev.preventDefault(); } catch {}
+        try { setTimeout(function(){ try{ self.close(); }catch{} }, 0); } catch {}
+      }
+    } catch {}
+  });
+} catch {}
+
 // Important: give pthread helper a definite main script URL (string or Blob)
 // Using an absolute URL avoids any basePath ambiguity inside nested workers.
 let __ver = '';
@@ -33,6 +85,7 @@ try {
   self.Module.onAbort = function(reason){
     try { wlog('onAbort', String(reason)); } catch {}
     try { self.postMessage('stockfish worker abort: ' + String(reason)); } catch {}
+    try { self.postMessage('__bridge_abort__'); } catch {}
   };
 } catch {}
 

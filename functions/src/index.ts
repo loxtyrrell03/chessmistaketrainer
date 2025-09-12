@@ -20,6 +20,8 @@ function setCors(res: any) {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  // Expose custom headers so the frontend can read engine metadata
+  res.set("Access-Control-Expose-Headers", "X-Stockfish-Version");
 }
 
 export const fetchLichess = onRequest(async (req, res) => {
@@ -150,6 +152,7 @@ async function createEngine() {
   const Stockfish: any = (await import("stockfish.wasm")) as any;
   const sf: any = (typeof (Stockfish as any) === "function") ? (Stockfish as any)() : (Stockfish as any);
   let ready = false;
+  let engineName: string = "";
   let lastScore: { cp: number; mate: number|null } = { cp: 0, mate: null };
   let lastPV: string[] = [];
   const resolvers: Array<(o: { bestmove: string; score: typeof lastScore; pv: string[] })=>void> = [];
@@ -158,6 +161,9 @@ async function createEngine() {
     // logger.debug("SF:", line);
     if (line === "uciok") { sf.postMessage("isready"); return; }
     if (line === "readyok") { ready = true; return; }
+    if (line.startsWith("id name ")) {
+      try { engineName = line.slice(8).trim(); } catch {}
+    }
     if (line.startsWith("info")) {
       const mMate = line.match(/score\s+mate\s+(-?\d+)/);
       const mCp = line.match(/score\s+cp\s+(-?\d+)/);
@@ -194,7 +200,8 @@ async function createEngine() {
       const out = await p;
       const cp = (out.score.mate!==null) ? (out.score.mate>0?10000:-10000) : out.score.cp;
       return { cp, bestmove: out.bestmove, pv: out.pv };
-    }
+    },
+    getVersion(): string { return engineName || ""; }
   };
 }
 
@@ -217,6 +224,8 @@ export const analyzePGNs = onRequest({ timeoutSeconds: 300 }, async (req: Reques
 
     const { Chess } = await import("chess.js");
     const engine = await createEngine();
+    const engineVersion = (engine as any).getVersion ? (engine as any).getVersion() : "";
+    try { if (engineVersion) logger.info("Stockfish backend version", { engineVersion }); } catch {}
     const mistakes: any[] = [];
 
     function parseHeaders(pgn: string){
@@ -294,7 +303,8 @@ export const analyzePGNs = onRequest({ timeoutSeconds: 300 }, async (req: Reques
     }
 
     try{ logger.info('functions.analyzePGNs result', { classifier, thr, wpThr, count: mistakes.length, sample: mistakes.slice(0,3) }); }catch{}
-    res.status(200).json({ mistakes });
+    try{ if (engineVersion) res.set('X-Stockfish-Version', engineVersion); }catch{}
+    res.status(200).json({ mistakes, engineVersion });
     return;
   } catch (err: any) {
     logger.error("analyzePGNs failure", err);

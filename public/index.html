@@ -2508,12 +2508,15 @@
 
     async function analyzeOnBackend(pgns){
       const url=`${window.FN_BASE}/analyzePGNs`;
+      try{ console.info('[backend] Starting analysis via Functions:', url); }catch{}
       const thr=getSev();
       const depth = parseInt(window.getAnalysisDepth?.()||12,10)||12;
       const cls = getClassifier();
       const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pgns,depth,thresholds:thr, classifier: cls, wpThresholds:(cls==='wp'? getSevWp(): undefined)})});
       if(!res.ok) throw new Error(`analyzePGNs failed ${res.status}`);
+      try{ const v = res.headers && res.headers.get && res.headers.get('X-Stockfish-Version'); if(v) console.info('[backend] Stockfish version (header):', v); }catch{}
       const json=await res.json();
+      try{ if(json && json.engineVersion){ console.info('[backend] Stockfish version (body):', json.engineVersion); } }catch{}
       const arr = json.mistakes||[];
       try{ console.debug('[client] analyzeOnBackend: got', arr.length, 'mistakes; sample:', arr.slice(0,3)); }catch{}
       try{
@@ -2926,6 +2929,7 @@
     async function analyzeOnServer(pgn, depth){
       const base=(window.SF_BACKEND_URL||'').replace(/\/$/,''); if(!base) throw new Error('SF_BACKEND_URL not set');
       const url=`${base}/analyze`;
+      try{ console.info('[backend] Starting analysis via SF_BACKEND_URL:', url); }catch{}
       const thr=getSev();
       depth = parseInt(depth||window.getAnalysisDepth?.()||12,10)||12;
       const depthFast = (window.getFastDepth ? window.getFastDepth() : 12);
@@ -2935,7 +2939,9 @@
       if(mode !== 'single'){ payload.depthFast = depthFast; }
       const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       if(!res.ok) throw new Error(`Stockfish backend error ${res.status}`);
+      try{ const v = res.headers && res.headers.get && res.headers.get('X-Stockfish-Version'); if(v) console.info('[backend] Stockfish version (header):', v); }catch{}
       const data=await res.json(); const mistakes=data.mistakes||[];
+      try{ if(data && data.engineVersion){ console.info('[backend] Stockfish version (body):', data.engineVersion); } }catch{}
       try{ console.debug('[client] analyzeOnServer: got', mistakes.length, 'mistakes; sample:', mistakes.slice(0,3)); }catch{}
       try{
         // Backfill deltaWp from cpBefore/cpAfter if not provided

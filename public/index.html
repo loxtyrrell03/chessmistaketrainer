@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="icon" href="/logo.jpg" />
   <script>
-    // Replace mojibake em/en dash sequences that can appear as "â€”" / "â€“"
+    // Replace mojibake em/en dash sequences that can appear as "—" / "–"
     (function(){
       function sanitizeNodeText(root){
         try{
@@ -15,7 +15,7 @@
           while((node = walker.nextNode())){
             var t = node.nodeValue;
             if(!t) continue;
-            var nt = t.replace(/â€”/g, '-').replace(/â€“/g, '-');
+            var nt = t.replace(/—/g, '-').replace(/–/g, '-');
             if(nt !== t) node.nodeValue = nt;
           }
         }catch{}
@@ -50,27 +50,28 @@
     ? No frameworks used.
 
     This build addresses your latest requests:
-      â€¢ Board-size slider works even in fullscreen (width uses min(100%, var(--board-size))).
-      â€¢ Black pieces are truly black; forced non-emoji (solid) glyphs.
-      â€¢ Added "Show mistake" button; shows red arrow for the played mistake; clears on Reveal Best or on move.
-      â€¢ Dragging shows legal-move dots; removed dotted/focus square when dragging/lifting.
-      â€¢ Imports stack across sources (Lichess + Chess.com + Manual) and analyse runs over the full stack.
-      â€¢ Stop analysis immediately resets the button; partial results still saved and a set is created if >0 mistakes.
+      • Board-size slider works even in fullscreen (width uses min(100%, var(--board-size))).
+      • Black pieces are truly black; forced non-emoji (solid) glyphs.
+      • Added "Show mistake" button; shows red arrow for the played mistake; clears on Reveal Best or on move.
+      • Dragging shows legal-move dots; removed dotted/focus square when dragging/lifting.
+      • Imports stack across sources (Lichess + Chess.com + Manual) and analyse runs over the full stack.
+      • Stop analysis immediately resets the button; partial results still saved and a set is created if >0 mistakes.
 
     MIT-style: extend/adapt freely.
   -->
   <style>
     :root{
-      /* Layout (warm palette matching logo) */
-      --bg:#12100e;      /* near-black with warm tint */
-      --panel:#191511;   /* warm dark panel */
-      --card:#1d1813;    /* card background */
-      --text:#f4efe8;    /* warm off‑white */
-      --muted:#b9b2a9;   /* warm grey */
+      /* Layout (white, logo-like background) */
+      --bg:#fdfcf9;      /* near-white */
+      --panel:#ffffff;   /* pure white panels */
+      --card:#ffffff;    /* pure white cards */
+      --text:#1f1b16;    /* warm near-black */
+      --muted:#7f776c;   /* soft warm grey */
       --acc:#d14b3a;     /* terracotta/red from logo */
       --good:#2f9e44;    /* keep green for success */
       --bad:#e0523f;     /* error close to accent */
       --warn:#d9a441;    /* warm amber */
+      --border:#ece7df;  /* very light border */
 
       /* Board look (wood + cream) */
       --sq-light:#e8d5b7;
@@ -126,10 +127,10 @@
     /* Expandable 1-line fields (FEN/PGN) */
     .exp-field{ position:relative }
     .exp-field .exp-label{ display:block; font-weight:600; margin-bottom:4px }
-    .exp-field .exp-collapsed{ cursor:pointer; user-select:text; width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:6px 8px; border:1px dashed #2a3142; border-radius:8px; background:#0f1320; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; color:#cbd5e1 }
-    .exp-field .exp-panel{ display:none; position:absolute; inset:auto 0 0 0; transform:translateY(4px); z-index:6; background:#0f1320; border:1px solid #2a3142; border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,.35); padding:8px }
+    .exp-field .exp-collapsed{ cursor:pointer; user-select:text; width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:6px 8px; border:1px dashed var(--border); border-radius:8px; background:var(--panel); font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; color:var(--muted) }
+    .exp-field .exp-panel{ display:none; position:absolute; inset:auto 0 0 0; transform:translateY(4px); z-index:6; background:var(--panel); border:1px solid var(--border); border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,.08); padding:8px }
     .exp-field.open .exp-panel{ display:block }
-    .exp-field .exp-text{ width:100%; min-height:140px; resize:vertical; background:#0b0e16; color:#e6edf3; border:1px solid #2a3142; border-radius:8px; padding:8px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace }
+    .exp-field .exp-text{ width:100%; min-height:140px; resize:vertical; background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:8px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace }
     .exp-field .copy-btn{ position:absolute; right:12px; bottom:12px }
     /* Keep current-mistake action buttons on one row; reveal on full row below */
     .mistake-actions{ display:flex; gap:8px; align-items:center; flex-wrap:nowrap; white-space:nowrap }
@@ -169,7 +170,7 @@
 
     .card{
       background:var(--panel);
-      border:1px solid #2a1f16;
+      border:1px solid var(--border);
       border-radius:12px;
       padding:14px;
       box-shadow:0 8px 24px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.02);
@@ -178,14 +179,14 @@
     .row > *{flex:1}
     label{display:block;margin:.25rem 0 .35rem;color:var(--muted);font-size:.85rem}
     input[type="text"], textarea, select, input[type="number"], input[type="range"]{
-      width:100%;background:#141210;border:1px solid #3a2a20;color:var(--text);
+      width:100%;background:var(--panel);border:1px solid var(--border);color:var(--text);
       border-radius:10px;padding:10px 12px;font-size:14px;outline:none;
     }
     input[type="range"]{padding:6px 8px}
     textarea{min-height:120px;resize:vertical}
     /* Input with prefix (e.g., 'chess.com/' inside the field) */
-    .input-prefix{display:flex;align-items:center;background:#141210;border:1px solid #3a2a20;color:var(--text);border-radius:10px}
-    .input-prefix .prefix{padding:10px 10px;color:var(--muted);border-right:1px solid #2a3142;white-space:nowrap}
+    .input-prefix{display:flex;align-items:center;background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:10px}
+    .input-prefix .prefix{padding:10px 10px;color:var(--muted);border-right:1px solid var(--border);white-space:nowrap}
     .input-prefix input{flex:1;background:transparent;border:0;color:var(--text);padding:10px 12px;outline:none}
 
     button{
@@ -193,8 +194,8 @@
       padding:10px 14px;border-radius:10px;font-weight:600;cursor:pointer;
       box-shadow:0 6px 18px rgba(209,75,58,.25)
     }
-    button.secondary{background:#3a2a20;box-shadow:none}
-    button.ghost{background:transparent;border:1px solid #3a2a20;color:var(--text)}
+    button.secondary{background:var(--border);box-shadow:none}
+    button.ghost{background:transparent;border:1px solid var(--border);color:var(--text)}
     .btn-green{background:var(--good)}
     .btn-red{background:var(--bad)}
     .muted{color:var(--muted)}
@@ -215,9 +216,9 @@
       background:transparent; border-radius:0; overflow:hidden; border:0; position:relative
     }
     /* Evaluation bar (left of main board) */
-    .eval-bar{ width:14px; border-radius:10px; overflow:hidden; border:1px solid #2a3142; background:#0a0a0a; flex:0 0 14px; display:none; position:relative }
+    .eval-bar{ width:14px; border-radius:10px; overflow:hidden; border:1px solid var(--border); background:var(--panel); flex:0 0 14px; display:none; position:relative }
     .eval-bar .eval-fill{ position:absolute; left:0; right:0; bottom:0; height:50%; background:#f5f5f5 }
-    .eval-bar .tick{ position:absolute; left:0; right:0; top:50%; height:1px; background:#2a3142; opacity:.6 }
+    .eval-bar .tick{ position:absolute; left:0; right:0; top:50%; height:1px; background:var(--border); opacity:.6 }
     /* Cursor hint when hovering near corner */
     .board.resize-corner-hover{ cursor:nwse-resize; }
     /* Drag handle for resizing the main board */
@@ -253,7 +254,7 @@
     .sq.sel{outline:3px solid var(--sq-sel);z-index:2}
     .sq.hl{outline:3px solid var(--sq-hl)}
 
-    /* Crisp readable pieces â€” force monochrome (non-emoji) solid glyphs */
+    /* Crisp readable pieces — force monochrome (non-emoji) solid glyphs */
     .piece{
       filter:drop-shadow(0 2px 2px rgba(0,0,0,.25));
       opacity:1 !important; font-weight:900; letter-spacing:0;
@@ -270,14 +271,14 @@
     .sq, .piece { -webkit-tap-highlight-color: transparent; }
 
     .legend{display:flex;gap:8px;flex-wrap:wrap}
-    .legend span{padding:4px 8px;background:#0f1320;border-radius:999px;border:1px solid #2a3142}
+    .legend span{padding:4px 8px;background:var(--panel);border-radius:999px;border:1px solid var(--border)}
     .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     @media (max-width:800px){
       .board-wrap{flex-direction:column}
     }
 
     table{width:100%;border-collapse:collapse}
-    th,td{padding:8px;border-bottom:1px dashed #2a3142;text-align:left;vertical-align:top}
+    th,td{padding:8px;border-bottom:1px dashed var(--border);text-align:left;vertical-align:top}
     th{color:var(--muted);font-weight:600}
     tr:hover td{background:#121622}
     tr.selected td{background:#1a2233}
@@ -289,14 +290,14 @@
     .pill.inacc{background:#264f2f;color:#a2f5be;border:1px solid #2f9e44}
     .pill.mist{background:#5b4a27;color:#ffe8a1;border:1px solid #f2c94c}
      .pill.blun{background:#4f1e24;color:#ffb3bd;border:1px solid #ff6b6b}
-     .stroke{border:1px dashed #2a3142;border-radius:10px;padding:10px}
+     .stroke{border:1px dashed var(--border);border-radius:10px;padding:10px}
      /* Move list styles */
      #moveList .mv{ cursor:pointer; padding:2px 4px; border-radius:6px; display:inline-block; }
      #moveList .mv:hover{ background:#121622; }
      #moveList .mv.active{ background:#1a2233; color:#fff; }
      #moveList .num{ color:var(--muted); margin-right:2px; min-width:2ch; text-align:right; display:inline-block; }
      #moveList .ml-table{ width:100%; border-collapse:collapse; table-layout:fixed; }
-     #moveList .ml-table td{ border:1px dashed #2a3142; padding:2px 4px; vertical-align:top; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+     #moveList .ml-table td{ border:1px dashed var(--border); padding:2px 4px; vertical-align:top; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
      #moveList .cell{ display:flex; align-items:center; gap:4px; min-width:0; }
      /* Make move list panel wider to fit SAN without truncation */
      #movesCol{ width:360px; }
@@ -305,12 +306,12 @@
   <!-- chessboard.js CSS (local) -->
   <link rel="stylesheet" href="/chessboardjs/css/chessboard-1.0.0.min.css" />
   <style>
-    .topnav{background:#141210;border-bottom:1px solid #2a1f16;position:sticky;top:0;z-index:5}
+    .topnav{background:var(--panel);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5}
     .topnav .navwrap{max-width:1100px;margin:0 auto;display:flex;gap:12px;align-items:center;padding:10px 18px}
-    .brand{display:flex;align-items:center;gap:8px;font-weight:700;color:#e6edf3}
+    .brand{display:flex;align-items:center;gap:8px;font-weight:700;color:var(--text)}
     .brand .logo{height:28px;width:auto;border-radius:6px;display:block}
-    .topnav a{color:#e8ded2;padding:6px 10px;border-radius:8px}
-    .topnav a.active{background:#2a1f16;color:#fff}
+    .topnav a{color:#5b4638;padding:6px 10px;border-radius:8px}
+    .topnav a.active{background:var(--border);color:var(--text)}
     .section{display:none}
     .section.active{display:block}
 
@@ -352,7 +353,7 @@
       </div>
       <div class="muted" style="margin-bottom:12px">Sign in to sync your data across devices.</div>
       <div style="display:flex;flex-direction:column;gap:10px">
-        <button id="btnGoogle" class="ghost" style="display:flex;gap:10px;align-items:center;justify-content:center;border:1px solid #2a3142;padding:10px;border-radius:10px">
+        <button id="btnGoogle" class="ghost" style="display:flex;gap:10px;align-items:center;justify-content:center;border:1px solid var(--border);padding:10px;border-radius:10px">
           <img alt="" src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" style="width:20px;height:20px"/>
           <span>Continue with Google</span>
         </button>
@@ -496,9 +497,9 @@
             <span style="margin-left:auto"></span>
             <button id="btnClearImports" class="ghost" title="Clear imported games & their mistakes">Clear imports</button>
             <button id="btnAnalyzeImported" class="btn-green" title="Analyse mistakes (server)">Analyse mistakes</button>
-            <button id="btnAnalyzeSettings" class="ghost" title="Analysis settings" style="padding:4px 8px">⚙</button>
+            <button id="btnAnalyzeSettings" class="ghost" title="Analysis settings" style="padding:4px 8px">?</button>
           </div>
-          <div style="max-height:220px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:6px">
+          <div style="max-height:220px;overflow:auto;border:1px dashed var(--border);border-radius:10px;margin-top:6px">
             <table id="importTable" style="width:100%">
               <thead>
                 <tr>
@@ -527,10 +528,10 @@
               <b>Game Viewer</b>
               <span id="gvStatus" class="mono">-</span>
               <div style="margin-left:auto;display:flex;gap:6px">
-                <button id="gvStart" class="ghost" title="Start">«</button>
-                <button id="gvPrev" class="ghost" title="Prev">‹</button>
-                <button id="gvNext" class="ghost" title="Next">›</button>
-                <button id="gvEnd" class="ghost" title="End">»</button>
+                <button id="gvStart" class="ghost" title="Start">�</button>
+                <button id="gvPrev" class="ghost" title="Prev">�</button>
+                <button id="gvNext" class="ghost" title="Next">�</button>
+                <button id="gvEnd" class="ghost" title="End">�</button>
               </div>
             </div>
             <div class="board-mini" style="margin-top:8px">
@@ -572,7 +573,7 @@
           </select>
         </div>
       </div>
-      <div style="margin-top:10px;max-height:360px;overflow:auto;border:1px dashed #2a3142;border-radius:10px">
+      <div style="margin-top:10px;max-height:360px;overflow:auto;border:1px dashed var(--border);border-radius:10px">
         <table style="width:100%">
           <thead>
             <tr>
@@ -599,7 +600,7 @@
           </div>
         </div>
         <div class="tiny muted" style="margin:6px 0 10px">Select a set to view its mistakes. Click a row to preview on the right.</div>
-        <div style="max-height:360px;overflow:auto;border:1px dashed #2a3142;border-radius:10px">
+        <div style="max-height:360px;overflow:auto;border:1px dashed var(--border);border-radius:10px">
           <table id="statsMistakeTable">
             <thead>
               <tr>
@@ -657,7 +658,7 @@
     <div id="trainSelectView" class="card" style="margin-top:12px">
       <h2>Select a set</h2>
       <div class="tiny muted" style="margin-top:6px">Select a set and start.</div>
-      <div style="max-height:420px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:8px">
+      <div style="max-height:420px;overflow:auto;border:1px dashed var(--border);border-radius:10px;margin-top:8px">
         <table style="width:100%">
           <thead>
             <tr><th>#</th><th>Name</th><th>Count</th><th>Actions</th></tr>
@@ -681,10 +682,10 @@
             <div id="tvControls" class="tiny" style="display:grid; grid-template-columns: 1fr auto 1fr; align-items:center; gap:8px">
               <span id="tvStatus" class="mono">-</span>
               <div style="display:flex; gap:6px; justify-content:center">
-                <button id="tvStart" class="ghost" title="Start">«</button>
-                <button id="tvPrev" class="ghost" title="Prev">‹</button>
-                <button id="tvNext" class="ghost" title="Next">›</button>
-                <button id="tvEnd" class="ghost" title="End">»</button>
+                <button id="tvStart" class="ghost" title="Start">�</button>
+                <button id="tvPrev" class="ghost" title="Prev">�</button>
+                <button id="tvNext" class="ghost" title="Next">�</button>
+                <button id="tvEnd" class="ghost" title="End">�</button>
               </div>
             </div>
           </div>
@@ -696,11 +697,11 @@
             </div>
             <div class="stroke" style="margin-top:10px">
               <div class="small"><b>Current Mistake</b></div>
-              <div class="tiny muted" id="mInfo">â€”</div>
+              <div class="tiny muted" id="mInfo">—</div>
               <div class="tiny" style="margin-top:6px"><b>Goal:</b> find the best move from this position.</div>
-              <div class="tiny"><b>Side to move:</b> <span id="sideToMove">â€”</span></div>
-              <div class="tiny"><b>Your attempt:</b> <span id="yourMove">â€”</span></div>
-              <div class="tiny"><b>Feedback:</b> <span id="feedback">â€”</span></div>
+              <div class="tiny"><b>Side to move:</b> <span id="sideToMove">—</span></div>
+              <div class="tiny"><b>Your attempt:</b> <span id="yourMove">—</span></div>
+              <div class="tiny"><b>Feedback:</b> <span id="feedback">—</span></div>
               <div class="mistake-actions-wrap" style="margin-top:8px">
                 <div class="mistake-actions">
                   <!-- Top row actions (Reveal moved to its own row) -->
@@ -725,7 +726,7 @@
                   <span id="engineDepth" class="tiny mono muted" title="depth">depth: -/-</span>
                 </div>
                 <div style="display:flex; align-items:center; gap:10px">
-                  <button id="engineSettingsBtn" class="ghost" title="Engine settings" style="padding:2px 8px">⚙</button>
+                  <button id="engineSettingsBtn" class="ghost" title="Engine settings" style="padding:2px 8px">?</button>
                   <label class="switch" title="Toggle engine analysis">
                     <input type="checkbox" id="engineToggle">
                     <span class="slider"></span>
@@ -772,7 +773,7 @@
       <div class="card">
         <h2>Sets</h2>
         <div class="tiny muted">Click a set to activate then Start.</div>
-        <div style="max-height:380px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:6px">
+        <div style="max-height:380px;overflow:auto;border:1px dashed var(--border);border-radius:10px;margin-top:6px">
           <table style="width:100%">
             <thead>
               <tr><th>#</th><th>Name</th><th>Count</th></tr>
@@ -787,7 +788,7 @@
               <button id="btnStart">Start</button>
             </div>
         </div>
-        <div class="tiny muted" id="activeSetInfo" style="margin-top:6px">Active set: â€”</div>
+        <div class="tiny muted" id="activeSetInfo" style="margin-top:6px">Active set: —</div>
       </div>
     </div>
   </div>
@@ -1317,7 +1318,7 @@
             <div class="card" style="width:min(520px, 95vw); max-height:90vh; overflow:auto">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
                 <h2>Engine Settings</h2>
-                <button id="engSetClose" class="ghost" title="Close">×</button>
+                <button id="engSetClose" class="ghost" title="Close">�</button>
               </div>
               <div class="row" style="margin-top:10px">
                 <div style="max-width:140px">
@@ -1708,7 +1709,7 @@
     function sanitizeSANKey(s){
       try{
         let out = String(s||'').trim();
-        out = out.replace(/[\u00D7×]/g,'x');       // unicode times -> x
+        out = out.replace(/[\u00D7�]/g,'x');       // unicode times -> x
         out = out.replace(/[+#]/g,'');              // drop check/mate marks
         out = out.replace(/!!|\?\?|!\?|\?!/g,'');// drop NAG-like
         out = out.replace(/e\.p\./gi,'');         // drop en passant marker
@@ -1945,7 +1946,7 @@
         showSection('train');
         enterTrainingMode();
         renderActiveSetInfo();
-        try{ const info=document.getElementById('mInfo'); if(info) info.textContent='Loading set…'; }catch{}
+        try{ const info=document.getElementById('mInfo'); if(info) info.textContent='Loading set�'; }catch{}
         await hydrateMistakesFromSet(s);
         await ensureMistakesForSet(s, 10000);
         TrainSession.start();
@@ -1956,7 +1957,7 @@
       ACTIVE_SET = s;
       ACTIVE_SET_KEYS = expandKeys((s&&s.keys)||[]);
     }
-    function renderActiveSetInfo(){ const el = $('#activeSetInfo'); if(el) el.textContent = `Active set: ${ACTIVE_SET?ACTIVE_SET.name:'â€”'}`; }
+    function renderActiveSetInfo(){ const el = $('#activeSetInfo'); if(el) el.textContent = `Active set: ${ACTIVE_SET?ACTIVE_SET.name:'—'}`; }
 
     function renderSetsForTrain(){
       const tb = $('#trainSetsTBody'); if(!tb) return;
@@ -2309,7 +2310,7 @@
      * SAN helper (UCI -> SAN)
      ********************************************************************/
     function uciToSAN(fen, uci){
-      if(!fen || !uci) return uci || 'â€”';
+      if(!fen || !uci) return uci || '—';
       const cl = ChessLite(); cl.loadFEN(fen);
       const legal = cl.moves();
       const mv = legal.find(m => m.uci === uci);
@@ -2383,7 +2384,7 @@
             };
             sf.postMessage('uci');
             const t0=Date.now(); while(!ready && (Date.now()-t0)<4000){ await sleep(20); }
-            $('#engineStateServer').textContent = ready ? 'ready' : 'loadingâ€¦';
+            $('#engineStateServer').textContent = ready ? 'ready' : 'loading…';
             resolve(true);
           }catch(err){ /* suppress Engine:error in UI */ resolve(false); }
         });
@@ -3034,7 +3035,7 @@
         try{
           const total = window.importedGames.length;
           const chosen = (window.importedGames||[]).filter(r=>r && r.sel!==false).length;
-          help.textContent = `${total} game(s) listed · ${chosen} selected. Click a row to preview.`;
+          help.textContent = `${total} game(s) listed � ${chosen} selected. Click a row to preview.`;
         }catch{ help.textContent = `${window.importedGames.length} game(s) listed. Click a row to preview.`; }
       }
     }
@@ -3061,7 +3062,7 @@
         if(state.stop) break;
         try{
           const fastDepth = (window.getFastDepth ? window.getFastDepth() : 12);
-          setStatus(`Fast pass at depth: ${fastDepth} — Game ${i+1}/${list.length}`);
+          setStatus(`Fast pass at depth: ${fastDepth} � Game ${i+1}/${list.length}`);
           setMistakeCounter(all.length);
           try{
             const deep = parseInt(window.getAnalysisDepth?.()||12,10)||12;
@@ -3069,7 +3070,7 @@
             phaseTimer = setTimeout(()=>{ try{ setStatus(`Deep analysis at depth: ${deep} - Game ${i+1}/${list.length}`); }catch{} }, 1500);
           }catch{}
         }catch{}
-        setStatus(`Analyzing ${++i}/${list.length} â€” mistakes found: ${all.length}`);
+        setStatus(`Analyzing ${++i}/${list.length} — mistakes found: ${all.length}`);
         try{
           let ms=[];
           if(window.SF_BACKEND_URL){
@@ -3078,14 +3079,14 @@
               console.warn('Analyze via SF backend failed, falling back', err);
               if(window.FN_BASE){
                 try{ ms=await analyzeOnBackend([pgn]); }
-                catch(err2){ console.warn('Analyze via Functions failed, falling back to local', err2); ms=await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} â€” mistakes found: ${all.length}`); }catch{} }); }
+                catch(err2){ console.warn('Analyze via Functions failed, falling back to local', err2); ms=await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} — mistakes found: ${all.length}`); }catch{} }); }
               } else {
-                ms=await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} â€” mistakes found: ${all.length}`); }catch{} });
+                ms=await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} — mistakes found: ${all.length}`); }catch{} });
               }
             }
           }
           else if(window.FN_BASE){ ms=await analyzeOnBackend([pgn]); }
-          else { ms = await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} â€” mistakes found: ${all.length}`); }catch{} }); }
+          else { ms = await analyzeManualLocal(pgn, (m)=>{ all.push(m); LAST_ANALYZED.mistakes = all.slice(); try{ const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`; setStatus(`Analyzing ${i}/${list.length} — mistakes found: ${all.length}`); }catch{} }); }
 
           // Ensure PGN and game URL are attached regardless of backend
           try{
@@ -3114,7 +3115,7 @@
               try{ setMistakeCounter(all.length); }catch{}
               try{
                 const btn=$('#btnCreateSetFromLast'); if(btn) btn.textContent = `Create set (${all.length} mistake${all.length!==1?'s':''})`;
-                setStatus(`Analyzing ${i}/${list.length} â€” mistakes found: ${all.length}`);
+                setStatus(`Analyzing ${i}/${list.length} — mistakes found: ${all.length}`);
               }catch{}
             }
           }
@@ -3136,7 +3137,7 @@
       }catch{}
 
       if(state.stop){
-        setStatus(`Analysis stopped â€” mistakes found: ${all.length}`);
+        setStatus(`Analysis stopped — mistakes found: ${all.length}`);
       }else{
         setStatus(`Done. Added ${all.length} user-mistake(s).`);
       }
@@ -3574,18 +3575,18 @@
       $('#yourMove').textContent='-'; $('#feedback').textContent='-';
       try{
         const both = formatBothDelta(m);
-        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · loss (cp | wp): ${both}`;
+        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> � loss (cp | wp): ${both}`;
       }catch{}
       try{
         const both = formatBothDelta(m);
-        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · loss (cp | wp): ${both}`;
+        $('#mInfo').innerHTML = `<span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> � loss (cp | wp): ${both}`;
       }catch{}
         // clear arrows
         BOARD.arrows.user = null; BOARD.arrows.best = null; BOARD.arrows.showBest=false; renderArrows();
         try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
         if(queue.length===0){
-          if(mode==='srs'){ queue = pickDueSRS(); if(queue.length===0){ $('#mInfo').textContent='No SRS items due now. 🙂'; active=null; drawBoardMain(null); return; } }
-          else { $('#mInfo').textContent='Woodpecker set complete. 🎉'; active=null; drawBoardMain(null); return; }
+          if(mode==='srs'){ queue = pickDueSRS(); if(queue.length===0){ $('#mInfo').textContent='No SRS items due now. ??'; active=null; drawBoardMain(null); return; } }
+          else { $('#mInfo').textContent='Woodpecker set complete. ??'; active=null; drawBoardMain(null); return; }
         }
         if(active){ history.push({ item: active, pending: pendingFirstTry }); }
         active = queue.shift(); pendingFirstTry=true; loadMistakeOnBoard(active); updateNavButtons();
@@ -3594,7 +3595,7 @@
         if(!active) return;
         const correct = (moveUci === (active.best||''));
         const yourSan = uciToSAN(active.fen, moveUci);
-        $('#yourMove').textContent = yourSan || moveUci || 'â€”';
+        $('#yourMove').textContent = yourSan || moveUci || '—';
 
         // Do not auto-draw last-move arrow; keep arrows clear
         BOARD.arrows.user = null; BOARD.arrows.showBest=false; renderArrows();
@@ -3678,13 +3679,13 @@
         if(!active) return;
         const correct = (moveUci === (active.best||''));
         const yourSan = uciToSAN(active.fen, moveUci);
-        $('#yourMove').textContent = yourSan || moveUci || '—';
+        $('#yourMove').textContent = yourSan || moveUci || '�';
         if(correct){
-          $('#feedback').innerHTML = '✅ Correct (best move)';
+          $('#feedback').innerHTML = '? Correct (best move)';
           try{ logAttempt(active.id, true, moveUci); }catch{}
         } else {
           const bestSan = uciToSAN(active.fen, active.best);
-          $('#feedback').innerHTML = `❌ Not the best. <span class="mono">Best = ${bestSan || active.best}</span>`;
+          $('#feedback').innerHTML = `? Not the best. <span class="mono">Best = ${bestSan || active.best}</span>`;
           try{ logAttempt(active.id, false, moveUci); }catch{}
         }
       }
@@ -4040,17 +4041,17 @@
       try{
         const deltaTxt = formatDeltaForDisplay(m);
         const label = (getClassifier()==='wp'?'win prob drop':'centipawn loss');
-        $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> · ${label}: ${deltaTxt}`;
+        $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> � ${label}: ${deltaTxt}`;
       }catch{}
-      $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> Â· <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> Â· ?cp ${Math.round(m.deltaCp)}`;
-      $('#yourMove').textContent='â€”'; $('#feedback').textContent='â€”';
+      $('#mInfo').innerHTML = `<span class="mono">${m.fen.split(' ').slice(0,4).join(' ')}</span> · <span class="pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}">${m.severity}</span> · ?cp ${Math.round(m.deltaCp)}`;
+      $('#yourMove').textContent='—'; $('#feedback').textContent='—';
       ORIENT_WHITE_BOTTOM = (m.side==='w');
       try{ initTrainViewFromMistake(m); }catch{}
       drawBoardMain(m.fen);
       try{
         const deltaTxt = formatDeltaForDisplay(m);
         const label = (getClassifier()==='wp'?'win prob drop':'centipawn loss');
-        $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> · ${label}: ${deltaTxt}`;
+        $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> � ${label}: ${deltaTxt}`;
       }catch{}
       try{ const both = formatBothDelta(m); $('#mInfo').innerHTML = `<span class=\"pill ${m.severity==='blunder'?'blun':(m.severity==='mistake'?'mist':'inacc')}\">${m.severity}</span> - loss (cp | wp): ${both}`; }catch{}
       // Arrows start clean; will draw on attempt/reveal
@@ -4136,7 +4137,7 @@
       const sel = $('#statsSetSelect'); if(!sel) return;
       const sets = sortSetsByCreated(loadSets());
       sel.innerHTML = '';
-      const opt0 = document.createElement('option'); opt0.value=''; opt0.textContent='Select a setâ€¦'; sel.appendChild(opt0);
+      const opt0 = document.createElement('option'); opt0.value=''; opt0.textContent='Select a set…'; sel.appendChild(opt0);
       for(const s of sets){ const o=document.createElement('option'); o.value=s.id; o.textContent=`${s.name} (${s.keys.length})`; sel.appendChild(o);
       }
       if(STATS_SELECTED_SET_ID){ sel.value = STATS_SELECTED_SET_ID; }
@@ -4302,12 +4303,12 @@
 
     $('#btnFetchLichess').addEventListener('click', async () => {
       const u=$('#lichessUser').value.trim(); if(!u) return alert('Enter a Lichess username');
-      try{ const n=parseInt($('#lichessCount')?.value,10)||5; setStatus(`Fetching Lichess games (N=${n})â€¦`); await fetchLichess(u,n); setStatus('Idle'); }catch(e){ setStatus('Error: '+(e?.message||e)); }
+      try{ const n=parseInt($('#lichessCount')?.value,10)||5; setStatus(`Fetching Lichess games (N=${n})…`); await fetchLichess(u,n); setStatus('Idle'); }catch(e){ setStatus('Error: '+(e?.message||e)); }
     });
 
     $('#btnFetchChesscom').addEventListener('click', async () => {
       const u=$('#chesscomUser').value.trim(); if(!u) return alert('Enter a Chess.com username');
-      try{ const n=parseInt($('#chesscomCount')?.value,10)||5; setStatus(`Fetching Chess.com games (N=${n})â€¦`); await fetchChesscom(u,n); setStatus('Idle'); }catch(e){ setStatus('Error: '+(e?.message||e)); }
+      try{ const n=parseInt($('#chesscomCount')?.value,10)||5; setStatus(`Fetching Chess.com games (N=${n})…`); await fetchChesscom(u,n); setStatus('Idle'); }catch(e){ setStatus('Error: '+(e?.message||e)); }
     });
 
 
@@ -4462,7 +4463,7 @@
       }catch{}
       drawBoardMain(null);
       try{ setTrainNavEnabled(false); tvUpdate(); }catch{}
-      setStatus('Loading engineâ€¦'); await Engine.ensure(); setStatus('Idle');
+      setStatus('Loading engine…'); await Engine.ensure(); setStatus('Idle');
       // Setup Game Info expanders (FEN/PGN)
       try{
         function setupExpander(rootId, textId, copyBtnId){
@@ -4786,7 +4787,7 @@
           <div class="card" style="width:min(560px, 95vw); max-height:90vh; overflow:auto">
             <div style="display:flex;align-items:center;gap:10px;justify-content:space-between">
               <h2>Analysis Settings</h2>
-              <button id="anSettingsClose" class="ghost" title="Close">✕</button>
+              <button id="anSettingsClose" class="ghost" title="Close">?</button>
             </div>
             <div class="row" style="margin-top:8px; gap:12px; align-items:flex-end">
               <div style="min-width:180px">
@@ -4815,15 +4816,15 @@
                 <div class="small"><b id="sevPanelTitle">Classify by centipawn loss</b></div>
                 <div class="grid-2" style="margin-top:6px; gap:10px">
                   <div>
-                    <label>Inaccuracy ≥</label>
+                    <label>Inaccuracy =</label>
                     <input id="sevInacc" type="number" min="0" step="1" value="50" />
                   </div>
                   <div>
-                    <label>Mistake ≥</label>
+                    <label>Mistake =</label>
                     <input id="sevMistake" type="number" min="0" step="1" value="150" />
                   </div>
                   <div>
-                    <label>Blunder ≥</label>
+                    <label>Blunder =</label>
                     <input id="sevBlunder" type="number" min="0" step="1" value="300" />
                   </div>
                 </div>
@@ -4968,15 +4969,15 @@
             <div class="card" style="width:min(720px,95vw); max-height:90vh; overflow:auto">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
                 <h2>Import PGN</h2>
-                <button id="pgnClose" class="ghost" title="Close">×</button>
+                <button id="pgnClose" class="ghost" title="Close">�</button>
               </div>
               <div class="tiny muted" style="margin:6px 0 10px 0">Paste one or more complete PGN games below, or load a .pgn file. Multiple games supported.</div>
               <textarea id="pgnText" rows="14" style="width:100%; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace"></textarea>
               <input type="file" id="pgnFile" accept=".pgn,.PGN,.txt" multiple style="display:none" />
               <div class="row" style="margin-top:10px; justify-content:space-between; align-items:center">
-                <div class="tiny muted">Tip: Each game should include header tags like [Event "…"].</div>
+                <div class="tiny muted">Tip: Each game should include header tags like [Event "�"].</div>
                 <div>
-                  <button id="pgnLoadBtn" class="ghost" style="margin-right:8px">Load file…</button>
+                  <button id="pgnLoadBtn" class="ghost" style="margin-right:8px">Load file�</button>
                   <button id="pgnCancel" class="ghost">Cancel</button>
                   <button id="pgnImport" class="secondary">Import</button>
                 </div>
@@ -5070,10 +5071,10 @@
           <div class="card" style="width:min(620px,95vw); max-height:90vh; overflow:auto">
             <div style="display:flex;align-items:center;gap:10px;justify-content:space-between">
               <h2>Add to existing set</h2>
-              <button id="atsClose" class="ghost" title="Close">✕</button>
+              <button id="atsClose" class="ghost" title="Close">?</button>
             </div>
             <div id="atsInfo" class="tiny muted" style="margin-top:6px">-</div>
-            <div style="max-height:50vh;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:8px">
+            <div style="max-height:50vh;overflow:auto;border:1px dashed var(--border);border-radius:10px;margin-top:8px">
               <table style="width:100%">
                 <thead><tr><th>Name</th><th>Count</th><th>Add</th></tr></thead>
                 <tbody id="atsTBody"></tbody>

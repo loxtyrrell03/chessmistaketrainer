@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <title>Personal Chess Mistake Trainer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="/logo.jpg" />
   <script>
     // Replace mojibake em/en dash sequences that can appear as "â€”" / "â€“"
     (function(){
@@ -60,24 +61,24 @@
   -->
   <style>
     :root{
-      /* Layout */
-      --bg:#0f1115;
-      --panel:#171a21;
-      --card:#1b1f27;
-      --text:#e6edf3;
-      --muted:#9aa4b2;
-      --acc:#4f8cff;
-      --good:#2ecc71;
-      --bad:#ff5c5c;
-      --warn:#f1c40f;
+      /* Layout (warm palette matching logo) */
+      --bg:#12100e;      /* near-black with warm tint */
+      --panel:#191511;   /* warm dark panel */
+      --card:#1d1813;    /* card background */
+      --text:#f4efe8;    /* warm off‑white */
+      --muted:#b9b2a9;   /* warm grey */
+      --acc:#d14b3a;     /* terracotta/red from logo */
+      --good:#2f9e44;    /* keep green for success */
+      --bad:#e0523f;     /* error close to accent */
+      --warn:#d9a441;    /* warm amber */
 
-      /* Board look */
-      --sq-light:#f0d9b5;
-      --sq-dark:#b58863;
+      /* Board look (wood + cream) */
+      --sq-light:#e8d5b7;
+      --sq-dark:#b88a58;
       --sq-hl:#ffd54f;
       --sq-sel:#7bdff6;
-      --arrow-user:#ff5c5c; /* red */
-      --arrow-best:#2ecc71; /* green */
+      --arrow-user:#e0523f; /* red (logo) */
+      --arrow-best:#2f9e44; /* green */
 
       /* Train sizing */
       --board-size: 520px; /* main board target width */
@@ -159,8 +160,8 @@
     /* When ON, knob travels flush to the right edge */
     #enginePanel .switch input:checked + .slider:before{ transform:translateX(15px) }
 
-    /* Engine arrow color (cyan-ish) */
-    :root{ --arrow-engine:#00bcd4 }
+    /* Engine arrow color (warm teal for contrast) */
+    :root{ --arrow-engine:#0fb5a8 }
 
     @media (max-width:1000px){
       .grid, .train-grid{grid-template-columns:1fr}
@@ -168,7 +169,7 @@
 
     .card{
       background:var(--panel);
-      border:1px solid #232836;
+      border:1px solid #2a1f16;
       border-radius:12px;
       padding:14px;
       box-shadow:0 8px 24px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.02);
@@ -177,23 +178,23 @@
     .row > *{flex:1}
     label{display:block;margin:.25rem 0 .35rem;color:var(--muted);font-size:.85rem}
     input[type="text"], textarea, select, input[type="number"], input[type="range"]{
-      width:100%;background:#11141a;border:1px solid #2a3142;color:var(--text);
+      width:100%;background:#141210;border:1px solid #3a2a20;color:var(--text);
       border-radius:10px;padding:10px 12px;font-size:14px;outline:none;
     }
     input[type="range"]{padding:6px 8px}
     textarea{min-height:120px;resize:vertical}
     /* Input with prefix (e.g., 'chess.com/' inside the field) */
-    .input-prefix{display:flex;align-items:center;background:#11141a;border:1px solid #2a3142;color:var(--text);border-radius:10px}
+    .input-prefix{display:flex;align-items:center;background:#141210;border:1px solid #3a2a20;color:var(--text);border-radius:10px}
     .input-prefix .prefix{padding:10px 10px;color:var(--muted);border-right:1px solid #2a3142;white-space:nowrap}
     .input-prefix input{flex:1;background:transparent;border:0;color:var(--text);padding:10px 12px;outline:none}
 
     button{
       appearance:none;border:0;background:var(--acc);color:white;
       padding:10px 14px;border-radius:10px;font-weight:600;cursor:pointer;
-      box-shadow:0 6px 18px rgba(79,140,255,.35)
+      box-shadow:0 6px 18px rgba(209,75,58,.25)
     }
-    button.secondary{background:#30374a;box-shadow:none}
-    button.ghost{background:transparent;border:1px solid #2a3142;color:var(--text)}
+    button.secondary{background:#3a2a20;box-shadow:none}
+    button.ghost{background:transparent;border:1px solid #3a2a20;color:var(--text)}
     .btn-green{background:var(--good)}
     .btn-red{background:var(--bad)}
     .muted{color:var(--muted)}
@@ -304,10 +305,12 @@
   <!-- chessboard.js CSS (local) -->
   <link rel="stylesheet" href="/chessboardjs/css/chessboard-1.0.0.min.css" />
   <style>
-    .topnav{background:#11141a;border-bottom:1px solid #232836;position:sticky;top:0;z-index:5}
+    .topnav{background:#141210;border-bottom:1px solid #2a1f16;position:sticky;top:0;z-index:5}
     .topnav .navwrap{max-width:1100px;margin:0 auto;display:flex;gap:12px;align-items:center;padding:10px 18px}
-    .topnav a{color:#cbd5e1;padding:6px 10px;border-radius:8px}
-    .topnav a.active{background:#1b2130;color:#fff}
+    .brand{display:flex;align-items:center;gap:8px;font-weight:700;color:#e6edf3}
+    .brand .logo{height:28px;width:auto;border-radius:6px;display:block}
+    .topnav a{color:#e8ded2;padding:6px 10px;border-radius:8px}
+    .topnav a.active{background:#2a1f16;color:#fff}
     .section{display:none}
     .section.active{display:block}
 
@@ -327,7 +330,7 @@
 <body>
   <div class="topnav">
     <div class="navwrap">
-      <div style="font-weight:700;color:#e6edf3">?? PMT</div>
+      <a href="#" id="brandHome" class="brand" title="Home"><img class="logo" src="/logo.jpg" alt="PMT logo" /><span>PMT</span></a>
       <a href="#" data-sec="home" id="navHome" class="active">Home</a>
       <a href="#" data-sec="analyze" id="navAnalyze">Import</a>
       <a href="#" data-sec="stats" id="navStats">Stats</a>
@@ -370,14 +373,13 @@
 
   <!-- Home -->
   <div class="wrap section active" id="homeSection">
-    <h1>Welcome to Personal Chess Mistake Trainer</h1>
-    <p class="muted small">Import games from Lichess/Chess.com, extract mistakes with Stockfish, and train them interactively on the Train page.</p>
+    <h1>Chess Mistake Trainer</h1>
     <div class="card" style="margin-top:12px">
-      <h2>Get Started</h2>
+      <h2>Start</h2>
       <ul>
-        <li>Go to <b>Import</b> to fetch your recent games.</li>
-        <li>Analyse mistakes to create a Set automatically.</li>
-        <li>Open Sets to rename or start training a set.</li>
+        <li>Import recent games.</li>
+        <li>Analyse to create a set.</li>
+        <li>Manage sets and train.</li>
       </ul>
       <button id="btnGoAnalyze">Go to Import</button>
     </div>
@@ -385,13 +387,12 @@
 
   <!-- Import -->
   <div class="wrap section" id="analyzeSection">
-    <h1>Import games & prepare analysis</h1>
-    <p class="muted small">Import games ? then press <b>Analyse mistakes</b> to run Stockfish (server) and extract mistakes. All data stays in your browser (plus Firestore sync).</p>
+    <h1>Import and Analyse</h1>
 
     <div class="grid" style="margin-top:14px">
       <!-- LEFT COLUMN -->
       <div class="card">
-        <h2>1) Import Games</h2>
+        <h2>Import</h2>
         <!-- Unified import controls -->
         <!-- Settings (visible) -->
         <div id="importSettingsBox" class="tiny" style="display:block; margin-top:8px">
@@ -655,7 +656,7 @@
     <!-- View 1: Select a set to train -->
     <div id="trainSelectView" class="card" style="margin-top:12px">
       <h2>Select a set</h2>
-      <div class="tiny muted" style="margin-top:6px">Click a set to start training. You can also press Train in Actions.</div>
+      <div class="tiny muted" style="margin-top:6px">Select a set and start.</div>
       <div style="max-height:420px;overflow:auto;border:1px dashed #2a3142;border-radius:10px;margin-top:8px">
         <table style="width:100%">
           <thead>
@@ -783,7 +784,7 @@
             <!-- Mode selector and Woodpecker count removed -->
             <div style="max-width:220px">
               <label>&nbsp;</label>
-              <button id="btnStart">Start session</button>
+              <button id="btnStart">Start</button>
             </div>
         </div>
         <div class="tiny muted" id="activeSetInfo" style="margin-top:6px">Active set: â€”</div>
@@ -5185,6 +5186,7 @@
       }
     }
     document.getElementById('navHome')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('home'); });
+    document.getElementById('brandHome')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('home'); });
     document.getElementById('navAnalyze')?.addEventListener('click', (e)=>{ e.preventDefault(); showSection('analyze'); });
     document.getElementById('navStats')?.addEventListener('click', (e)=>{ e.preventDefault(); renderStatsSetOptions(); renderStatsMistakeList(); renderStatsSummary(); showSection('stats'); try{ const lbl=document.querySelector('#statsDelta')?.parentElement?.querySelector('b'); if(lbl) lbl.textContent='loss (cp | wp):'; }catch{} });
     // Re-render stats when cloud data arrives

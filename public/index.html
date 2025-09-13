@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+﻿﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -65,13 +65,13 @@
       --bg:#fdfcf9;      /* near-white */
       --panel:#ffffff;   /* pure white panels */
       --card:#ffffff;    /* pure white cards */
-      --text:#1f1b16;    /* warm near-black */
-      --muted:#7f776c;   /* soft warm grey */
+      --text:#15110d;    /* warm near-black */
+      --muted:#5f564b;   /* soft warm grey */
       --acc:#d14b3a;     /* terracotta/red from logo */
       --good:#2f9e44;    /* keep green for success */
       --bad:#e0523f;     /* error close to accent */
       --warn:#d9a441;    /* warm amber */
-      --border:#ece7df;  /* very light border */
+      --border:#d9d0c4;  /* very light border */
 
       /* Board look (wood + cream) */
       --sq-light:#e8d5b7;
@@ -170,7 +170,7 @@
 
     .card{
       background:var(--panel);
-      border:1px solid var(--border);
+      border:2px solid var(--border);
       border-radius:12px;
       padding:14px;
       box-shadow:0 8px 24px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.02);
@@ -179,13 +179,13 @@
     .row > *{flex:1}
     label{display:block;margin:.25rem 0 .35rem;color:var(--muted);font-size:.85rem}
     input[type="text"], textarea, select, input[type="number"], input[type="range"]{
-      width:100%;background:var(--panel);border:1px solid var(--border);color:var(--text);
+      width:100%;background:var(--panel);border:2px solid var(--border);color:var(--text);
       border-radius:10px;padding:10px 12px;font-size:14px;outline:none;
     }
     input[type="range"]{padding:6px 8px}
     textarea{min-height:120px;resize:vertical}
     /* Input with prefix (e.g., 'chess.com/' inside the field) */
-    .input-prefix{display:flex;align-items:center;background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:10px}
+    .input-prefix{display:flex;align-items:center;background:var(--panel);border:2px solid var(--border);color:var(--text);border-radius:10px}
     .input-prefix .prefix{padding:10px 10px;color:var(--muted);border-right:1px solid var(--border);white-space:nowrap}
     .input-prefix input{flex:1;background:transparent;border:0;color:var(--text);padding:10px 12px;outline:none}
 
@@ -195,7 +195,7 @@
       box-shadow:0 6px 18px rgba(209,75,58,.25)
     }
     button.secondary{background:var(--border);box-shadow:none}
-    button.ghost{background:transparent;border:1px solid var(--border);color:var(--text)}
+    button.ghost{background:transparent;border:2px solid var(--border);color:var(--text)}
     .btn-green{background:var(--good)}
     .btn-red{background:var(--bad)}
     .muted{color:var(--muted)}
@@ -290,7 +290,7 @@
     .pill.inacc{background:#264f2f;color:#a2f5be;border:1px solid #2f9e44}
     .pill.mist{background:#5b4a27;color:#ffe8a1;border:1px solid #f2c94c}
      .pill.blun{background:#4f1e24;color:#ffb3bd;border:1px solid #ff6b6b}
-     .stroke{border:1px dashed var(--border);border-radius:10px;padding:10px}
+     .stroke{border:2px dashed var(--border);border-radius:10px;padding:10px}
      /* Move list styles */
      #moveList .mv{ cursor:pointer; padding:2px 4px; border-radius:6px; display:inline-block; }
      #moveList .mv:hover{ background:#121622; }

@@ -110,7 +110,12 @@
 
     /* Training view layout: hide sets pane; keep board left + info right */
     #trainSection.training-mode .train-grid{ grid-template-columns:1fr; }
-    #trainSection.training-mode .train-grid > .card:nth-of-type(2){ display:none; }
+    /* Always hide the Sets panel on the Train page */
+    #trainSection .train-grid > .card:nth-of-type(2){ display:none !important; }
+    /* Also hide any card that contains the Train Sets table anywhere */
+    .card:has(#trainSetsTBody),
+    .card:has(#activeSetInfo),
+    .card:has(#btnStart){ display:none !important; }
     /* Hide the top select-a-set panel while training */
     #trainSection.training-mode #trainSelectView{ display:none; }
     /* Show only selection view when not training */
@@ -4387,7 +4392,8 @@
     /********************************************************************
      * Session start buttons
      ********************************************************************/
-    $('#btnStart').addEventListener('click', async () => {
+    const __btnStart = document.getElementById('btnStart');
+    __btnStart && __btnStart.addEventListener('click', async () => {
       // Ensure a set is active; default to first
       let s = ACTIVE_SET;
       if(!s){ const sets = loadSets(); if(sets.length){ s = sets[0]; setActiveSet(s); } }

@@ -319,6 +319,27 @@ app.post('/analyze', async (req, res) => {
   }
 });
 
+// Simple bestmove endpoint for a single FEN
+// Body: { fen: string, depth?: number }
+app.post('/bestmove', async (req, res) => {
+  try {
+    const { fen, depth } = req.body || {};
+    if (!fen || typeof fen !== 'string') { res.status(400).json({ error: 'Missing fen' }); return; }
+    const d = Math.max(4, Math.min(30, parseInt(depth || 12, 10) || 12));
+    const engine = startEngine();
+    try {
+      const r = await engine.analyzeFen(fen, d);
+      try{ console.log('[SF-backend] /bestmove:', { d, bestmove: r.bestmove, cp: r.cp, fen: String(fen).slice(0,40)+'...' }); }catch{}
+      res.status(200).json({ cp: r.cp, bestmove: r.bestmove });
+    } finally {
+      try { engine.kill(); } catch {}
+    }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'internal' });
+  }
+});
+
 // Fast pass scan endpoint
 app.post('/scan', async (req, res) => {
   try {

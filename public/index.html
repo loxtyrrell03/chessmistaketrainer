@@ -366,7 +366,7 @@
   <!-- Home -->
   <div class="wrap section active" id="homeSection">
     <h1>Welcome to Personal Chess Mistake Trainer</h1>
-    <p class="muted small">Import games from Lichess/Chess.com, extract mistakes with Stockfish, and train them using Woodpecker or SM-2 spaced repetition.</p>
+    <p class="muted small">Import games from Lichess/Chess.com, extract mistakes with Stockfish, and train them interactively on the Train page.</p>
     <div class="card" style="margin-top:12px">
       <h2>Get Started</h2>
       <ul>
@@ -603,7 +603,6 @@
                 <th>Played</th>
                 <th>Best</th>
                 <th>?cp</th>
-                <th>Next review</th>
               </tr>
             </thead>
             <tbody id="statsMistakeTBody"></tbody>
@@ -634,7 +633,6 @@
           </div>
           <div class="stroke">
             <div class="small"><b>Total mistakes:</b> <span id="statsTotal">0</span></div>
-            <div class="small"><b>Due now (SRS):</b> <span id="statsDue">0</span></div>
           </div>
         </div>
         <div style="margin-top:10px">
@@ -777,23 +775,11 @@
           </table>
         </div>
         <div class="row" style="margin-top:10px">
-          <div class="grid-2">
-            <div>
-              <label>Mode</label>
-              <select id="modeSel">
-                <option value="woodpecker">Woodpecker</option>
-                <option value="srs" selected>Spaced Repetition (SM-2)</option>
-              </select>
+            <!-- Mode selector and Woodpecker count removed -->
+            <div style="max-width:220px">
+              <label>&nbsp;</label>
+              <button id="btnStart">Start session</button>
             </div>
-            <div id="wpCountWrap">
-              <label>Woodpecker count (N)</label>
-              <input id="wpCount" type="number" min="1" value="10" />
-            </div>
-          </div>
-          <div style="max-width:220px">
-            <label>&nbsp;</label>
-            <button id="btnStart">Start session</button>
-          </div>
         </div>
         <div class="tiny muted" id="activeSetInfo" style="margin-top:6px">Active set: â€”</div>
       </div>
@@ -1956,13 +1942,7 @@
         try{ const info=document.getElementById('mInfo'); if(info) info.textContent='Loading set…'; }catch{}
         await hydrateMistakesFromSet(s);
         await ensureMistakesForSet(s, 10000);
-        const due = pickDueSRS();
-        if(!due.length){
-          const N = (Array.isArray(s.items) && s.items.length) ? s.items.length : s.keys.length;
-          Session.startWoodpecker(Math.max(1, N));
-        } else {
-          Session.startSRS();
-        }
+        TrainSession.start();
       }));
     }
     let ACTIVE_SET = null; let ACTIVE_SET_KEYS = new Set();
@@ -3540,11 +3520,12 @@
   try{ window.importUnified = importUnified; }catch{}
 
     /********************************************************************
-     * Trainer session + SM-2
+     * Trainer session (no SRS/Woodpecker)
      ********************************************************************/
     let ORIENT_WHITE_BOTTOM = true;
 
-    function pickDueSRS(){
+    // Build a list of mistakes for the active set (no SRS filtering)
+    function listForActiveSet(){
       let list = loadMistakes();
       if(ACTIVE_SET_KEYS && ACTIVE_SET_KEYS.size){
         list = list.filter(m => {
@@ -3553,17 +3534,10 @@
           return false;
         });
       }
-      const now = nowTs(); return list.filter(m => (m.nextReview||0) <= now);
+      return list;
     }
 
-    function sm2Update(m, quality){
-      m.ef = m.ef ?? 2.5; m.reps = m.reps ?? 0; m.interval = m.interval ?? 0;
-      const q = clamp(quality, 0, 5);
-      m.ef = m.ef + (0.1 - (5-q)*(0.08 + (5-q)*0.02)); m.ef = Math.max(1.3, m.ef);
-      if(q<3){ m.reps=0; m.interval=1; }
-      else{ m.reps+=1; if(m.reps===1)m.interval=1; else if(m.reps===2)m.interval=6; else m.interval=Math.round(m.interval*m.ef); }
-      m.nextReview = nowTs() + days(m.interval||1);
-    }
+    // No SM-2 scheduling anymore
 
     const Session = (() => {
       let queue=[]; let mode='srs'; let active=null; let pendingFirstTry=true; let history=[];
@@ -3649,6 +3623,66 @@
         updateNavButtons();
       }
       return { startWoodpecker, startSRS, next, back, answer, get active(){return active;} }
+    })();
+
+    // Simplified training session without SRS/Woodpecker scheduling
+    const TrainSession = (() => {
+      let queue = [];
+      let active = null;
+      let history = [];
+
+      function updateNavButtons(){
+        try{ const b=$('#btnBack'); if(b) b.disabled = history.length===0; }catch{}
+      }
+      function buildQueue(){
+        const list = (typeof listForActiveSet === 'function') ? listForActiveSet() : loadMistakes();
+        const ranked = list.slice().sort((a,b)=>{
+          const rank = s => s==='blunder'?3 : s==='mistake'?2 : s==='inaccuracy'?1 : 0;
+          const d = rank(b.severity) - rank(a.severity); if(d) return d;
+          return (b.deltaCp||0) - (a.deltaCp||0);
+        });
+        return ranked.map(m=>({...m}));
+      }
+      function start(){
+        history = [];
+        queue = buildQueue();
+        next();
+      }
+      function next(){
+        $('#yourMove').textContent='-'; $('#feedback').textContent='-';
+        BOARD.arrows.user = null; BOARD.arrows.best = null; BOARD.arrows.showBest=false; renderArrows();
+        try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
+        if(queue.length===0){ $('#mInfo').textContent='Set complete.'; active=null; drawBoardMain(null); updateNavButtons(); return; }
+        if(active){ history.push({ item: active }); }
+        active = queue.shift();
+        loadMistakeOnBoard(active); updateNavButtons();
+      }
+      function back(){
+        if(history.length===0) return;
+        if(active){ queue.unshift(active); }
+        const prev = history.pop();
+        active = prev.item;
+        loadMistakeOnBoard(active);
+        $('#yourMove').textContent='-'; $('#feedback').textContent='-';
+        try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
+        BOARD.arrows.user=null; BOARD.arrows.showBest=false; renderArrows();
+        updateNavButtons();
+      }
+      function answer(moveUci){
+        if(!active) return;
+        const correct = (moveUci === (active.best||''));
+        const yourSan = uciToSAN(active.fen, moveUci);
+        $('#yourMove').textContent = yourSan || moveUci || '—';
+        if(correct){
+          $('#feedback').innerHTML = '✅ Correct (best move)';
+          try{ logAttempt(active.id, true, moveUci); }catch{}
+        } else {
+          const bestSan = uciToSAN(active.fen, active.best);
+          $('#feedback').innerHTML = `❌ Not the best. <span class="mono">Best = ${bestSan || active.best}</span>`;
+          try{ logAttempt(active.id, false, moveUci); }catch{}
+        }
+      }
+      return { start, next, back, answer, get active(){ return active; } };
     })();
 
     /********************************************************************
@@ -3875,7 +3909,7 @@
             try{ setTrainFen && setTrainFen(nextFen); }catch{}
             BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
             try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
-            try{ Session.answer(uci); }catch{}
+            try{ TrainSession.answer(uci); }catch{}
           }catch(e){
             try{ console && console.warn && console.warn('onDrop error', e); }catch{}
             return 'snapback';
@@ -3936,7 +3970,7 @@
           // clear old arrows, then answer
           BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
           try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
-          try{ Session.answer(uci); }catch{}
+          try{ TrainSession.answer(uci); }catch{}
         }
         BOARD.selected=null; showHints();
       }
@@ -3988,7 +4022,7 @@
         drawBoardMain(tmp.fen());
         BOARD.arrows.showBest=false; BOARD.arrows.user=null; renderArrows();
         try{ $('#btnReveal')?.setAttribute('aria-pressed','false'); $('#btnShowMistake')?.setAttribute('aria-pressed','false'); }catch{}
-        try{ Session.answer(uci); }catch{}
+        try{ TrainSession.answer(uci); }catch{}
       }
       BOARD.selected=null; showHints();
     }
@@ -4028,7 +4062,7 @@
 
     // Reveal, Show mistake & Next buttons
     $('#btnReveal').addEventListener('click', () => {
-      const a=Session.active; if(!a) return;
+      const a=TrainSession.active; if(!a) return;
       const btn=$('#btnReveal');
       const isOn=!!BOARD.arrows.showBest;
       if(isOn){
@@ -4047,7 +4081,7 @@
     });
     // NEW: Show mistake arrow (red) for the move actually played in the game (toggle)
     $('#btnShowMistake').addEventListener('click', () => {
-      const a=Session.active; if(!a) return;
+      const a=TrainSession.active; if(!a) return;
       const btn=$('#btnShowMistake');
       const cl=ChessLite(); cl.loadFEN(a.fen);
       const uci=cl.parseSANtoMove(a.played||'');
@@ -4068,15 +4102,15 @@
       }
     });
 
-    $('#btnBack')?.addEventListener('click', () => Session.back());
-    $('#btnNext').addEventListener('click', () => { try{ console.log('[Train]', new Date().toISOString(), 'Next clicked'); }catch{} Session.next(); });
+    $('#btnBack')?.addEventListener('click', () => TrainSession.back());
+    $('#btnNext').addEventListener('click', () => { try{ console.log('[Train]', new Date().toISOString(), 'Next clicked'); }catch{} TrainSession.next(); });
     $('#btnFlip').addEventListener('click', () => {
       ORIENT_WHITE_BOTTOM = !ORIENT_WHITE_BOTTOM;
       if(TRAINVIEW && TRAINVIEW.fens && TRAINVIEW.fens.length){
         const i = Math.max(0, Math.min(TRAINVIEW.idx||0, TRAINVIEW.fens.length-1));
         drawBoardMain(TRAINVIEW.fens[i]);
-      } else if(Session.active){
-        drawBoardMain(Session.active.fen);
+      } else if(TrainSession.active){
+        drawBoardMain(TrainSession.active.fen);
       }
     });
     
@@ -4109,7 +4143,7 @@
       try{ const thCp=document.querySelector('#statsMistakeTable thead th:nth-child(6)'); if(thCp) thCp.textContent='loss (cp | wp)'; }catch{}
       tb.innerHTML='';
       const sets = loadSets(); const target = sets.find(s=>s.id===STATS_SELECTED_SET_ID);
-      if(!target){ STATS_CURRENT_LIST=[]; $('#statsTotal') && ($('#statsTotal').textContent='0'); $('#statsDue') && ($('#statsDue').textContent='0'); return; }
+      if(!target){ STATS_CURRENT_LIST=[]; $('#statsTotal') && ($('#statsTotal').textContent='0'); return; }
       const keySet = expandKeys(target.keys||[]);
       const all=loadMistakes();
       let list=all.filter(m => {
@@ -4134,18 +4168,11 @@
           <td>${m.side==='w'?'White':'Black'}</td>
           <td class="mono tiny">${m.played}</td>
           <td class="mono tiny">${bestSan}</td>
-          <td class="mono tiny">${formatBothDelta(m)}</td>
-          <td class="tiny">${tsToDate(m.nextReview)}</td>`;
+          <td class="mono tiny">${formatBothDelta(m)}</td>`;
         tr.addEventListener('click', ()=>{ loadMistakeOnStatsBoard(m); });
         tb.appendChild(tr);
       });
-      const due = pickDueSRS().filter(m => {
-        const ks = keysForMistake(m);
-        for(const k of ks){ if(keySet.has(k)) return true; }
-        return false;
-      }).length;
       const totalEl=$('#statsTotal'); if(totalEl) totalEl.textContent=list.length;
-      const dueEl=$('#statsDue'); if(dueEl) dueEl.textContent=due;
     }
 
     function renderStatsSummary(){
@@ -4373,20 +4400,9 @@
       await hydrateMistakesFromSet(s);
       try{ await ensureMistakesForSet(s, 10000); }catch{}
 
-      const mode=$('#modeSel').value;
-      if(mode==='woodpecker'){
-        const N=parseInt($('#wpCount').value,10)||10; Session.startWoodpecker(N);
-      } else {
-        const due = pickDueSRS();
-        if(!due.length){
-          const N = (Array.isArray(s.items) && s.items.length) ? s.items.length : s.keys.length;
-          Session.startWoodpecker(Math.max(1, N));
-        } else {
-          Session.startSRS();
-        }
-      }
+      TrainSession.start();
     });
-    $('#modeSel').addEventListener('change', () => { $('#wpCountWrap').style.display = ($('#modeSel').value==='woodpecker') ? 'block' : 'none'; });
+    // Mode selector removed
 
     /********************************************************************
      * Init + preferences + nav
@@ -4524,7 +4540,7 @@
         const tr = document.createElement('tr');
         tr.style.cursor='pointer';
         tr.innerHTML = `<td>${++i}</td><td>${s.name}</td><td>${s.keys.length}</td><td><button class="ghost" data-id="${s.id}">Train</button></td>`;
-        const start = async ()=>{ setActiveSet(s); enterTrainingMode(); renderActiveSetInfo(); try{ const info=document.getElementById('mInfo'); if(info) info.textContent='Loading set.'; }catch{}; await hydrateMistakesFromSet(s); try{ await ensureMistakesForSet(s, 10000); }catch{}; const due = pickDueSRS(); if(!due.length){ const N = (Array.isArray(s.items) && s.items.length) ? s.items.length : s.keys.length; Session.startWoodpecker(Math.max(1, N)); } else { Session.startSRS(); } };
+        const start = async ()=>{ setActiveSet(s); enterTrainingMode(); renderActiveSetInfo(); try{ const info=document.getElementById('mInfo'); if(info) info.textContent='Loading set.'; }catch{}; await hydrateMistakesFromSet(s); try{ await ensureMistakesForSet(s, 10000); }catch{}; TrainSession.start(); };
         tr.addEventListener('click', (ev)=>{ if((ev.target && ev.target.tagName==='BUTTON')) return; start(); });
         tr.querySelector('button')?.addEventListener('click', (ev)=>{ ev.stopPropagation(); start(); });
         tb.appendChild(tr);
